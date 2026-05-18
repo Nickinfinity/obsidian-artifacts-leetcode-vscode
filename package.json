@@ -1,0 +1,83 @@
+{
+  "name": "obsidian-artifacts-leetcode-vscode",
+  "displayName": "Obsidian Artifacts: AI LeetCode Trainer",
+  "description": "Turn type: leetcode notes in your Obsidian vault into runnable coding challenges with auto-generated boilerplate, a per-language test harness, and a child-process test runner.",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.117.0"
+  },
+  "categories": [
+    "Education",
+    "Testing",
+    "Other"
+  ],
+  "keywords": [
+    "leetcode",
+    "obsidian",
+    "coding practice",
+    "interview prep",
+    "algorithms"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/src/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "obsidian-leetcode.settings",
+        "title": "Obsidian LeetCode: Settings"
+      },
+      {
+        "command": "obsidian-leetcode.open",
+        "category": "Obsidian LeetCode",
+        "title": "Open LeetCode Problem"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "obsidian-leetcode.open",
+          "when": "obsidian-leetcode.vaultConfigured",
+          "group": "obsidian@1"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "obsidian-leetcode.open",
+          "when": "obsidian-leetcode.vaultConfigured"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Obsidian Artifacts: AI LeetCode Trainer",
+      "properties": {
+        "obsidianLeetcodeTrainer.vaultPath": {
+          "type": "string",
+          "default": "",
+          "description": "Absolute path to the Obsidian vault root directory. Must contain a .obsidian folder. A LeetCode/ directory is auto-created here.",
+          "scope": "machine-overridable"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src",
+    "test": "vscode-test"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.10",
+    "@types/node": "25.6.0",
+    "@types/vscode": "^1.116.0",
+    "@typescript-eslint/eslint-plugin": "^8.59.0",
+    "@typescript-eslint/parser": "^8.59.0",
+    "@vscode/test-cli": "^0.0.12",
+    "@vscode/test-electron": "^2.5.2",
+    "eslint": "^10.2.1",
+    "typescript": "^6.0.3"
+  }
+}
