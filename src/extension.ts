@@ -1,7 +1,9 @@
 import * as vscode from 'vscode';
 import { registerOpenSettingsCommand } from './commands/openSettings.command.js';
+import { registerCreateExerciseCommand } from './commands/createExercise.command.js';
 import { openLeetCodePicker } from './commands/leetcode.command.js';
-import { refreshVaultContext, CONFIG_NS } from './services/context.service.js';
+import { refreshVaultContext } from './services/context.service.js';
+import { getVaultPath, migrateLegacyVaultPath } from './services/vault-path.store.js';
 import { LEETCODE_DIR } from './services/vault.service.js';
 
 /**
@@ -19,32 +21,23 @@ import { LEETCODE_DIR } from './services/vault.service.js';
  */
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
 	registerOpenSettingsCommand(context);
+	registerCreateExerciseCommand(context);
 
 	context.subscriptions.push(
 		vscode.commands.registerCommand('obsidian-leetcode.open', () => {
-			void openLeetCodePicker(LEETCODE_DIR, 'LeetCode', context.extensionUri);
+			void openLeetCodePicker(context, LEETCODE_DIR, 'LeetCode', context.extensionUri);
 		})
 	);
+
+	// Move any legacy synced path into per-machine storage before reading it.
+	await migrateLegacyVaultPath(context);
 
 	// Await so the context key is set before the user can interact with menus.
-	await refreshVaultContext();
+	await refreshVaultContext(context);
 
-	const vaultPath = vscode.workspace
-		.getConfiguration(CONFIG_NS)
-		.get<string>('vaultPath', '')
-		.trim();
-
-	if (!vaultPath) {
+	if (!getVaultPath(context)) {
 		vscode.commands.executeCommand('obsidian-leetcode.settings');
 	}
-
-	context.subscriptions.push(
-		vscode.workspace.onDidChangeConfiguration((e) => {
-			if (e.affectsConfiguration(CONFIG_NS)) {
-				void refreshVaultContext();
-			}
-		})
-	);
 }
 
 export function deactivate(): void {}

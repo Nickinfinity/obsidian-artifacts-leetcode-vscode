@@ -18,6 +18,7 @@ import { javaRunner }   from '../services/lang-runners/java.runner.js';
 import { jsRunner }     from '../services/lang-runners/javascript.runner.js';
 import { pythonRunner } from '../services/lang-runners/python.runner.js';
 import { validateObsidianVault } from '../services/vault.service.js';
+import { getVaultPath } from '../services/vault-path.store.js';
 import type {
 	LangRunner,
 	LeetCodeSolution,
@@ -45,21 +46,19 @@ const PARTIAL_RUN_COUNT = 3;
  * `parseLeetCode` and a dedicated webview panel is opened to drive the
  * Run-Tests / Submit flow.
  *
+ * @param context      - Extension context owning the per-machine vault path.
  * @param dir          - Artifact directory name (always `'LeetCode'`).
  * @param _name        - Display name (unused; kept for signature parity with `openArtifactPicker`).
  * @param extensionUri - Extension root URI — used to scope webview resource access.
  * @returns Resolves once the picker is dismissed or a panel is opened.
  *
  * @example
- * openLeetCodePicker('LeetCode', 'LeetCode', context.extensionUri);
+ * openLeetCodePicker(context, 'LeetCode', 'LeetCode', context.extensionUri);
  */
 export async function openLeetCodePicker(
-	dir: string, _name: string, extensionUri: vscode.Uri,
+	context: vscode.ExtensionContext, dir: string, _name: string, extensionUri: vscode.Uri,
 ): Promise<void> {
-	const vaultPath = vscode.workspace
-		.getConfiguration('obsidianLeetcodeTrainer')
-		.get<string>('vaultPath', '')
-		.trim();
+	const vaultPath = getVaultPath(context);
 	if (!vaultPath || !validateObsidianVault(vaultPath)) {
 		void vscode.window.showErrorMessage('Obsidian vault is not configured.');
 		return;

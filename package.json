@@ -26,20 +26,46 @@
     "commands": [
       {
         "command": "obsidian-leetcode.settings",
-        "title": "Obsidian LeetCode: Settings"
+        "category": "Obsidian Artifacts",
+        "title": "Settings"
+      },
+      {
+        "command": "obsidian-leetcode.create",
+        "category": "Obsidian Artifacts",
+        "title": "Create LeetCode Exercise"
       },
       {
         "command": "obsidian-leetcode.open",
-        "category": "Obsidian LeetCode",
-        "title": "Open LeetCode Problem"
+        "category": "Obsidian Artifacts",
+        "title": "Open LeetCode Exercise"
+      }
+    ],
+    "submenus": [
+      {
+        "id": "obsidian-leetcode.contextMenu",
+        "label": "Obsidian Artifacts"
       }
     ],
     "menus": {
       "editor/context": [
         {
+          "submenu": "obsidian-leetcode.contextMenu",
+          "group": "obsidian@1"
+        }
+      ],
+      "obsidian-leetcode.contextMenu": [
+        {
+          "command": "obsidian-leetcode.settings",
+          "group": "obsidian@1"
+        },
+        {
+          "command": "obsidian-leetcode.create",
+          "group": "obsidian@2"
+        },
+        {
           "command": "obsidian-leetcode.open",
           "when": "obsidian-leetcode.vaultConfigured",
-          "group": "obsidian@1"
+          "group": "obsidian@3"
         }
       ],
       "commandPalette": [
@@ -48,17 +74,6 @@
           "when": "obsidian-leetcode.vaultConfigured"
         }
       ]
-    },
-    "configuration": {
-      "title": "Obsidian Artifacts: AI LeetCode Trainer",
-      "properties": {
-        "obsidianLeetcodeTrainer.vaultPath": {
-          "type": "string",
-          "default": "",
-          "description": "Absolute path to the Obsidian vault root directory. Must contain a .obsidian folder. A LeetCode/ directory is auto-created here.",
-          "scope": "machine-overridable"
-        }
-      }
     }
   },
   "scripts": {

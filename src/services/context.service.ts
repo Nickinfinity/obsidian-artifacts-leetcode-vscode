@@ -1,8 +1,6 @@
 import * as vscode from 'vscode';
 import { createVaultDirectory, LEETCODE_DIR } from './vault.service.js';
-
-/** Settings namespace for this extension. */
-export const CONFIG_NS = 'obsidianLeetcodeTrainer';
+import { getVaultPath } from './vault-path.store.js';
 
 /** Context key used by `package.json` `when` clauses to gate the open command. */
 const VAULT_CONFIGURED_KEY = 'obsidian-leetcode.vaultConfigured';
@@ -12,19 +10,18 @@ const VAULT_CONFIGURED_KEY = 'obsidian-leetcode.vaultConfigured';
  * context key. When a vault is configured, ensures the `LeetCode/` directory
  * exists on disk (create-only — never deletes).
  *
- * Called on activation, after the settings panel saves a path, and on any
- * `obsidianLeetcodeTrainer.*` configuration change.
+ * Called on activation and after the settings panel saves a path.
  *
+ * @param context - Extension context owning the per-machine vault path.
  * @returns Resolves once the context key has been set.
  *
  * @example
- * await refreshVaultContext();
+ * await refreshVaultContext(context);
  */
-export async function refreshVaultContext(): Promise<void> {
-	const vaultPath = vscode.workspace
-		.getConfiguration(CONFIG_NS)
-		.get<string>('vaultPath', '')
-		.trim();
+export async function refreshVaultContext(
+	context: vscode.ExtensionContext,
+): Promise<void> {
+	const vaultPath = getVaultPath(context);
 
 	const configured = vaultPath.length > 0;
 	if (configured) {

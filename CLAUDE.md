@@ -34,9 +34,13 @@ The user flow:
 
 1. First run opens the **Settings** panel — the user selects their Obsidian
    vault root (the folder containing `.obsidian/`). A `LeetCode/` directory is
-   auto-created. The path is saved to `obsidianLeetcodeTrainer.vaultPath`.
-2. `Obsidian LeetCode: Open LeetCode Problem` (command palette or editor
-   context menu) opens a `QuickPick` listing `.md` files in `LeetCode/`.
+   auto-created. The path is saved per-installation in `context.globalState`
+   (machine-local — **not** Settings Sync; see "Vault path storage" below).
+2. `Obsidian Artifacts: Open LeetCode Exercise` (command palette, or the
+   **Obsidian Artifacts** submenu in the editor context menu) opens a
+   `QuickPick` listing `.md` files in `LeetCode/`. `Obsidian Artifacts:
+   Create LeetCode Exercise` is registered alongside it as a placeholder
+   (scaffolding is a planned feature).
 3. Selecting a file parses it and opens the LeetCode preview panel — problem
    description, examples, language selector, solution code, and **Run Tests** /
    **Submit** buttons backed by the child-process runner.
@@ -50,10 +54,12 @@ src/
 ├── extension.ts                       # Entry point — activate() / deactivate()
 ├── commands/
 │   ├── openSettings.command.ts        # Registers obsidian-leetcode.settings
+│   ├── createExercise.command.ts      # Registers obsidian-leetcode.create (placeholder)
 │   └── leetcode.command.ts            # openLeetCodePicker — QuickPick + preview panel session
 ├── services/
 │   ├── vault.service.ts               # validateObsidianVault(), createVaultDirectory(), LEETCODE_DIR
-│   ├── context.service.ts             # refreshVaultContext(), CONFIG_NS — single vaultConfigured key
+│   ├── vault-path.store.ts            # getVaultPath/setVaultPath/migrateLegacyVaultPath — globalState
+│   ├── context.service.ts             # refreshVaultContext(context) — single vaultConfigured key
 │   ├── frontmatter-patcher.service.ts # patchFrontmatterField() — status writeback on Submit
 │   ├── leetcode-parser.service.ts     # parseLeetCode() — .md → ParsedLeetCode
 │   ├── leetcode-codegen.service.ts    # mapType(), generateBoilerplate(), generateTestHarness(),
@@ -98,20 +104,36 @@ test/
 ### Entry point
 
 [src/extension.ts](src/extension.ts) — `activate()` registers
-`obsidian-leetcode.settings` and `obsidian-leetcode.open`, awaits
-`refreshVaultContext()` so menus reflect vault state before the first
-interaction, and auto-opens Settings when no vault path is stored. An
-`onDidChangeConfiguration` listener re-runs `refreshVaultContext()` on any
-`obsidianLeetcodeTrainer.*` change (Settings Sync / manual edits).
+`obsidian-leetcode.settings`, `obsidian-leetcode.create`, and
+`obsidian-leetcode.open`, runs `migrateLegacyVaultPath()` then awaits
+`refreshVaultContext(context)` so menus reflect vault state before the first
+interaction, and auto-opens Settings when no vault path is stored. There is no
+`onDidChangeConfiguration` listener — the vault path is not configuration; the
+settings panel calls `refreshVaultContext(context)` directly after saving.
 
-### Vault config (trimmed from core)
+All three commands are surfaced in the command palette as `Obsidian
+Artifacts: …` (shared `category`) and under an **Obsidian Artifacts**
+`submenu` in `editor/context`. `obsidian-leetcode.create` is a placeholder
+([commands/createExercise.command.ts](src/commands/createExercise.command.ts)).
 
-- **Settings namespace:** `obsidianLeetcodeTrainer.*` — only `vaultPath`.
+### Vault path storage (per-installation)
+
+- **Storage:** `context.globalState` key `vaultPath`, machine-local.
+  `setKeysForSync` is **never** called, so the path is excluded from Settings
+  Sync — each install keeps its own OS-correct path (a synced absolute path
+  caused `ENOENT` across macOS/Linux).
+- [services/vault-path.store.ts](src/services/vault-path.store.ts) —
+  `getVaultPath()` / `setVaultPath()` / `migrateLegacyVaultPath()` (one-time:
+  copies any legacy synced `obsidianLeetcodeTrainer.vaultPath` into
+  `globalState`, then clears the synced setting so a stale cross-OS path stops
+  propagating). The `obsidianLeetcodeTrainer.*` configuration contribution was
+  removed from `package.json`.
 - **Context key:** `obsidian-leetcode.vaultConfigured` — the single `when`
   clause gate in `package.json`.
 - [services/context.service.ts](src/services/context.service.ts) —
-  `refreshVaultContext()` sets that key and, when configured, **create-only**
-  ensures the `LeetCode/` directory exists (never deletes — no data loss).
+  `refreshVaultContext(context)` sets that key and, when configured,
+  **create-only** ensures the `LeetCode/` directory exists (never deletes — no
+  data loss).
 - [services/vault.service.ts](src/services/vault.service.ts) — only
   `validateObsidianVault()` (requires a `.obsidian/` dir) and
   `createVaultDirectory()`. The core extension's `detectVaultDirs` /

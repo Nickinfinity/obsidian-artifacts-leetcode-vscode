@@ -1,7 +1,8 @@
 import * as vscode from 'vscode';
 import { getNonce } from '../../utils/helpers.js';
 import { validateObsidianVault } from '../../services/vault.service.js';
-import { refreshVaultContext, CONFIG_NS } from '../../services/context.service.js';
+import { refreshVaultContext } from '../../services/context.service.js';
+import { getVaultPath, setVaultPath } from '../../services/vault-path.store.js';
 
 /**
  * Opens the settings webview panel where the user selects their Obsidian vault
@@ -9,8 +10,8 @@ import { refreshVaultContext, CONFIG_NS } from '../../services/context.service.j
  * — this extension only ever reads the `LeetCode/` directory, which is
  * auto-created when the vault is set.
  *
- * The vault path is persisted via the VS Code Settings API
- * (`obsidianLeetcodeTrainer.vaultPath`) so it syncs across devices.
+ * The vault path is persisted in per-machine `globalState` (not Settings
+ * Sync) so each installation keeps its own OS-correct path.
  *
  * @param context - Extension context providing the extension URI for assets.
  *
@@ -33,10 +34,7 @@ export function openSettingsPanel(context: vscode.ExtensionContext): void {
 
 	// ── Restore saved config ──────────────────────────────────────────────────
 	function postCurrentConfig(): void {
-		const savedPath = vscode.workspace
-			.getConfiguration(CONFIG_NS)
-			.get<string>('vaultPath', '')
-			.trim();
+		const savedPath = getVaultPath(context);
 
 		if (savedPath) {
 			panel.webview.postMessage({ command: 'updatePath', path: savedPath });
@@ -65,14 +63,12 @@ export function openSettingsPanel(context: vscode.ExtensionContext): void {
 					return;
 				}
 
-				await vscode.workspace
-					.getConfiguration(CONFIG_NS)
-					.update('vaultPath', selectedFolderPath, vscode.ConfigurationTarget.Global);
+				await setVaultPath(context, selectedFolderPath);
 
 				vscode.window.showInformationMessage(`Obsidian vault path saved: ${selectedFolderPath}`);
 
 				// Sets the vaultConfigured context key and auto-creates LeetCode/.
-				await refreshVaultContext();
+				await refreshVaultContext(context);
 
 				panel.webview.postMessage({ command: 'updatePath', path: selectedFolderPath });
 			} else {
@@ -119,7 +115,7 @@ function getWebviewContent(webview: vscode.Webview, extensionUri: vscode.Uri): s
 
     <div class="intro">
       <p>This extension turns <code>type: leetcode</code> notes in your <strong>Obsidian vault</strong> into runnable coding challenges with auto-generated boilerplate, a per-language test harness, and a child-process test runner.</p>
-      <p>Point the extension to your vault's root folder — the directory that contains your <code>.obsidian/</code> folder. A <code>LeetCode/</code> directory is created automatically. Your selection is saved and synced across devices.</p>
+      <p>Point the extension to your vault's root folder — the directory that contains your <code>.obsidian/</code> folder. A <code>LeetCode/</code> directory is created automatically. Your selection is saved per installation (not synced across devices).</p>
     </div>
 
     <div class="vault-dir-section">
