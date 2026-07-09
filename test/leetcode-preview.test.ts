@@ -3,6 +3,8 @@ import {
     renderLeetCodePreviewHtml,
     renderTestResultsHtml,
 } from '../src/ui/panels/leetcodePreview.panel.js';
+import { defaultPracticeConfig } from '../src/services/leetcode-parser.service.js';
+import { PRACTICE_OPTIONS } from '../src/types/constants.js';
 import type { ParsedLeetCode, TestResult } from '../src/types/leetcode.types.js';
 
 /**
@@ -31,6 +33,10 @@ suite('leetcodePreview', () => {
                 { input: { nums: [2, 7], target: 9 }, expected: [0, 1] },
                 { input: { nums: [3, 2, 4], target: 6 }, expected: [1, 2] },
             ],
+            setups:       [
+                { language: 'java',   code: 'static int[] twoSum(int[] nums, int target) {}' },
+            ],
+            practice:     defaultPracticeConfig(),
             solutions:    [
                 { language: 'java',   label: 'Brute Force', code: '// java code'   },
                 { language: 'python', label: undefined,     code: '# python code' },
@@ -105,11 +111,54 @@ suite('leetcodePreview', () => {
             assert.ok(html.includes('Brute Force'));
         });
 
-        test('exposes runTestsBtn / submitBtn / langSelector ids', () => {
+        test('exposes solveBtn / submitBtn / langSelector ids', () => {
             const html = renderLeetCodePreviewHtml(fixture(), css, csp);
-            assert.ok(html.includes('id="runTestsBtn"'));
+            assert.ok(html.includes('id="solveBtn"'));
             assert.ok(html.includes('id="submitBtn"'));
             assert.ok(html.includes('id="langSelector"'));
+        });
+
+        test('no longer renders a Run Tests button', () => {
+            const html = renderLeetCodePreviewHtml(fixture(), css, csp);
+            assert.ok(!html.includes('id="runTestsBtn"'));
+            assert.ok(!html.includes('Run Tests'));
+        });
+
+        test('renders the setup starter block for each language', () => {
+            const html = renderLeetCodePreviewHtml(fixture(), css, csp);
+            assert.ok(html.includes('setup-block'));
+            assert.ok(html.includes('static int[] twoSum'));
+        });
+
+        test('language selector unions setup and solution languages', () => {
+            const html = renderLeetCodePreviewHtml(fixture(), css, csp);
+            assert.ok(html.includes('<option value="java">'));
+            assert.ok(html.includes('<option value="python">'));
+            // java appears in both setups and solutions — listed once.
+            assert.strictEqual((html.match(/<option value="java">/g) ?? []).length, 1);
+        });
+
+        test('renders one practice checkbox per PRACTICE_OPTIONS entry', () => {
+            const html = renderLeetCodePreviewHtml(fixture(), css, csp);
+            const boxes = html.match(/class="practice-option"/g) ?? [];
+            assert.strictEqual(boxes.length, PRACTICE_OPTIONS.length);
+            assert.ok(html.includes('id="timeLimit"'));
+        });
+
+        test('locked practice config disables every control', () => {
+            const locked = fixture({
+                practice: { options: ['noCompletion'], timeLimitMinutes: 30, locked: true },
+            });
+            const html = renderLeetCodePreviewHtml(locked, css, csp);
+            const disabled = html.match(/ disabled>/g) ?? [];
+            // one per checkbox + the time-limit input
+            assert.strictEqual(disabled.length, PRACTICE_OPTIONS.length + 1);
+        });
+
+        test('reference solutions are collapsed behind a details element', () => {
+            const html = renderLeetCodePreviewHtml(fixture(), css, csp);
+            assert.ok(html.includes('<details class="solutions-details">'));
+            assert.ok(/spoilers/i.test(html));
         });
     });
 

@@ -80,6 +80,68 @@ export interface LeetCodeSolution {
 }
 
 /**
+ * Identifier of a practice-mode restriction offered before a challenge starts.
+ *
+ * The literal union is the contract between `PRACTICE_OPTIONS` (constants.ts),
+ * the panel checkboxes, and the `practice.options` frontmatter list.
+ */
+export type PracticeOptionId =
+	| 'noCompletion'
+	| 'noAiAgents'
+	| 'noSnippets'
+	| 'noParameterHints';
+
+/**
+ * One practice-mode restriction: its UI copy and the VS Code settings it flips.
+ *
+ * `settings` values are written verbatim through
+ * `vscode.workspace.getConfiguration().update()` at global scope while a
+ * challenge is live, then restored from a snapshot on teardown.
+ */
+export interface PracticeOption {
+	/** Stable id used in frontmatter and webview messages */
+	id: PracticeOptionId;
+	/** Checkbox caption shown in the preview panel */
+	label: string;
+	/** Secondary line explaining what the option turns off */
+	hint: string;
+	/** Whether the checkbox is ticked when the artifact declares no `practice.options` */
+	defaultEnabled: boolean;
+	/** VS Code setting key → value applied while the challenge runs */
+	settings: Record<string, unknown>;
+}
+
+/**
+ * Practice-mode configuration for a single challenge run.
+ *
+ * Seeded from the artifact's `practice:` frontmatter block (when present) and
+ * from `PRACTICE_OPTIONS` defaults otherwise. When `locked` is true the panel
+ * renders the checkboxes disabled and the extension ignores any option list the
+ * webview sends — the artifact author has made them mandatory.
+ */
+export interface PracticeConfig {
+	/** Restrictions to enforce for the duration of the challenge */
+	options: PracticeOptionId[];
+	/** Countdown in minutes; `0` means no limit */
+	timeLimitMinutes: number;
+	/** True when the artifact fixes these settings and the user may not change them */
+	locked: boolean;
+}
+
+/**
+ * Starter code for one language — the signature stub the solver begins from.
+ *
+ * Parsed from the `# Setup` section's `## <Language>` fences. A language with
+ * no setup block falls back to `generateBoilerplate()`.
+ */
+export interface ExerciseSetup {
+	/** Lower-cased fence language as written in the `.md` (e.g. `'javascript'`) */
+	language: string;
+	/** Verbatim starter source — function definition, no solution body */
+	code: string;
+}
+
+/**
  * The fully parsed representation of a LeetCode `.md` artifact.
  *
  * Built by the LeetCode parser from frontmatter, the problem description, the
@@ -106,6 +168,10 @@ export interface ParsedLeetCode {
 	examples: { input: string; output: string }[];
 	/** Test cases run against the candidate function */
 	tests: TestCase[];
+	/** Per-language starter stubs from the `# Setup` section */
+	setups: ExerciseSetup[];
+	/** Practice-mode defaults declared by the artifact (or library defaults) */
+	practice: PracticeConfig;
 	/** Stored solution attempts across languages */
 	solutions: LeetCodeSolution[];
 }

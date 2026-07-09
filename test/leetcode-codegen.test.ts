@@ -4,6 +4,7 @@ import {
     generateTestHarness,
     jsonToLiteral,
 } from '../src/services/leetcode-codegen.service.js';
+import { defaultPracticeConfig } from '../src/services/leetcode-parser.service.js';
 import type { ParsedLeetCode } from '../src/types/leetcode.types.js';
 
 /**
@@ -30,6 +31,8 @@ suite('leetcode-codegen', () => {
                 { input: { nums: [2, 7], target: 9 }, expected: [0, 1] },
                 { input: { nums: [3, 2, 4], target: 6 }, expected: [1, 2] },
             ],
+            setups:       [],
+            practice:     defaultPracticeConfig(),
             solutions:    [],
             ...overrides,
         };

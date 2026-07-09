@@ -13,6 +13,16 @@ npm run test           # Compile + lint + run all tests
 npx tsc --noEmit       # Type-check only — IDE diagnostics can be stale; use this to verify
 ```
 
+> `npm run test` launches a real VS Code instance and currently fails on this
+> checkout with `listen EINVAL … 1.12-main.sock … longer than 103 chars` — the
+> repo path pushes the IPC socket past the macOS limit, and `--user-data-dir` is
+> ignored. Every test module is `vscode`-free, so run them straight from `dist/`:
+>
+> ```bash
+> npm run compile
+> node node_modules/.pnpm/mocha@*/node_modules/mocha/bin/mocha.js --ui tdd "dist/test/**/*.test.js"
+> ```
+
 Press **F5** in VS Code to launch the Extension Development Host.
 
 ---
@@ -42,8 +52,14 @@ The user flow:
    Create LeetCode Exercise` is registered alongside it as a placeholder
    (scaffolding is a planned feature).
 3. Selecting a file parses it and opens the LeetCode preview panel — problem
-   description, examples, language selector, solution code, and **Run Tests** /
-   **Submit** buttons backed by the child-process runner.
+   description, examples, language selector, `# Setup` starter code, reference
+   solutions (collapsed behind a `<details>`), practice-mode checkboxes, a time
+   limit, and **Solve It** / **Submit** buttons.
+4. **Solve It** writes the starter code for the selected language to a temp file
+   under `globalStorageUri/attempts/`, opens it in the main editor group, applies
+   the selected editor restrictions, and starts the countdown. **Submit** runs
+   the live buffer against every test case; on green it patches `status: solved`,
+   restores the editor settings, and ends the challenge.
 
 ---
 
@@ -61,11 +77,16 @@ src/
 │   ├── vault-path.store.ts            # getVaultPath/setVaultPath/migrateLegacyVaultPath — globalState
 │   ├── context.service.ts             # refreshVaultContext(context) — single vaultConfigured key
 │   ├── frontmatter-patcher.service.ts # patchFrontmatterField() — status writeback on Submit
-│   ├── leetcode-parser.service.ts     # parseLeetCode() — .md → ParsedLeetCode
+│   ├── leetcode-parser.service.ts     # parseLeetCode(), defaultPracticeConfig() — frontmatter
+│   ├── leetcode-sections.helpers.ts   # extractDescription/Examples/Tests/Setups/Solutions
 │   ├── leetcode-codegen.service.ts    # mapType(), generateBoilerplate(), generateTestHarness(),
 │   │                                  # jsonToLiteral(), injectSolution()
 │   ├── leetcode-runner.service.ts     # detectRuntime(), runSingleTest(), runAllTests()
 │   ├── leetcode-timer.service.ts      # LeetCodeTimer — start/stop/getElapsed/reset
+│   ├── leetcode-challenge.service.ts  # startChallenge/endChallenge/activeChallenge + countdown
+│   ├── exercise-file.service.ts       # resolveStarterCode(), exerciseFileUri(), openExerciseFile()
+│   ├── practice-mode.service.ts       # PracticeMode — apply/restore editor restrictions
+│   ├── language-map.service.ts        # resolveLangId(), extForLang(), extForFenceLang()
 │   └── lang-runners/
 │       ├── runner.types.ts            # Re-export of LangRunner from types/
 │       ├── java.runner.ts             # javaRunner config
@@ -74,17 +95,23 @@ src/
 ├── ui/
 │   ├── panels/
 │   │   ├── settings.panel.ts          # Vault-folder picker webview (no artifact toggles)
-│   │   └── leetcodePreview.panel.ts   # renderLeetCodePreviewHtml(), renderTestResultsHtml()
+│   │   ├── leetcodePreview.panel.ts   # renderLeetCodePreviewHtml(), renderTestResultsHtml()
+│   │   └── leetcodePreview.controls.ts# renderLanguageRow/Setups/PracticeControls/Actions
 │   └── styles.css                     # Webview stylesheet — loaded via webview.asWebviewUri()
 ├── types/
+│   ├── constants.ts                   # LANG_ALIAS, LANG_EXT, PRACTICE_OPTIONS, ATTEMPTS_DIR,
+│   │                                  # EXERCISE_FILE_PREFIX, SOLUTION_MARKER
 │   └── leetcode.types.ts              # LeetCodeStatus, LeetCodeDifficulty, ParamDef,
-│                                      # TestCase, TestResult, LeetCodeSolution,
-│                                      # ParsedLeetCode, LangRunner
+│                                      # TestCase, TestResult, LeetCodeSolution, ExerciseSetup,
+│                                      # PracticeOption(Id), PracticeConfig, ParsedLeetCode,
+│                                      # LangRunner
 └── utils/
     ├── helpers.ts                     # getNonce() for CSP nonces
     └── html.helpers.ts                # escHtml() for webview HTML escaping
 test/
 ├── leetcode-parser.test.ts            # parseLeetCode coverage
+├── leetcode-setup-practice.test.ts    # # Setup section + practice: frontmatter block
+├── leetcode-language-map.test.ts      # resolveLangId / extForLang / extForFenceLang
 ├── leetcode-typemap.test.ts           # mapType primitives / arrays / maps / passthrough
 ├── leetcode-codegen.test.ts           # generateBoilerplate / generateTestHarness / jsonToLiteral
 ├── leetcode-runners.test.ts           # java/javascript/python runner configs
@@ -104,17 +131,22 @@ test/
 ### Entry point
 
 [src/extension.ts](src/extension.ts) — `activate()` registers
-`obsidian-leetcode.settings`, `obsidian-leetcode.create`, and
-`obsidian-leetcode.open`, runs `migrateLegacyVaultPath()` then awaits
+`obsidian-leetcode.settings`, `obsidian-leetcode.create`,
+`obsidian-leetcode.open`, and `obsidian-leetcode.endChallenge`, runs
+`migrateLegacyVaultPath()` then awaits
 `refreshVaultContext(context)` so menus reflect vault state before the first
 interaction, and auto-opens Settings when no vault path is stored. There is no
 `onDidChangeConfiguration` listener — the vault path is not configuration; the
 settings panel calls `refreshVaultContext(context)` directly after saving.
 
-All three commands are surfaced in the command palette as `Obsidian
-Artifacts: …` (shared `category`) and under an **Obsidian Artifacts**
-`submenu` in `editor/context`. `obsidian-leetcode.create` is a placeholder
+All four commands are surfaced in the command palette as `Obsidian
+Artifacts: …` (shared `category`); the first three also appear under an
+**Obsidian Artifacts** `submenu` in `editor/context`.
+`obsidian-leetcode.create` is a placeholder
 ([commands/createExercise.command.ts](src/commands/createExercise.command.ts)).
+`obsidian-leetcode.endChallenge` is palette-only and is also the `command` of
+the countdown status-bar item, so clicking the clock ends the run and restores
+the editor settings.
 
 ### Vault path storage (per-installation)
 
@@ -157,10 +189,14 @@ artifact code:
 
 | Direction | Command | Payload |
 |---|---|---|
-| webview → ext | `runTests` | `{ language }` — first 3 test cases |
+| webview → ext | `solveIt` | `{ language, options, timeLimitMinutes }` — opens the temp file, arms practice mode |
 | webview → ext | `submit` | `{ language }` — all test cases |
 | webview → ext | `selectLanguage` | `{ language }` |
 | ext → webview | `testResults` | `{ html }` — rendered results table |
+
+`runTests` was removed — the preview panel is a briefing screen, not a test
+runner. A locked artifact (`practice.locked: true`) causes the extension to
+ignore the `options` / `timeLimitMinutes` fields and use its own frontmatter.
 
 ### No runtime dependencies
 
@@ -174,7 +210,7 @@ syntax-highlight solution code.
 ## LeetCode Vault File Format
 
 A `type: leetcode` artifact carries problem metadata, a Markdown description,
-`## Examples`, `## Tests`, and a `# Solutions` tree:
+`## Examples`, `## Tests`, a `# Setup` tree, and a `# Solutions` tree:
 
 ```md
 ---
@@ -188,6 +224,10 @@ params:
   - { name: nums, type: int[] }
   - { name: target, type: int }
 returns: int[]
+practice:
+  timeLimit: 30
+  locked: false
+  options: [noCompletion, noAiAgents]
 tags: [leetcode, arrays, hash-map]
 ---
 
@@ -205,6 +245,16 @@ output: [0,1]
   { "input": { "nums": [2,7,11,15], "target": 9 }, "expected": [0,1] },
   { "input": { "nums": [3,2,4], "target": 6 }, "expected": [1,2] }
 ]
+```
+
+# Setup
+
+## JavaScript
+```javascript
+// function definition
+function twoSum(nums, target) {
+  // solution here
+}
 ```
 
 # Solutions
@@ -234,13 +284,31 @@ def two_sum(nums, target): ...
 | `status` | `LeetCodeStatus` | no | `'unsolved'` | Auto-updated on successful Submit |
 | `params` | `{ name, type }[]` | yes | — | Generic types (see mapping below) |
 | `returns` | string | yes | — | Generic return type |
+| `practice` | `PracticeConfig` | no | see below | Pre-selected practice-mode restrictions |
 | `tags` | string[] | no | `[]` | Organisational tags |
+
+### `practice:` block
+
+| Sub-key | Type | Default | Notes |
+|---|---|---|---|
+| `timeLimit` | number (minutes) | `0` | `0` = no countdown. Negative / unparsable → `0` |
+| `locked` | boolean | `false` | `true` renders the panel controls disabled and makes the settings mandatory |
+| `options` | `PracticeOptionId[]` | `[noCompletion, noAiAgents]` | Inline `[a, b]` or YAML `- a` list; unknown ids dropped. `options: []` = no restrictions |
+
+`PracticeOptionId` ∈ `noCompletion` | `noAiAgents` | `noSnippets` |
+`noParameterHints`. Each maps to a set of VS Code settings in
+`PRACTICE_OPTIONS` ([types/constants.ts](src/types/constants.ts)). VS Code has
+no per-editor configuration scope, so `PracticeMode` writes them at **global**
+scope and restores the previous `globalValue` on teardown (panel dispose,
+successful Submit, `Obsidian Artifacts: End LeetCode Challenge`, or
+`deactivate()`).
 
 ### Section semantics
 
 - **Description** — Markdown between closing `---` and first `#`/`##` heading.
 - **Examples** — `` ```example `` fences under `## Examples`, each with `input:` / `output:` lines.
 - **Tests** — `` ```json `` fence under `## Tests`. Array of `{ input: Record<string, unknown>, expected: unknown }`. Input keys must match `params` names.
+- **Setup** — `# Setup` → `## <Language>` → fenced code block. Only the **first** fence per language is taken: a setup is a single starter stub (the function definition, not the solution), never a labelled list. This is exactly what lands in the temp file on **Solve It**. A language with no setup falls back to `generateBoilerplate()`.
 - **Solutions** — `# Solutions` → `## <Language>` → optional `### <Label>` + fenced code block. Multiple solutions per language allowed; unlabelled ones are auto-numbered `Solution #1`, `#2`, …
 - **Solution metadata** — `<!-- meta: { "solved_at": "ISO-8601", "duration": "XmYs" } -->` comment immediately preceding the fence is parsed into `LeetCodeSolution.solvedAt` / `.duration`.
 
@@ -251,6 +319,7 @@ Boilerplate is two-layered:
 | Layer | Source | Purpose |
 |---|---|---|
 | 1 | Built-in language templates | Default runnable wrapper from `function` + `params` + `returns` (Java: `class Main` + `Scanner`; Python: `input()`; JS: `readline`) |
+| 2 | `# Setup` blocks in `.md` | Starter stub the solver begins from — preferred over Layer 1 |
 | 3 | Override code blocks in `.md` | Used only when the default wrapper does not fit |
 
 The wrapper holds a `<<SOLUTION>>` marker; `injectSolution(boilerplate, code)`
@@ -278,23 +347,42 @@ generic as-is. Java boxes primitives inside generics (`int` → `Integer`).
 - `runSingleTest` / `runAllTests` spawn a child process per `LangRunner` (`javac` + `java`, `node`, `python3`), capture stdout, and compare against `expected`.
 - 5 s timeout per test case.
 - `detectRuntime(runner)` shells out `runner.detectCmd` to confirm the toolchain is installed.
-- **Run Tests** executes the first 3 test cases (quick dev feedback).
-- **Submit** executes all test cases; on full pass it updates `status: 'solved'` in frontmatter (via `patchFrontmatterField`) and writes the `<!-- meta: … -->` line for the active solution.
+- **Submit** executes all test cases against the **live text of the temp exercise file** (unsaved edits included), falling back to the artifact's stored solution when no challenge is running. On full pass it updates `status: 'solved'` in frontmatter (via `patchFrontmatterField`), writes the `<!-- meta: … -->` line, and ends the challenge.
+- Runners exist for `java`, `javascript`, `python` only. A challenge may be *started* in any language that has a `# Setup` block; Submit will reject the ones without a runner.
+
+### Challenge session
+
+`startChallenge()` ([leetcode-challenge.service.ts](src/services/leetcode-challenge.service.ts))
+owns the single in-flight run: the temp file, the `PracticeMode` snapshot, the
+`LeetCodeTimer`, and the status-bar countdown. Only one session may be active
+per window — starting a second ends the first, so a settings snapshot is never
+stranded. The temp file is created under `globalStorageUri/attempts/` and is
+**never overwritten** if it already exists: a mis-clicked *Solve It* reopens the
+previous attempt rather than discarding it.
 
 ### Timer
 
-`LeetCodeTimer` starts on the first Run Tests press and stops on a successful
+`LeetCodeTimer` starts when the challenge starts and stops on a successful
 Submit. Elapsed time is formatted as `XmYs` and recorded in the solution
-metadata comment.
+metadata comment. When `practice.timeLimit > 0` a status-bar countdown ticks
+down beside it; expiry warns but never closes the editor or lifts the
+restrictions — abandoning a run is the user's call.
 
 ### Preview panel
 
 [ui/panels/leetcodePreview.panel.ts](src/ui/panels/leetcodePreview.panel.ts)
 renders the LeetCode view: description, difficulty badge (green/orange/red),
-status badge, algorithm tag, examples as cards, language selector (populated
-from parsed solutions), solution code, Run Tests / Submit buttons, and a
-results table with pass/fail, actual vs expected, per-test duration, and
-summary.
+status badge, algorithm tag, examples as cards, language selector (union of
+setup + solution languages), `# Setup` starter blocks, reference solutions
+collapsed behind a `<details>` (they are spoilers), the practice-option
+checkboxes + time-limit input, Solve It / Submit buttons, and a results table
+with pass/fail, actual vs expected, per-test duration, and summary.
+
+Row rendering for the selector, setups, practice controls, and action buttons
+lives in the sibling
+[leetcodePreview.controls.ts](src/ui/panels/leetcodePreview.controls.ts). The
+webview script hides every setup/solution block whose `data-language` does not
+match the selected language.
 
 ---
 

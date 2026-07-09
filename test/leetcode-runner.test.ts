@@ -5,6 +5,7 @@ import {
     runSingleTest,
 } from '../src/services/leetcode-runner.service.js';
 import { jsRunner } from '../src/services/lang-runners/javascript.runner.js';
+import { defaultPracticeConfig } from '../src/services/leetcode-parser.service.js';
 import type {
     LangRunner,
     ParsedLeetCode,
@@ -33,6 +34,8 @@ suite('leetcode-runner', () => {
             description:  '',
             examples:     [],
             tests:        [],
+            setups:       [],
+            practice:     defaultPracticeConfig(),
             solutions:    [],
         };
     }

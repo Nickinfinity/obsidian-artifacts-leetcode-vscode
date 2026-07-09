@@ -38,6 +38,11 @@
         "command": "obsidian-leetcode.open",
         "category": "Obsidian Artifacts",
         "title": "Open LeetCode Exercise"
+      },
+      {
+        "command": "obsidian-leetcode.endChallenge",
+        "category": "Obsidian Artifacts",
+        "title": "End LeetCode Challenge"
       }
     ],
     "submenus": [

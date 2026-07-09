@@ -733,3 +733,99 @@ button:hover {
   border-radius: 3px;
   padding: 4px 8px;
 }
+
+.lang-select-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 14px 0 6px;
+}
+
+/*
+ * Reference solutions are spoilers — collapsed until the user asks for them.
+ */
+
+.solutions-details {
+  margin-top: 14px;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 4px;
+  padding: 8px 12px;
+}
+
+.solutions-details summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
+  user-select: none;
+}
+
+/* ── Practice settings (pre-challenge checkbox list + time limit) ───────────── */
+
+.practice-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.practice-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 12px;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 4px;
+}
+
+.practice-item:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+
+.practice-item input[type="checkbox"] {
+  margin-top: 2px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.practice-item input[type="checkbox"]:disabled,
+.practice-item input[type="checkbox"]:disabled + .practice-label {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.practice-label {
+  flex: 1;
+  cursor: pointer;
+}
+
+.practice-label-text {
+  display: block;
+  font-weight: 500;
+}
+
+.practice-hint {
+  display: block;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  margin-top: 2px;
+}
+
+.time-limit-row input[type="number"] {
+  width: 80px;
+  flex: 0 0 auto;
+  padding: 5px 8px;
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  border: 1px solid var(--vscode-input-border, transparent);
+  border-radius: 3px;
+  font-family: var(--vscode-editor-font-family, monospace);
+  outline: none;
+}
+
+.time-limit-row input[type="number"]:focus {
+  border-color: var(--vscode-focusBorder);
+}
+
+.time-limit-row .hint {
+  margin-top: 0;
+}

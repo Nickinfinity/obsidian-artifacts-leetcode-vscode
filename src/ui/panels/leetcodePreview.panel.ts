@@ -1,21 +1,29 @@
 import type {
-	LeetCodeSolution,
 	ParsedLeetCode,
 	TestResult,
 } from '../../types/leetcode.types.js';
 import { escHtml } from '../../utils/html.helpers.js';
+import {
+	renderActions,
+	renderLanguageRow,
+	renderPracticeControls,
+	renderSetups,
+} from './leetcodePreview.controls.js';
 
 /**
  * Renders the full HTML document for the LeetCode preview panel.
  *
- * Layout sections (top to bottom):
+ * The panel is the pre-challenge briefing screen. Layout, top to bottom:
  *   - `<h1>` title
  *   - badges row: difficulty pill, status pill, algorithm tag
  *   - description paragraph
  *   - `## Examples` cards (one per parsed example)
  *   - test-case count line
- *   - language `<select id="langSelector">` + per-solution code blocks
- *   - `<button id="runTestsBtn">` / `<button id="submitBtn">`
+ *   - language `<select id="langSelector">`
+ *   - `# Setup` starter-code blocks
+ *   - reference solutions (collapsed behind a `<details>` — spoilers)
+ *   - practice-mode checkboxes + time-limit input
+ *   - `<button id="solveBtn">` / `<button id="submitBtn">`
  *   - `<div id="results">` results sink (populated by the webview script)
  *
  * @param parsed    - Fully parsed LeetCode artifact.
@@ -35,7 +43,10 @@ export function renderLeetCodePreviewHtml(
 		renderDescription(parsed),
 		renderExamples(parsed),
 		renderTestsCount(parsed),
+		renderLanguageRow(parsed),
+		renderSetups(parsed),
 		renderSolutionsSection(parsed),
+		renderPracticeControls(parsed),
 		renderActions(),
 		'<div id="results" class="results-container"></div>',
 	].join('\n');
@@ -110,11 +121,14 @@ function renderTestsCount(p: ParsedLeetCode): string {
 	return `<div class="tests-count">${p.tests.length} test cases</div>`;
 }
 
-/** Render the language selector and the solution code blocks. */
+/**
+ * Render the reference solutions, collapsed behind a `<details>` element.
+ *
+ * The whole point of the exercise is not to read these first, so they stay shut
+ * until the user deliberately opens them.
+ */
 function renderSolutionsSection(p: ParsedLeetCode): string {
 	if (p.solutions.length === 0) { return ''; }
-	const langs = uniqueLanguages(p.solutions);
-	const options = langs.map(l => `<option value="${escHtml(l)}">${escHtml(l)}</option>`).join('');
 
 	const blocks = p.solutions.map((s, i) => {
 		const labelTxt = s.label ? `${s.label} — ` : '';
@@ -127,22 +141,11 @@ function renderSolutionsSection(p: ParsedLeetCode): string {
 	}).join('\n');
 
 	return [
-		'<div class="lang-select-row">',
-		'<label for="langSelector">Language:</label>',
-		`<select id="langSelector" class="lang-selector">${options}</select>`,
-		'</div>',
+		'<details class="solutions-details">',
+		`<summary>Reference solutions (${p.solutions.length}) — spoilers</summary>`,
 		blocks,
+		'</details>',
 	].join('\n');
-}
-
-/** Render the Run Tests / Submit button row. */
-function renderActions(): string {
-	return [
-		'<div class="actions">',
-		'<button id="runTestsBtn" class="btn primary">Run Tests</button>',
-		'<button id="submitBtn"   class="btn primary">Submit</button>',
-		'</div>',
-	].join('');
 }
 
 /** Render a single result row, branching on pass / fail / error. */
@@ -170,23 +173,14 @@ function renderResultRow(r: TestResult): string {
 	].join('');
 }
 
-/** First-appearance-ordered unique language list. */
-function uniqueLanguages(solutions: LeetCodeSolution[]): string[] {
-	const seen = new Set<string>();
-	const out: string[] = [];
-	for (const s of solutions) {
-		if (!seen.has(s.language)) {
-			seen.add(s.language);
-			out.push(s.language);
-		}
-	}
-	return out;
-}
-
 /**
  * HTML shell — wraps the body, links the stylesheet, declares CSP for inline
- * scripts via a generated nonce. The orchestrator (VSX-60) is responsible for
- * supplying a real `cspSource` from `panel.webview.cspSource`.
+ * scripts.
+ *
+ * The inline script owns three interactions: hiding every setup/solution block
+ * that does not match the selected language, gathering the practice-option
+ * checkboxes plus the time limit into the `solveIt` payload, and swapping the
+ * results HTML the extension posts back.
  *
  * @param body      - Inner HTML to place inside `<body>`.
  * @param cssUri    - Webview URI for the shared stylesheet.
@@ -211,15 +205,52 @@ ${body}
 (function () {
 	const vscode = acquireVsCodeApi();
 	const sel = document.getElementById('langSelector');
-	const runBtn = document.getElementById('runTestsBtn');
+	const solveBtn = document.getElementById('solveBtn');
 	const submitBtn = document.getElementById('submitBtn');
+	const timeLimitEl = document.getElementById('timeLimit');
 	const resultsEl = document.getElementById('results');
 
 	function currentLang() { return sel ? sel.value : ''; }
 
-	if (runBtn)    { runBtn.addEventListener('click', () => vscode.postMessage({ command: 'runTests', language: currentLang() })); }
-	if (submitBtn) { submitBtn.addEventListener('click', () => vscode.postMessage({ command: 'submit',  language: currentLang() })); }
-	if (sel)       { sel.addEventListener('change', () => vscode.postMessage({ command: 'selectLanguage', language: currentLang() })); }
+	function selectedOptions() {
+		const boxes = document.querySelectorAll('.practice-option:checked');
+		return Array.from(boxes).map((b) => b.value);
+	}
+
+	function timeLimitMinutes() {
+		const raw = timeLimitEl ? parseInt(timeLimitEl.value, 10) : 0;
+		return Number.isNaN(raw) || raw < 0 ? 0 : raw;
+	}
+
+	// Only the blocks for the active language stay visible.
+	function syncVisibleBlocks() {
+		const lang = currentLang();
+		const blocks = document.querySelectorAll('.setup-block, .solution-block');
+		blocks.forEach((el) => {
+			const match = !lang || el.dataset.language === lang;
+			el.style.display = match ? '' : 'none';
+		});
+	}
+
+	if (solveBtn) {
+		solveBtn.addEventListener('click', () => vscode.postMessage({
+			command: 'solveIt',
+			language: currentLang(),
+			options: selectedOptions(),
+			timeLimitMinutes: timeLimitMinutes(),
+		}));
+	}
+	if (submitBtn) {
+		submitBtn.addEventListener('click', () => vscode.postMessage({ command: 'submit', language: currentLang() }));
+	}
+	if (sel) {
+		sel.addEventListener('change', () => {
+			syncVisibleBlocks();
+			vscode.postMessage({ command: 'selectLanguage', language: currentLang() });
+		});
+	}
+
+	syncVisibleBlocks();
 
 	window.addEventListener('message', (event) => {
 		const msg = event.data || {};
