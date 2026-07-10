@@ -1,29 +1,30 @@
 import * as assert from 'node:assert';
 import {
     detectRuntime,
-    runAllTests,
-    runSingleTest,
+    runSuite,
+    suiteTimeout,
 } from '../src/services/leetcode-runner.service.js';
 import { jsRunner } from '../src/services/lang-runners/javascript.runner.js';
-import { defaultPracticeConfig } from '../src/services/leetcode-parser.service.js';
+import { javascriptFunctionEnv } from '../src/services/test-envs/function/javascript.env.js';
+import { defaultPracticeConfig, defaultTestConfig } from '../src/services/leetcode-parser.service.js';
 import type {
     LangRunner,
     ParsedLeetCode,
     TestCase,
 } from '../src/types/leetcode.types.js';
+import type { TestEnv } from '../src/services/test-envs/env.types.js';
 
 /**
- * Integration tests for the LeetCode test runner.
+ * Integration tests for the batch suite runner.
  *
- * Real `node` subprocesses are used (Node is the runtime executing the suite,
- * so it is always available). Compilation-error paths use a fake runner config
- * with a failing compile step; the timeout path uses an intentional infinite
- * loop and relies on the 5 s internal timeout.
+ * Real `node` subprocesses are used (Node is the runtime executing the suite, so
+ * it is always available). Compilation-error paths use a fake runner config with
+ * a failing compile step; the timeout path uses an intentional infinite loop.
  */
 suite('leetcode-runner', () => {
 
     /** Minimal ParsedLeetCode shape used by every test. */
-    function fixture(): ParsedLeetCode {
+    function fixture(overrides: Partial<ParsedLeetCode> = {}): ParsedLeetCode {
         return {
             title:        'Add',
             difficulty:   'easy',
@@ -34,109 +35,138 @@ suite('leetcode-runner', () => {
             description:  '',
             examples:     [],
             tests:        [],
+            finalTests:   [],
+            test:         defaultTestConfig(),
             setups:       [],
             practice:     defaultPracticeConfig(),
             solutions:    [],
+            ...overrides,
         };
     }
+
+    const cases: TestCase[] = [
+        { input: { a: 1, b: 2 }, expected: 3 },
+        { input: { a: 10, b: 5 }, expected: 15 },
+    ];
+
+    const ADD = 'function add(a, b) { return a + b; }';
 
     // ── detectRuntime ─────────────────────────────────────────────────────────
 
     suite('detectRuntime', () => {
-        test('returns true when runtime command exits 0', async () => {
-            const r: LangRunner = { ...jsRunner, detectCmd: 'echo ok' };
-            assert.strictEqual(await detectRuntime(r), true);
+
+        test('returns true for an installed runtime', async () => {
+            assert.strictEqual(await detectRuntime(jsRunner), true);
         });
 
-        test('returns false when runtime command is missing / non-zero exit', async () => {
-            const r: LangRunner = { ...jsRunner, detectCmd: 'nonexistent_xyz_999_runtime' };
-            assert.strictEqual(await detectRuntime(r), false);
-        });
-    });
-
-    // ── runSingleTest ─────────────────────────────────────────────────────────
-
-    suite('runSingleTest', () => {
-        const okCode = 'return a + b;';
-
-        test('passing test → passed:true, actual matches expected, duration ≥ 0', async () => {
-            const tc: TestCase = { input: { a: 1, b: 2 }, expected: 3 };
-            const r = await runSingleTest(okCode, tc, jsRunner, fixture());
-            assert.strictEqual(r.passed, true);
-            assert.strictEqual(r.actual, '3');
-            assert.ok(r.duration >= 0);
-        });
-
-        test('failing test → passed:false, actual differs from expected', async () => {
-            const tc: TestCase = { input: { a: 1, b: 2 }, expected: 99 };
-            const r = await runSingleTest(okCode, tc, jsRunner, fixture());
-            assert.strictEqual(r.passed, false);
-            assert.notStrictEqual(r.actual, JSON.stringify(99));
-        });
-
-        test('runtime error → passed:false, error contains message', async () => {
-            const throwCode = 'throw new Error("boom");';
-            const tc: TestCase = { input: { a: 1, b: 2 }, expected: 3 };
-            const r = await runSingleTest(throwCode, tc, jsRunner, fixture());
-            assert.strictEqual(r.passed, false);
-            assert.ok(r.error && r.error.length > 0);
-            assert.ok(r.error.toLowerCase().includes('boom'));
-        });
-
-        test('compile failure (fake compile) → error mentions compilation', async () => {
-            const fakeFail: LangRunner = { ...jsRunner, compile: () => 'false' };
-            const tc: TestCase = { input: { a: 1, b: 2 }, expected: 3 };
-            const r = await runSingleTest(okCode, tc, fakeFail, fixture());
-            assert.strictEqual(r.passed, false);
-            assert.ok(r.error?.toLowerCase().includes('compil'));
-        });
-
-        test('infinite loop → timeout error within 15 s', async function () {
-            (this as { timeout: (n: number) => void }).timeout?.(15_000);
-            const spin = 'while (true) {}';
-            const tc: TestCase = { input: { a: 1, b: 2 }, expected: 3 };
-            const r = await runSingleTest(spin, tc, jsRunner, fixture());
-            assert.strictEqual(r.passed, false);
-            assert.strictEqual(r.error, 'timeout');
+        test('returns false for a missing runtime', async () => {
+            const bogus: LangRunner = { ...jsRunner, detectCmd: 'definitely-not-a-real-binary-xyz --version' };
+            assert.strictEqual(await detectRuntime(bogus), false);
         });
     });
 
-    // ── runAllTests ───────────────────────────────────────────────────────────
+    // ── suiteTimeout ──────────────────────────────────────────────────────────
 
-    suite('runAllTests', () => {
-        const okCode = 'return a + b;';
+    suite('suiteTimeout', () => {
 
-        test('returns one TestResult per case in order', async () => {
-            const cases: TestCase[] = [
-                { input: { a: 1, b: 1 }, expected: 2 },
-                { input: { a: 2, b: 3 }, expected: 5 },
-            ];
-            const results = await runAllTests(okCode, cases, jsRunner, fixture());
+        test('scales with the case count', () => {
+            assert.strictEqual(suiteTimeout(3, 5000), 15_000);
+        });
+
+        test('caps at 60 s regardless of case count', () => {
+            assert.strictEqual(suiteTimeout(100, 5000), 60_000);
+        });
+
+        test('an empty suite still gets one case worth of budget', () => {
+            assert.strictEqual(suiteTimeout(0, 5000), 5000);
+        });
+    });
+
+    // ── runSuite: happy path ──────────────────────────────────────────────────
+
+    suite('runSuite', () => {
+
+        test('an empty suite runs nothing and returns nothing', async () => {
+            const results = await runSuite(ADD, [], fixture(), javascriptFunctionEnv);
+            assert.deepStrictEqual(results, []);
+        });
+
+        test('all cases pass for a correct solution', async () => {
+            const results = await runSuite(ADD, cases, fixture(), javascriptFunctionEnv);
             assert.strictEqual(results.length, 2);
-            assert.strictEqual(results[0].index, 0);
-            assert.strictEqual(results[1].index, 1);
+            assert.ok(results.every(r => r.passed), JSON.stringify(results));
+            assert.deepStrictEqual(results.map(r => r.index), [0, 1]);
         });
 
-        test('does NOT stop on individual test failure', async () => {
-            const cases: TestCase[] = [
-                { input: { a: 1, b: 1 }, expected: 99 }, // fail
-                { input: { a: 2, b: 3 }, expected: 5  }, // pass
-            ];
-            const results = await runAllTests(okCode, cases, jsRunner, fixture());
+        test('a wrong answer fails with the actual value reported', async () => {
+            const wrong = 'function add(a, b) { return a - b; }';
+            const results = await runSuite(wrong, cases, fixture(), javascriptFunctionEnv);
             assert.strictEqual(results[0].passed, false);
+            assert.strictEqual(results[0].actual, '-1');
+        });
+
+        test('actual is compared canonically, not by raw stdout', async () => {
+            const objCases: TestCase[] = [{ input: { a: 1, b: 2 }, expected: { b: 2, a: 1 } }];
+            const obj = 'function add(a, b) { return { a: a, b: b }; }';
+            const results = await runSuite(obj, objCases, fixture(), javascriptFunctionEnv);
+            assert.strictEqual(results[0].passed, true, results[0].actual);
+        });
+
+        test('a throw in one case does not abort the suite', async () => {
+            const throws = 'function add(a, b) { if (a === 1) { throw new Error("boom"); } return a + b; }';
+            const results = await runSuite(throws, cases, fixture(), javascriptFunctionEnv);
+            assert.strictEqual(results.length, 2);
+            assert.strictEqual(results[0].error, 'boom');
             assert.strictEqual(results[1].passed, true);
         });
 
-        test('compile failure → every result tagged with compilation error', async () => {
-            const fakeFail: LangRunner = { ...jsRunner, compile: () => 'false' };
-            const cases: TestCase[] = [
-                { input: { a: 1, b: 1 }, expected: 2 },
-                { input: { a: 2, b: 3 }, expected: 5 },
-            ];
-            const results = await runAllTests(okCode, cases, fakeFail, fixture());
+        test("the solver's own stdout noise cannot corrupt the results", async () => {
+            const noisy = 'function add(a, b) { console.log("hello"); return a + b; }';
+            const results = await runSuite(noisy, cases, fixture(), javascriptFunctionEnv);
+            assert.ok(results.every(r => r.passed), JSON.stringify(results));
+        });
+
+        test('a failed contract fills every case, and nothing is run', async () => {
+            const results = await runSuite('function solve() {}', cases, fixture(), javascriptFunctionEnv);
             assert.strictEqual(results.length, 2);
-            assert.ok(results.every(r => !r.passed && (r.error ?? '').toLowerCase().includes('compil')));
+            assert.ok(results.every(r => !r.passed && r.error?.includes('add')), JSON.stringify(results));
+        });
+
+        test('a compile error fills every case with the same message', async () => {
+            const failing: TestEnv = {
+                ...javascriptFunctionEnv,
+                emit: (ctx) => ({ ...javascriptFunctionEnv.emit(ctx), compile: 'exit 1' }),
+            };
+            const results = await runSuite(ADD, cases, fixture(), failing);
+            assert.strictEqual(results.length, 2);
+            for (const r of results) {
+                assert.ok(r.error?.startsWith('compilation error:'), r.error);
+                assert.strictEqual(r.passed, false);
+            }
+        });
+
+        test('a suite timeout recovers printed cases and marks the rest timeout', async () => {
+            // Case 0 returns; case 1 spins forever. The per-case budget is tiny so
+            // the suite budget stays well under Mocha's own timeout.
+            const parsed = fixture({ test: { type: 'function', timeoutMs: 400 } });
+            const spin = 'function add(a, b) { if (a === 10) { while (true) {} } return a + b; }';
+            const results = await runSuite(spin, cases, parsed, javascriptFunctionEnv);
+
+            assert.strictEqual(results.length, 2);
+            assert.strictEqual(results[0].passed, true, 'printed case must survive the kill');
+            assert.strictEqual(results[1].passed, false);
+            assert.strictEqual(results[1].error, 'timeout');
+        });
+
+        test('a suite producing no output at all reports the failure per case', async () => {
+            const silent: TestEnv = {
+                ...javascriptFunctionEnv,
+                validate: () => null,
+                emit: () => ({ files: [{ name: 'runner.js', content: 'process.exit(3);' }], run: 'node runner.js' }),
+            };
+            const results = await runSuite(ADD, cases, fixture(), silent);
+            assert.strictEqual(results.length, 2);
+            assert.ok(results.every(r => !r.passed && r.error));
         });
     });
-
 });

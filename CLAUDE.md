@@ -57,9 +57,14 @@ The user flow:
    limit, and **Solve It** / **Submit** buttons.
 4. **Solve It** writes the starter code for the selected language to a temp file
    under `globalStorageUri/attempts/`, opens it in the main editor group, applies
-   the selected editor restrictions, and starts the countdown. **Submit** runs
-   the live buffer against every test case; on green it patches `status: solved`,
-   restores the editor settings, and ends the challenge.
+   the selected editor restrictions, and starts the countdown.
+5. **Run Tests** (enabled only while a challenge is live) grades the live buffer
+   against the *public* `## Tests` suite. Nothing is written, the clock keeps
+   running, the restrictions stay. It is the iteration loop.
+6. **Submit** grades *public + hidden* `## Final Tests` and ends the challenge
+   either way: all green → `status: solved` plus a `<!-- meta: … -->` duration
+   comment; any failure → `status: attempted`. Editor settings are restored on
+   both paths. Solve It reopens the same file so the run can be retried.
 
 ---
 
@@ -71,22 +76,34 @@ src/
 ├── commands/
 │   ├── openSettings.command.ts        # Registers obsidian-leetcode.settings
 │   ├── createExercise.command.ts      # Registers obsidian-leetcode.create (placeholder)
-│   └── leetcode.command.ts            # openLeetCodePicker — QuickPick + preview panel session
+│   ├── leetcode.command.ts            # openLeetCodePicker — QuickPick + panel wiring + solveIt
+│   └── leetcode-run.handlers.ts       # handleRunTests / handleSubmit / persistStatus
 ├── services/
 │   ├── vault.service.ts               # validateObsidianVault(), createVaultDirectory(), LEETCODE_DIR
 │   ├── vault-path.store.ts            # getVaultPath/setVaultPath/migrateLegacyVaultPath — globalState
 │   ├── context.service.ts             # refreshVaultContext(context) — single vaultConfigured key
 │   ├── frontmatter-patcher.service.ts # patchFrontmatterField() — status writeback on Submit
-│   ├── leetcode-parser.service.ts     # parseLeetCode(), defaultPracticeConfig() — frontmatter
-│   ├── leetcode-sections.helpers.ts   # extractDescription/Examples/Tests/Setups/Solutions
+│   ├── leetcode-parser.service.ts     # parseLeetCode(), defaultPracticeConfig(), defaultTestConfig()
+│   ├── leetcode-sections.helpers.ts   # extractDescription/Examples/Tests/FinalTests/Setups/Solutions
+│   ├── leetcode-suite.helpers.ts      # publicSuite/submitSuite/publicCount/hasFinalTests/tagSuiteKinds
+│   ├── leetcode-candidate.helpers.ts  # buildExecutable(), declaresFunction()
 │   ├── leetcode-codegen.service.ts    # mapType(), generateBoilerplate(), generateTestHarness(),
 │   │                                  # jsonToLiteral(), injectSolution()
-│   ├── leetcode-runner.service.ts     # detectRuntime(), runSingleTest(), runAllTests()
+│   ├── leetcode-runner.service.ts     # detectRuntime(), runSuite(), suiteTimeout()
 │   ├── leetcode-timer.service.ts      # LeetCodeTimer — start/stop/getElapsed/reset
 │   ├── leetcode-challenge.service.ts  # startChallenge/endChallenge/activeChallenge + countdown
-│   ├── exercise-file.service.ts       # resolveStarterCode(), exerciseFileUri(), openExerciseFile()
+│   ├── exercise-file.service.ts       # exerciseFileUri(), openExerciseFile()
+│   ├── exercise-file.helpers.ts       # resolveStarterCode(), slugify(), exerciseFileName()
 │   ├── practice-mode.service.ts       # PracticeMode — apply/restore editor restrictions
 │   ├── language-map.service.ts        # resolveLangId(), extForLang(), extForFenceLang()
+│   ├── test-envs/
+│   │   ├── env.types.ts               # TestEnv, EnvContext, CaseOutcome, EmittedProgram/File
+│   │   ├── env.registry.ts            # register(), testEnvFor(), languagesForType()
+│   │   ├── sentinel.helpers.ts        # parseSentinelLines() — the __LEET__ batch protocol
+│   │   └── function/
+│   │       ├── java.env.ts            # Solution.java (verbatim) + generated Runner.java, validate
+│   │       ├── python.env.ts          # sol.py imported by generated runner.py, validate
+│   │       └── javascript.env.ts      # sol.js run in a vm sandbox by runner.js, validate
 │   └── lang-runners/
 │       ├── runner.types.ts            # Re-export of LangRunner from types/
 │       ├── java.runner.ts             # javaRunner config
@@ -96,29 +113,41 @@ src/
 │   ├── panels/
 │   │   ├── settings.panel.ts          # Vault-folder picker webview (no artifact toggles)
 │   │   ├── leetcodePreview.panel.ts   # renderLeetCodePreviewHtml(), renderTestResultsHtml()
-│   │   └── leetcodePreview.controls.ts# renderLanguageRow/Setups/PracticeControls/Actions
+│   │   └── leetcodePreview.controls.ts# renderLanguageRow/TestCounts/Setups/PracticeControls/Actions
 │   └── styles.css                     # Webview stylesheet — loaded via webview.asWebviewUri()
 ├── types/
-│   ├── constants.ts                   # LANG_ALIAS, LANG_EXT, PRACTICE_OPTIONS, ATTEMPTS_DIR,
-│   │                                  # EXERCISE_FILE_PREFIX, SOLUTION_MARKER
-│   └── leetcode.types.ts              # LeetCodeStatus, LeetCodeDifficulty, ParamDef,
-│                                      # TestCase, TestResult, LeetCodeSolution, ExerciseSetup,
-│                                      # PracticeOption(Id), PracticeConfig, ParsedLeetCode,
-│                                      # LangRunner
+│   ├── constants.ts                   # LANG_ALIAS, LANG_EXT, PRACTICE_OPTIONS, TEST_TYPES,
+│   │                                  # LEET_SENTINEL, ATTEMPTS_DIR, SOLUTION_MARKER, timeouts
+│   └── leetcode.types.ts              # LeetCodeStatus, LeetCodeDifficulty, ParamDef, TestCase,
+│                                      # TestResult, TestTypeId, TestConfig, TestSuiteKind,
+│                                      # LeetCodeSolution, ExerciseSetup, PracticeOption(Id),
+│                                      # PracticeConfig, ParsedLeetCode, LangRunner
 └── utils/
     ├── helpers.ts                     # getNonce() for CSP nonces
+    ├── canonical-json.ts              # canonicalJson() — sorted keys, no whitespace
     └── html.helpers.ts                # escHtml() for webview HTML escaping
 test/
 ├── leetcode-parser.test.ts            # parseLeetCode coverage
 ├── leetcode-setup-practice.test.ts    # # Setup section + practice: frontmatter block
+├── leetcode-test-config.test.ts       # test: frontmatter block — type + timeoutMs clamping
+├── leetcode-final-tests.test.ts       # ## Final Tests parsing + section non-interference
+├── leetcode-suite.test.ts             # publicSuite / submitSuite / tagSuiteKinds
+├── leetcode-candidate.test.ts         # buildExecutable / declaresFunction
+├── canonical-json.test.ts             # canonicalJson key sorting / escaping / null handling
+├── test-env-registry.test.ts          # testEnvFor / languagesForType / register
+├── function-env-java.test.ts          # generated Java source (never spawns javac)
+├── function-env-python.test.ts        # generated Python source + sentinel parse
+├── function-env-javascript.test.ts    # generated JS source + sentinel parse
 ├── leetcode-language-map.test.ts      # resolveLangId / extForLang / extForFenceLang
+├── leetcode-exercise-file.test.ts     # slugify / exerciseFileName / resolveStarterCode
 ├── leetcode-typemap.test.ts           # mapType primitives / arrays / maps / passthrough
 ├── leetcode-codegen.test.ts           # generateBoilerplate / generateTestHarness / jsonToLiteral
 ├── leetcode-runners.test.ts           # java/javascript/python runner configs
-├── leetcode-runner.test.ts            # detectRuntime / runSingleTest / runAllTests
+├── leetcode-runner.test.ts            # detectRuntime / runSuite / suiteTimeout
 ├── leetcode-timer.test.ts             # LeetCodeTimer class
 ├── leetcode-inject.test.ts            # injectSolution
-└── leetcode-preview.test.ts           # renderLeetCodePreviewHtml / renderTestResultsHtml
+├── leetcode-preview.test.ts           # renderLeetCodePreviewHtml / renderTestResultsHtml
+└── leetcode-preview-controls.test.ts  # selector / counts / practice controls / actions
 ```
 
 > The `fixture()` helper used by the codegen tests is defined inline in the
@@ -190,13 +219,20 @@ artifact code:
 | Direction | Command | Payload |
 |---|---|---|
 | webview → ext | `solveIt` | `{ language, options, timeLimitMinutes }` — opens the temp file, arms practice mode |
-| webview → ext | `submit` | `{ language }` — all test cases |
+| webview → ext | `runTests` | `{ language }` — public suite only, live buffer only |
+| webview → ext | `submit` | `{ language }` — public **+** final suite |
 | webview → ext | `selectLanguage` | `{ language }` |
 | ext → webview | `testResults` | `{ html }` — rendered results table |
+| ext → webview | `challengeState` | `{ active: boolean }` — gates the Run Tests button |
 
-`runTests` was removed — the preview panel is a briefing screen, not a test
-runner. A locked artifact (`practice.locked: true`) causes the extension to
-ignore the `options` / `timeLimitMinutes` fields and use its own frontmatter.
+A locked artifact (`practice.locked: true`) causes the extension to ignore the
+`options` / `timeLimitMinutes` fields and use its own frontmatter.
+
+`renderLeetCodePreviewHtml(parsed, cssUri, cspSource, resultsHtml)` takes an
+optional fourth argument that seeds `<div id="results">`. Reassigning
+`webview.html` restarts the webview, so a `postMessage` fired immediately after
+can land before the listener attaches and be dropped — the terminal Submit
+re-render therefore seeds its table into the document instead of posting it.
 
 ### No runtime dependencies
 
@@ -228,6 +264,9 @@ practice:
   timeLimit: 30
   locked: false
   options: [noCompletion, noAiAgents]
+test:
+  type: function
+  timeoutMs: 5000
 tags: [leetcode, arrays, hash-map]
 ---
 
@@ -244,6 +283,13 @@ output: [0,1]
 [
   { "input": { "nums": [2,7,11,15], "target": 9 }, "expected": [0,1] },
   { "input": { "nums": [3,2,4], "target": 6 }, "expected": [1,2] }
+]
+```
+
+## Final Tests
+```json
+[
+  { "input": { "nums": [1,5,3], "target": 8 }, "expected": [1,2] }
 ]
 ```
 
@@ -285,7 +331,27 @@ def two_sum(nums, target): ...
 | `params` | `{ name, type }[]` | yes | — | Generic types (see mapping below) |
 | `returns` | string | yes | — | Generic return type |
 | `practice` | `PracticeConfig` | no | see below | Pre-selected practice-mode restrictions |
+| `test` | `TestConfig` | no | see below | Execution strategy + per-case timeout |
 | `tags` | string[] | no | `[]` | Organisational tags |
+
+### `test:` block
+
+| Sub-key | Type | Default | Notes |
+|---|---|---|---|
+| `type` | `TestTypeId` | `function` | Unknown values fall back to `function` |
+| `timeoutMs` | number | `5000` | Per case. Clamped to `[100, 60000]`; suite budget is `cases × this`, capped at 60 s |
+
+| `TestTypeId` | Status | Semantics |
+|---|---|---|
+| `function` | **implemented** | Call a free function with positional args, compare the return |
+| `class` | reserved | Instantiate, invoke a method sequence, compare the returns (LRUCache, MinStack) |
+| `stdin-stdout` | reserved | Feed raw stdin, compare trimmed stdout |
+| `in-place` | reserved | Compare a mutated argument rather than the return (removeDuplicates) |
+
+A reserved id parses and validates, but no environment is registered for it, so
+`languagesForType()` returns `[]`, the language selector renders empty, and the
+panel says why. That is the intended self-explaining failure — not a crash
+inside a compiler.
 
 ### `practice:` block
 
@@ -307,7 +373,8 @@ successful Submit, `Obsidian Artifacts: End LeetCode Challenge`, or
 
 - **Description** — Markdown between closing `---` and first `#`/`##` heading.
 - **Examples** — `` ```example `` fences under `## Examples`, each with `input:` / `output:` lines.
-- **Tests** — `` ```json `` fence under `## Tests`. Array of `{ input: Record<string, unknown>, expected: unknown }`. Input keys must match `params` names.
+- **Tests** — `` ```json `` fence under `## Tests`. Array of `{ input: Record<string, unknown>, expected: unknown }`. Input keys must match `params` names. This is the **public** suite: visible in the panel, run by **Run Tests**.
+- **Final Tests** — same shape, under `## Final Tests`. The **hidden grading** suite, appended by **Submit**. Counts are shown (`2 public · 3 final`) but inputs and expected values are never rendered — result rows for final cases mask their input. An artifact with no such section falls back to grading the public list (resolved in `submitSuite`, never in the parser, so the list is never doubled).
 - **Setup** — `# Setup` → `## <Language>` → fenced code block. Only the **first** fence per language is taken: a setup is a single starter stub (the function definition, not the solution), never a labelled list. This is exactly what lands in the temp file on **Solve It**. A language with no setup falls back to `generateBoilerplate()`.
 - **Solutions** — `# Solutions` → `## <Language>` → optional `### <Label>` + fenced code block. Multiple solutions per language allowed; unlabelled ones are auto-numbered `Solution #1`, `#2`, …
 - **Solution metadata** — `<!-- meta: { "solved_at": "ISO-8601", "duration": "XmYs" } -->` comment immediately preceding the fence is parsed into `LeetCodeSolution.solvedAt` / `.duration`.
@@ -325,6 +392,15 @@ Boilerplate is two-layered:
 The wrapper holds a `<<SOLUTION>>` marker; `injectSolution(boilerplate, code)`
 replaces it while preserving indentation.
 
+**At run time** the candidate goes through
+`buildExecutable(parsed, langId, code)`
+([leetcode-candidate.helpers.ts](src/services/leetcode-candidate.helpers.ts)),
+which normalises it to a bare declaration of `functionName` — the env supplies
+arguments as literals and emits its own driver, so a candidate must **never**
+be a program that reads stdin. A bare body is wrapped in a minimal declaration,
+deliberately *not* in `generateBoilerplate()`, whose Layer-1 template reads
+stdin and would block forever inside an env driver.
+
 ### Generic → language type mapping
 
 `mapType(generic, language)` translates frontmatter generics to language-native
@@ -341,14 +417,75 @@ generic as-is. Java boxes primitives inside generics (`int` → `Integer`).
 | `int[][]` | `int[][]` | `List[List[int]]` | `number[][]` | `Vec<Vec<i32>>` |
 | `map<string,int>` | `Map<String, Integer>` | `Dict[str, int]` | `Record<string, number>` | `HashMap<String, i32>` |
 
+### Test environments — the capability matrix
+
+How a test *executes* is data, not an `if/else`. A **test environment** is a
+`(test type × language)` pair that validates a candidate, emits a runnable
+program, and parses its output back into per-case outcomes.
+`testEnvFor(type, langId)` returns `TestEnv | undefined`; the absence of a pair
+**is** the capability matrix. `languagesForType(type)` drives the panel's
+language selector directly, so there is no second table to keep in sync.
+
+The three built-in `function` envs are self-contained — the extension ships zero
+runtime dependencies and has no install path, so it cannot assume a JUnit jar
+exists. `TestEnv.requires` / `detect()` exist so a library-backed env can be
+added later without touching the runner.
+
+**The candidate is never spliced.** `env.emit(ctx)` returns an `EmittedProgram`
+= `{ files, compile?, run }`. The solver's code is written **verbatim** as one
+of those files, and a generated *driver* file links to it — so the solver's own
+imports, helpers, and structure survive intact and cannot collide with the
+driver's class or `main`:
+
+| Language | Candidate file | Driver links via |
+|---|---|---|
+| java | `Solution.java` (method wrapped in `class Solution`) | second compilation unit; `javac Solution.java Runner.java`, `java Runner` |
+| python | `sol.py` | `importlib` — `import sol; sol.<fn>(…)`; an `if __name__=='__main__'` guard keeps the solver's own main dormant |
+| javascript | `sol.js` | Node's `vm` — evaluate in a fresh context, pull `<fn>` from the sandbox |
+
+This replaced the original model, which spliced the candidate into a generated
+`class Main` at a `<<SOLUTION>>` marker. That collided the moment a solver wrote
+anything but a bare method — their own `import`, `class Main`, or `main()` each
+produced a raw `javac` error. Commands run with the temp dir as `cwd`, so they
+name files bare.
+
+**`env.validate(ctx)`** runs before any file is written and returns a plain,
+user-facing message (or `null`). It catches the contract violations the linked
+model still cannot accept — a Java method wrapped in the solver's own `class`, a
+Python `def` nested inside a class, a JS buffer that never names the function —
+so the panel shows *"Java setup must be a bare method, not a class"* instead of
+a compiler dump.
+
+**The batch protocol.** The generated driver runs the whole suite in one process
+and prints one sentinel-prefixed line per case:
+
+```
+__LEET__{"index":0,"actual":"[0,1]","ms":3}
+__LEET__{"index":1,"error":"IndexError: list index out of range","ms":1}
+```
+
+The `__LEET__` prefix means the solver's own `print` / `console.log` cannot
+corrupt parsing. Each case is wrapped in the target language's try/catch, so one
+throw fails one case rather than the suite. Python and Java flush after every
+line — both block-buffer a pipe, and a timeout-kill would otherwise discard the
+lines already produced.
+
+**Comparison** goes through `canonicalJson()` (sorted keys, no whitespace) on
+both sides. This replaced `stdout.trim() === JSON.stringify(expected)`, under
+which Java's `Arrays.toString` (`[0, 1]`) could never match `[0,1]` and object
+key order was a coin flip.
+
 ### Test runner
 
-- `generateTestHarness(parsed, language)` emits per-language assert-based unit tests from the JSON test cases.
-- `runSingleTest` / `runAllTests` spawn a child process per `LangRunner` (`javac` + `java`, `node`, `python3`), capture stdout, and compare against `expected`.
-- 5 s timeout per test case.
-- `detectRuntime(runner)` shells out `runner.detectCmd` to confirm the toolchain is installed.
-- **Submit** executes all test cases against the **live text of the temp exercise file** (unsaved edits included), falling back to the artifact's stored solution when no challenge is running. On full pass it updates `status: 'solved'` in frontmatter (via `patchFrontmatterField`), writes the `<!-- meta: … -->` line, and ends the challenge.
-- Runners exist for `java`, `javascript`, `python` only. A challenge may be *started* in any language that has a `# Setup` block; Submit will reject the ones without a runner.
+- `runSuite(code, tests, parsed, env)` — `env.validate` gate, one `mkdtemp`, `env.emit()`, write every `EmittedProgram.file`, run `program.compile` then `program.run` (both `cwd` = temp dir), then `env.parse(stdout)`. A compiled language pays `javac` **once per suite**, not once per case. The runner orchestrates only — it never learns Java from Python; the env owns the commands.
+- A **contract violation** (`env.validate` non-null) fills every case with the message and runs nothing.
+- **Timeout attribution.** The suite gets one budget (`cases × test.timeoutMs`, capped at 60 s). On a kill, `exec` still hands back the stdout already produced, so every case that printed keeps its real result and every case from the first missing index onward is marked `timeout`. This is why the sentinel matters — partial stdout must stay parseable.
+- A **compile error** fills every case with the same `compilation error: …`.
+- `detectRuntime(runner)` (in the handlers, before `runSuite`) shells out `runner.detectCmd`; `env.detect()` gates in addition when present.
+- **Run Tests** executes the **public** suite against the live buffer. It never writes frontmatter, never stops the clock, never lifts the restrictions. Without a live challenge the button is `disabled` and the handler guards anyway.
+- **Submit** executes **public + final** against the live buffer, falling back to the artifact's stored solution when no challenge is running. All green → `status: 'solved'` + `<!-- meta: … -->`. Any failure **during a live challenge** → `status: 'attempted'`. A failure with no live challenge writes nothing — a dry run against a stored solution must never downgrade a solved artifact.
+- Submit is **one shot**: pass or fail, the challenge ends and the restrictions lift. *Solve It* reopens the same temp file with the code intact and re-arms it; `attempted → solved` is allowed.
+- Runners exist for `java`, `javascript`, `python` only, and the selector is intersected with `languagesForType(test.type)` — a language with a `# Setup` block but no env is never offered.
 
 ### Challenge session
 
@@ -378,11 +515,18 @@ collapsed behind a `<details>` (they are spoilers), the practice-option
 checkboxes + time-limit input, Solve It / Submit buttons, and a results table
 with pass/fail, actual vs expected, per-test duration, and summary.
 
-Row rendering for the selector, setups, practice controls, and action buttons
-lives in the sibling
+Row rendering for the selector, counts line, setups, practice controls, and
+action buttons lives in the sibling
 [leetcodePreview.controls.ts](src/ui/panels/leetcodePreview.controls.ts). The
 webview script hides every setup/solution block whose `data-language` does not
-match the selected language.
+match the selected language — `data-language` carries the *canonical* id, so an
+aliased heading (`## JS`) still matches the selector's `javascript`.
+
+Three buttons: **Run Tests** (starts `disabled`, re-gated by `challengeState`),
+**Solve It**, **Submit**. Result rows for `kind: 'final'` cases render
+`Final #N` with their input replaced by `<span class="masked">hidden</span>` —
+pass/fail and duration always show, so a solver learns *that* they failed a
+hidden case without learning what it was.
 
 ---
 

@@ -4,7 +4,7 @@ import {
     resolveStarterCode,
     slugify,
 } from '../src/services/exercise-file.helpers.js';
-import { defaultPracticeConfig } from '../src/services/leetcode-parser.service.js';
+import { defaultPracticeConfig, defaultTestConfig } from '../src/services/leetcode-parser.service.js';
 import type { ParsedLeetCode } from '../src/types/leetcode.types.js';
 
 /**
@@ -27,6 +27,8 @@ suite('exercise-file', () => {
             examples:     [],
             tests:        [],
             setups:       [],
+            finalTests:   [],
+            test:         defaultTestConfig(),
             practice:     defaultPracticeConfig(),
             solutions:    [],
             ...overrides,

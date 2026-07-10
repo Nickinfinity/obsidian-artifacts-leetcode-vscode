@@ -5,8 +5,9 @@ import {
     renderLanguageRow,
     renderPracticeControls,
     renderSetups,
+    renderTestCounts,
 } from '../src/ui/panels/leetcodePreview.controls.js';
-import { defaultPracticeConfig } from '../src/services/leetcode-parser.service.js';
+import { defaultPracticeConfig, defaultTestConfig } from '../src/services/leetcode-parser.service.js';
 import { PRACTICE_OPTIONS } from '../src/types/constants.js';
 import type { ParsedLeetCode } from '../src/types/leetcode.types.js';
 
@@ -31,6 +32,8 @@ suite('leetcodePreview.controls', () => {
             examples:     [],
             tests:        [],
             setups:       [{ language: 'javascript', code: 'function twoSum(a, b) {}' }],
+            finalTests:   [],
+            test:         defaultTestConfig(),
             practice:     defaultPracticeConfig(),
             solutions:    [{ language: 'python', code: '# python' }],
             ...overrides,
@@ -56,6 +59,24 @@ suite('leetcodePreview.controls', () => {
         test('an artifact with neither section has no languages', () => {
             assert.deepStrictEqual(availableLanguages(fixture({ setups: [], solutions: [] })), []);
         });
+
+        test('a language with no environment for the test type is filtered out', () => {
+            const p = fixture({
+                setups:    [{ language: 'rust', code: 'fn two_sum() {}' }],
+                solutions: [{ language: 'python', code: '# py' }],
+            });
+            assert.deepStrictEqual(availableLanguages(p), ['python']);
+        });
+
+        test('a reserved test type leaves no language selectable', () => {
+            const p = fixture({ test: { type: 'class', timeoutMs: 5000 } });
+            assert.deepStrictEqual(availableLanguages(p), []);
+        });
+
+        test('alias headings resolve to canonical ids before filtering', () => {
+            const p = fixture({ setups: [{ language: 'js', code: '' }], solutions: [] });
+            assert.deepStrictEqual(availableLanguages(p), ['javascript']);
+        });
     });
 
     // ── renderLanguageRow ─────────────────────────────────────────────────────
@@ -69,8 +90,16 @@ suite('leetcodePreview.controls', () => {
             assert.ok(html.includes('<option value="python">'));
         });
 
-        test('renders nothing when no language is known', () => {
-            assert.strictEqual(renderLanguageRow(fixture({ setups: [], solutions: [] })), '');
+        test('explains itself rather than rendering an empty selector', () => {
+            const html = renderLanguageRow(fixture({ setups: [], solutions: [] }));
+            assert.ok(!html.includes('<select'));
+            assert.ok(/no test environment/i.test(html));
+        });
+
+        test('names the offending test type when it is a reserved one', () => {
+            const html = renderLanguageRow(fixture({ test: { type: 'class', timeoutMs: 5000 } }));
+            assert.ok(!html.includes('<select'));
+            assert.ok(html.includes('<code>class</code>'));
         });
     });
 
@@ -153,12 +182,58 @@ suite('leetcodePreview.controls', () => {
 
     suite('renderActions', () => {
 
-        test('exposes Solve It and Submit, and no Run Tests', () => {
-            const html = renderActions();
+        test('exposes all three buttons', () => {
+            const html = renderActions(fixture());
+            assert.ok(html.includes('id="runTestsBtn"'));
             assert.ok(html.includes('id="solveBtn"'));
-            assert.ok(html.includes('Solve It'));
             assert.ok(html.includes('id="submitBtn"'));
-            assert.ok(!html.includes('runTestsBtn'));
+            assert.ok(html.includes('Run Tests'));
+            assert.ok(html.includes('Solve It'));
+        });
+
+        test('Run Tests starts disabled — there is no attempt buffer to grade yet', () => {
+            assert.ok(/id="runTestsBtn"[^>]*disabled/.test(renderActions(fixture())));
+        });
+
+        test('Solve It and Submit are enabled when a language is runnable', () => {
+            const html = renderActions(fixture());
+            assert.ok(!/id="solveBtn"[^>]*disabled/.test(html));
+            assert.ok(!/id="submitBtn"[^>]*disabled/.test(html));
+        });
+
+        test('every button is disabled when no language has an environment', () => {
+            const html = renderActions(fixture({ test: { type: 'class', timeoutMs: 5000 } }));
+            assert.ok(/id="solveBtn"[^>]*disabled/.test(html));
+            assert.ok(/id="submitBtn"[^>]*disabled/.test(html));
+        });
+    });
+
+    // ── renderTestCounts ──────────────────────────────────────────────────────
+
+    suite('renderTestCounts', () => {
+
+        const twoCases = [
+            { input: { x: 1 }, expected: 1 },
+            { input: { x: 2 }, expected: 4 },
+        ];
+
+        test('reads "N tests" when the artifact has no grading suite', () => {
+            const html = renderTestCounts(fixture({ tests: twoCases, finalTests: [] }));
+            assert.ok(html.includes('2 tests'));
+            assert.ok(!html.includes('final'));
+        });
+
+        test('splits public and final counts when a grading suite exists', () => {
+            const html = renderTestCounts(fixture({ tests: twoCases, finalTests: [twoCases[0]] }));
+            assert.ok(/2 public tests/.test(html));
+            assert.ok(/1 final tests/.test(html));
+        });
+
+        test('never reveals a final case input or expected value', () => {
+            const secret = [{ input: { x: 987654 }, expected: 'sekrit' }];
+            const html = renderTestCounts(fixture({ tests: twoCases, finalTests: secret }));
+            assert.ok(!html.includes('987654'));
+            assert.ok(!html.includes('sekrit'));
         });
     });
 });

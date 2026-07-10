@@ -707,6 +707,20 @@ button:hover {
   font-family: var(--vscode-editor-font-family, monospace);
 }
 
+/*
+ * Hidden grading-case input. A final row shows its outcome but never its data —
+ * otherwise the grading suite could be read off the results table.
+ */
+
+.masked {
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-style: italic;
+  color: var(--vscode-disabledForeground);
+  background: var(--vscode-textBlockQuote-background);
+  border-radius: 3px;
+  padding: 0 6px;
+}
+
 /* Aggregate pass/fail summary banner above the per-test rows. */
 
 .results-summary {

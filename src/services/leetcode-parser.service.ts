@@ -1,4 +1,12 @@
-import { DEFAULT_TIME_LIMIT_MINUTES, PRACTICE_OPTIONS } from '../types/constants.js';
+import {
+	DEFAULT_TEST_TIMEOUT_MS,
+	DEFAULT_TEST_TYPE,
+	DEFAULT_TIME_LIMIT_MINUTES,
+	MAX_SUITE_TIMEOUT_MS,
+	MIN_TEST_TIMEOUT_MS,
+	PRACTICE_OPTIONS,
+	TEST_TYPES,
+} from '../types/constants.js';
 import type {
 	LeetCodeDifficulty,
 	LeetCodeStatus,
@@ -6,10 +14,13 @@ import type {
 	ParsedLeetCode,
 	PracticeConfig,
 	PracticeOptionId,
+	TestConfig,
+	TestTypeId,
 } from '../types/leetcode.types.js';
 import {
 	extractDescription,
 	extractExamples,
+	extractFinalTests,
 	extractSetups,
 	extractSolutions,
 	extractTests,
@@ -21,6 +32,7 @@ const KV_RE          = /^(\w+):\s*(.*)$/;
 const VALID_DIFFICULTY = new Set<LeetCodeDifficulty>(['easy', 'medium', 'hard']);
 const VALID_STATUS     = new Set<LeetCodeStatus>(['unsolved', 'attempted', 'solved']);
 const VALID_OPTION_IDS = new Set<string>(PRACTICE_OPTIONS.map(o => o.id));
+const VALID_TEST_TYPES = new Set<string>(TEST_TYPES.map(t => t.id));
 
 /**
  * Parses a LeetCode-flavoured vault `.md` file into a `ParsedLeetCode` structure.
@@ -58,10 +70,24 @@ export function parseLeetCode(content: string): ParsedLeetCode {
 		description:  extractDescription(body),
 		examples:     extractExamples(body),
 		tests:        extractTests(body),
+		finalTests:   extractFinalTests(body),
+		test:         fm.test,
 		setups:       extractSetups(body),
 		practice:     fm.practice,
 		solutions:    extractSolutions(body),
 	};
+}
+
+/**
+ * Execution defaults used when an artifact declares no `test:` block.
+ *
+ * @returns Fresh `TestConfig` — never a shared reference.
+ *
+ * @example
+ * defaultTestConfig(); // → { type: 'function', timeoutMs: 5000 }
+ */
+export function defaultTestConfig(): TestConfig {
+	return { type: DEFAULT_TEST_TYPE, timeoutMs: DEFAULT_TEST_TIMEOUT_MS };
 }
 
 /**
@@ -91,6 +117,7 @@ interface FM {
 	params: ParamDef[];
 	returns?: string;
 	practice: PracticeConfig;
+	test: TestConfig;
 }
 
 /**
@@ -112,6 +139,7 @@ function parseFrontmatter(raw: string): FM {
 		status: 'unsolved',
 		params: [],
 		practice: defaultPracticeConfig(),
+		test: defaultTestConfig(),
 	};
 	const lines = raw.split(/\r?\n/);
 
@@ -136,10 +164,68 @@ function parseFrontmatter(raw: string): FM {
 			continue;
 		}
 
+		if (key === 'test') {
+			const { test, next } = parseTestBlock(lines, i);
+			fm.test = test;
+			i = next;
+			continue;
+		}
+
 		applyScalar(fm, key, val);
 		i++;
 	}
 	return fm;
+}
+
+// ── test: block ───────────────────────────────────────────────────────────────
+
+/**
+ * Parses the indented `test:` frontmatter block.
+ *
+ * Recognised sub-keys — both optional:
+ *   - `type: function` — a `TestTypeId`. An unknown value silently falls back to
+ *     `function`, since a typo should not make the exercise unrunnable.
+ *   - `timeoutMs: 5000` — per-case budget, clamped to `[100, 60000]`. The suite
+ *     budget is `cases × this`, capped separately by `MAX_SUITE_TIMEOUT_MS`.
+ *
+ * @param lines - All frontmatter lines.
+ * @param start - Index of the `test:` line.
+ * @returns `{ test, next }` — parsed config and the index of the first
+ *   non-consumed line.
+ *
+ * @example
+ * parseTestBlock(['test:', '  type: function', '  timeoutMs: 2000'], 0);
+ */
+function parseTestBlock(lines: string[], start: number): { test: TestConfig; next: number } {
+	const test = defaultTestConfig();
+	let i = start + 1;
+
+	while (i < lines.length && /^\s/.test(lines[i])) {
+		const trimmed = lines[i].trim();
+		if (trimmed === '') { i++; continue; }
+
+		const kv = KV_RE.exec(trimmed);
+		if (kv) {
+			const key = kv[1];
+			const val = kv[2].trim();
+			if (key === 'type')           { test.type = parseTestType(val); }
+			else if (key === 'timeoutMs') { test.timeoutMs = parseTimeoutMs(val); }
+		}
+		i++;
+	}
+	return { test, next: i };
+}
+
+/** Validate a `type:` value, falling back to `function` for anything unknown. */
+function parseTestType(val: string): TestTypeId {
+	return VALID_TEST_TYPES.has(val) ? val as TestTypeId : DEFAULT_TEST_TYPE;
+}
+
+/** Clamp a `timeoutMs:` value into a range that can actually run a test. */
+function parseTimeoutMs(val: string): number {
+	const n = Number.parseInt(val, 10);
+	if (Number.isNaN(n)) { return DEFAULT_TEST_TIMEOUT_MS; }
+	return Math.min(Math.max(n, MIN_TEST_TIMEOUT_MS), MAX_SUITE_TIMEOUT_MS);
 }
 
 // ── practice: block ───────────────────────────────────────────────────────────

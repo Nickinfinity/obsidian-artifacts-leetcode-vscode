@@ -2,15 +2,15 @@ import { exec, type ExecException } from 'node:child_process';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { MAX_SUITE_TIMEOUT_MS } from '../types/constants.js';
 import type {
 	LangRunner,
 	ParsedLeetCode,
 	TestCase,
 	TestResult,
 } from '../types/leetcode.types.js';
-
-/** Hard cap on a single test-case run before the child is killed. */
-const TIMEOUT_MS = 5_000;
+import type { CaseOutcome, EnvContext, TestEnv } from './test-envs/env.types.js';
+import { canonicalJson } from '../utils/canonical-json.js';
 
 interface ExecResult { stdout: string; stderr: string }
 class ExecErr extends Error {
@@ -36,16 +36,16 @@ class ExecErr extends Error {
  * to inspect. The `killed` / `signal` fields on the error distinguish a
  * timeout-kill from a normal failure.
  *
- * @param cmd - Shell command line.
- * @param timeoutMs - Optional kill timeout in milliseconds.
+ * @param cmd  - Shell command line.
+ * @param opts - Optional working directory and kill timeout.
  * @returns Promise resolving to captured stdio.
  *
  * @example
- * await execAsync('echo hi');
+ * await execAsync('node runner.js', { cwd: '/tmp/leet-x', timeoutMs: 5000 });
  */
-function execAsync(cmd: string, timeoutMs?: number): Promise<ExecResult> {
+function execAsync(cmd: string, opts: { cwd?: string; timeoutMs?: number } = {}): Promise<ExecResult> {
 	return new Promise<ExecResult>((resolve, reject) => {
-		exec(cmd, { timeout: timeoutMs, maxBuffer: 1024 * 1024 }, (err, stdout, stderr) => {
+		exec(cmd, { cwd: opts.cwd, timeout: opts.timeoutMs, maxBuffer: 1024 * 1024 }, (err, stdout, stderr) => {
 			if (err) {
 				const e = new ExecErr(err);
 				e.stdout = stdout;
@@ -79,81 +79,87 @@ export async function detectRuntime(runner: LangRunner): Promise<boolean> {
 }
 
 /**
- * Build a self-contained source file that runs the candidate solution against
- * a single test case and prints the JSON-serialised result to stdout.
+ * Wall-clock budget for a whole suite: `cases × per-case`, capped.
  *
- * The boilerplate variant emitted by `generateBoilerplate` reads inputs from
- * stdin, which is hard to wire up generically here; we instead generate a
- * direct call with hard-coded literal arguments so stdout cleanly reports the
- * function's return value.
- *
- * @param code     - User solution body (the contents of the candidate function).
- * @param testCase - One test case providing inputs and the expected value.
- * @param runner   - Language runner — its `id` selects the source template.
- * @param parsed   - Parsed artifact for function name and parameter order.
- * @returns Complete source text ready to write to disk and execute.
+ * @param caseCount - Number of cases in the suite.
+ * @param perCaseMs - Per-case budget from `parsed.test.timeoutMs`.
+ * @returns Milliseconds before the child is killed.
  *
  * @example
- * buildSingleTestSource('return a + b;', { input:{a:1,b:2}, expected:3 }, jsRunner, parsed);
+ * suiteTimeout(3, 5000); // → 15000
+ * suiteTimeout(100, 5000); // → 60000 (capped)
  */
-function buildSingleTestSource(
-	code: string, testCase: TestCase, runner: LangRunner, parsed: ParsedLeetCode,
-): string {
-	const args = parsed.params.map(p => JSON.stringify(testCase.input[p.name])).join(', ');
-	const params = parsed.params.map(p => p.name).join(', ');
-
-	if (runner.id === 'python') {
-		const indented = code.split('\n').map(l => `    ${l}`).join('\n');
-		return [
-			`def ${parsed.functionName}(${params}):`,
-			indented,
-			'',
-			'import json, sys',
-			'try:',
-			`    __r = ${parsed.functionName}(${args})`,
-			'    sys.stdout.write(json.dumps(__r))',
-			'except Exception as e:',
-			'    sys.stderr.write(str(e))',
-			'    sys.exit(1)',
-			'',
-		].join('\n');
-	}
-
-	// Default to a JS-like template — covers the built-in jsRunner and any
-	// runner that mimics it for test purposes.
-	return [
-		`function ${parsed.functionName}(${params}) {`,
-		`  ${code}`,
-		'}',
-		'',
-		'try {',
-		`  const __r = ${parsed.functionName}(${args});`,
-		'  process.stdout.write(JSON.stringify(__r));',
-		'} catch (e) {',
-		'  process.stderr.write(String(e && e.message ? e.message : e));',
-		'  process.exit(1);',
-		'}',
-		'',
-	].join('\n');
+export function suiteTimeout(caseCount: number, perCaseMs: number): number {
+	return Math.min(Math.max(caseCount, 1) * perCaseMs, MAX_SUITE_TIMEOUT_MS);
 }
 
-/** Build a baseline `TestResult` skeleton tied to a specific test case + index. */
-function baseResult(index: number, testCase: TestCase): TestResult {
-	return {
-		index,
-		passed:   false,
-		input:    testCase.input,
-		expected: testCase.expected,
-		actual:   '',
-		duration: 0,
-	};
-}
+/**
+ * Run an entire suite in one temp directory and map its output to per-case
+ * results.
+ *
+ * The env decides everything language-specific: it validates the candidate,
+ * emits the candidate **verbatim** alongside a generated driver, and supplies
+ * the compile/run commands. This function only orchestrates — make a temp dir,
+ * write the files, compile, run, parse — so it never learns Java from Python.
+ *
+ * Failure modes, all producing a full-length result array:
+ *
+ * - **Contract violation** — `env.validate` returns a message; every case
+ *   carries it, and nothing is compiled or run.
+ * - **Compile error** — every case carries the same `compilation error: …`.
+ * - **Suite timeout** — the child is killed, but `exec` returns the stdout it
+ *   already produced, so every case that printed is recovered and every case
+ *   from the first missing index onward is marked `timeout`.
+ * - **Crash / non-zero exit** — cases that printed are kept; the rest carry the
+ *   process's stderr.
+ *
+ * @param code   - Candidate source, already resolved by `buildExecutable`.
+ * @param tests  - The suite to run, in order.
+ * @param parsed - Parsed artifact — supplies `test.timeoutMs` and the signature.
+ * @param env    - Test environment that validates, emits, and parses.
+ * @returns One `TestResult` per case, in the input order.
+ *
+ * @example
+ * await runSuite(code, parsed.tests, parsed, javascriptFunctionEnv);
+ */
+export async function runSuite(
+	code: string, tests: TestCase[], parsed: ParsedLeetCode, env: TestEnv,
+): Promise<TestResult[]> {
+	if (tests.length === 0) { return []; }
 
-/** Try to compile a temp file; returns `null` on success, the failure message otherwise. */
-async function tryCompile(runner: LangRunner, filePath: string): Promise<string | null> {
-	if (!runner.compile) { return null; }
+	const ctx: EnvContext = { parsed, langId: env.language, code, cases: tests };
+
+	const invalid = env.validate?.(ctx);
+	if (invalid) { return tests.map((t, i) => errorResult(i, t, invalid)); }
+
+	const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'leet-'));
 	try {
-		await execAsync(runner.compile(filePath));
+		const program = env.emit(ctx);
+		await Promise.all(program.files.map(f =>
+			fs.writeFile(path.join(tmpDir, f.name), f.content, 'utf-8'),
+		));
+
+		if (program.compile) {
+			const compileErr = await tryCompile(program.compile, tmpDir);
+			if (compileErr !== null) { return tests.map((t, i) => errorResult(i, t, compileErr)); }
+		}
+
+		const { stdout, failure } = await runProgram(program.run, tmpDir, tests.length, parsed.test.timeoutMs);
+		return collectResults(tests, env.parse(stdout), failure);
+	} finally {
+		await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => { /* ignore cleanup errors */ });
+	}
+}
+
+// ── Internals ─────────────────────────────────────────────────────────────────
+
+/** How the child process ended, when it did not end cleanly. */
+interface RunFailure { timedOut: boolean; message: string }
+
+/** Run the build command; returns `null` on success, the failure message otherwise. */
+async function tryCompile(command: string, cwd: string): Promise<string | null> {
+	try {
+		await execAsync(command, { cwd });
 		return null;
 	} catch (e) {
 		const err = e as ExecErr;
@@ -163,101 +169,84 @@ async function tryCompile(runner: LangRunner, filePath: string): Promise<string 
 }
 
 /**
- * Run a single test case against a candidate solution using `runner`.
+ * Execute the program's run command, capturing stdout even on failure.
  *
- * Writes a self-contained source file in a fresh temp directory, optionally
- * compiles it (`runner.compile`), then executes via `runner.run` and compares
- * the trimmed stdout against `JSON.stringify(testCase.expected)`. Timeouts and
- * non-zero exit codes produce a populated `error` field on the result.
- *
- * @param code     - User solution body.
- * @param testCase - Test case to execute.
- * @param runner   - Language runner config.
- * @param parsed   - Parsed artifact (function name, params).
- * @returns Populated `TestResult` — its `passed` flag is authoritative.
+ * @param command   - Run command, executed with `cwd` as its working directory.
+ * @param cwd       - Temp directory holding the emitted files.
+ * @param caseCount - Suite size, used to size the timeout.
+ * @param perCaseMs - Per-case budget.
+ * @returns Whatever stdout was produced, plus how the process ended.
  *
  * @example
- * await runSingleTest('return a + b;', { input:{a:1,b:2}, expected:3 }, jsRunner, parsed);
+ * await runProgram('node runner.js', '/tmp/leet-x', 3, 5000);
  */
-export async function runSingleTest(
-	code: string, testCase: TestCase, runner: LangRunner, parsed: ParsedLeetCode,
-): Promise<TestResult> {
-	const result = baseResult(0, testCase);
-	const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'leet-'));
-	const fileName = runner.fileName ?? `sol${runner.fileExtension}`;
-	const filePath = path.join(tmpDir, fileName);
-	const source   = buildSingleTestSource(code, testCase, runner, parsed);
-
-	const t0 = Date.now();
+async function runProgram(
+	command: string, cwd: string, caseCount: number, perCaseMs: number,
+): Promise<{ stdout: string; failure: RunFailure | null }> {
 	try {
-		await fs.writeFile(filePath, source, 'utf-8');
-
-		const compileErr = await tryCompile(runner, filePath);
-		if (compileErr !== null) {
-			result.error    = compileErr;
-			result.duration = Date.now() - t0;
-			return result;
-		}
-
-		try {
-			const { stdout } = await execAsync(runner.run(filePath), TIMEOUT_MS);
-			result.actual   = stdout.trim();
-			result.duration = Date.now() - t0;
-			result.passed   = result.actual === JSON.stringify(testCase.expected);
-		} catch (e) {
-			const err = e as ExecErr;
-			result.duration = Date.now() - t0;
-			if (err.killed || err.signal === 'SIGTERM') {
-				result.error = 'timeout';
-			} else {
-				result.error = (err.stderr || err.message || String(err)).trim();
-			}
-		}
-	} finally {
-		await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => { /* ignore cleanup errors */ });
+		const { stdout } = await execAsync(command, { cwd, timeoutMs: suiteTimeout(caseCount, perCaseMs) });
+		return { stdout, failure: null };
+	} catch (e) {
+		const err = e as ExecErr;
+		const timedOut = Boolean(err.killed) || err.signal === 'SIGTERM';
+		const message  = timedOut ? 'timeout' : (err.stderr || err.message || String(err)).trim();
+		return { stdout: err.stdout ?? '', failure: { timedOut, message } };
 	}
-	return result;
 }
 
 /**
- * Run every test case in `tests` against the candidate solution.
+ * Join the suite's cases against whatever outcomes the program managed to print.
  *
- * Each case is executed via `runSingleTest`. An individual failure does NOT
- * stop the run — the user sees per-case results. A compilation failure on the
- * first case short-circuits the remaining cases (each gets the same
- * `compilation error: …` payload) since recompiling cannot fix the broken
- * source without user intervention.
+ * A case with no outcome inherits the run failure — `timeout` when the child was
+ * killed, the process's stderr otherwise. Cases that printed before a kill keep
+ * their real results.
  *
- * @param code   - User solution body.
- * @param tests  - Test cases to execute in order.
- * @param runner - Language runner config.
- * @param parsed - Parsed artifact.
- * @returns One `TestResult` per case, in the input order.
+ * @param tests    - The suite, in order.
+ * @param outcomes - Parsed sentinel lines, possibly fewer than `tests.length`.
+ * @param failure  - How the process ended, or `null` when it exited cleanly.
+ * @returns One result per case.
  *
  * @example
- * await runAllTests('return a + b;', tests, jsRunner, parsed);
+ * collectResults(tests, [{ index: 0, actual: '1', ms: 2 }], { timedOut: true, message: 'timeout' });
  */
-export async function runAllTests(
-	code: string, tests: TestCase[], runner: LangRunner, parsed: ParsedLeetCode,
-): Promise<TestResult[]> {
-	const results: TestResult[] = [];
-	for (let i = 0; i < tests.length; i++) {
-		const r = await runSingleTest(code, tests[i], runner, parsed);
-		r.index = i;
-		results.push(r);
+function collectResults(
+	tests: TestCase[], outcomes: CaseOutcome[], failure: RunFailure | null,
+): TestResult[] {
+	const byIndex = new Map<number, CaseOutcome>();
+	for (const o of outcomes) { byIndex.set(o.index, o); }
 
-		// Compile errors mean every remaining case will fail with the same
-		// payload — copy the error onto stub results so the UI shows them
-		// without re-running the same broken source.
-		const isCompileErr = r.error?.toLowerCase().includes('compil');
-		if (isCompileErr) {
-			for (let j = i + 1; j < tests.length; j++) {
-				const stub = baseResult(j, tests[j]);
-				stub.error = r.error;
-				results.push(stub);
-			}
-			break;
+	return tests.map((testCase, i) => {
+		const outcome = byIndex.get(i);
+		if (!outcome) {
+			const message = failure ? failure.message : 'no output';
+			return errorResult(i, testCase, message);
 		}
-	}
-	return results;
+		if (outcome.error !== undefined) {
+			const result = errorResult(i, testCase, outcome.error);
+			result.duration = outcome.ms;
+			return result;
+		}
+		const actual = outcome.actual ?? '';
+		return {
+			index:    i,
+			passed:   actual === canonicalJson(testCase.expected),
+			input:    testCase.input,
+			expected: testCase.expected,
+			actual,
+			duration: outcome.ms,
+		};
+	});
+}
+
+/** A failed result carrying `message` as its error. */
+function errorResult(index: number, testCase: TestCase, message: string): TestResult {
+	return {
+		index,
+		passed:   false,
+		input:    testCase.input,
+		expected: testCase.expected,
+		actual:   '',
+		duration: 0,
+		error:    message,
+	};
 }

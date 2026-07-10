@@ -4,7 +4,7 @@ import {
     generateTestHarness,
     jsonToLiteral,
 } from '../src/services/leetcode-codegen.service.js';
-import { defaultPracticeConfig } from '../src/services/leetcode-parser.service.js';
+import { defaultPracticeConfig, defaultTestConfig } from '../src/services/leetcode-parser.service.js';
 import type { ParsedLeetCode } from '../src/types/leetcode.types.js';
 
 /**
@@ -32,6 +32,8 @@ suite('leetcode-codegen', () => {
                 { input: { nums: [3, 2, 4], target: 6 }, expected: [1, 2] },
             ],
             setups:       [],
+            finalTests:   [],
+            test:         defaultTestConfig(),
             practice:     defaultPracticeConfig(),
             solutions:    [],
             ...overrides,
@@ -176,6 +178,22 @@ suite('leetcode-codegen', () => {
         test('nested array → nested literal for Python and JavaScript', () => {
             assert.strictEqual(jsonToLiteral([[1, 2], [3]], 'python'),     '[[1, 2], [3]]');
             assert.strictEqual(jsonToLiteral([[1, 2], [3]], 'javascript'), '[[1, 2], [3]]');
+        });
+
+        test('Java array literals carry a real element type', () => {
+            // `new Object[]{new int[]{…}}` does not compile against an `int[][]` param.
+            assert.strictEqual(
+                jsonToLiteral([[1, 2], [3]], 'java'),
+                'new int[][]{new int[]{1, 2}, new int[]{3}}',
+            );
+            assert.strictEqual(jsonToLiteral(['a', 'b'], 'java'),   'new String[]{"a", "b"}');
+            assert.strictEqual(jsonToLiteral([true, false], 'java'), 'new boolean[]{true, false}');
+            assert.strictEqual(jsonToLiteral([1.5, 2.5], 'java'),    'new double[]{1.5, 2.5}');
+        });
+
+        test('a heterogeneous or empty Java array degrades to Object[]', () => {
+            assert.strictEqual(jsonToLiteral([], 'java'),       'new Object[]{}');
+            assert.strictEqual(jsonToLiteral([1, 'a'], 'java'), 'new Object[]{1, "a"}');
         });
 
         test('object → JSON for JS, dict for Python', () => {

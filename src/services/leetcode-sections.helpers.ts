@@ -8,6 +8,7 @@ const SOLUTIONS_RE    = /^# Solutions\s*$/m;
 const SETUP_RE        = /^# Setup\s*$/m;
 const EXAMPLES_RE     = /^## Examples\s*$/m;
 const TESTS_RE        = /^## Tests\s*$/m;
+const FINAL_TESTS_RE  = /^## Final Tests\s*$/m;
 const EXAMPLE_FENCE   = /```example\r?\n([\s\S]*?)```/g;
 const JSON_FENCE      = /```json\r?\n([\s\S]*?)```/;
 const META_RE         = /<!-- meta:\s*(\{[\s\S]*?\})\s*-->/;
@@ -71,7 +72,35 @@ export function extractExamples(body: string): { input: string; output: string }
  * extractTests('## Tests\n```json\n[{ "input": { "x": 1 }, "expected": 2 }]\n```');
  */
 export function extractTests(body: string): TestCase[] {
-	const section = extractSection(body, TESTS_RE);
+	return extractJsonCases(body, TESTS_RE);
+}
+
+/**
+ * Parses the ` ```json ` block under `## Final Tests` into an array of
+ * `TestCase` — the hidden grading suite.
+ *
+ * Returns `[]` for a missing section, missing fence, or malformed JSON. The
+ * *fallback* for a legacy artifact with no such section is deliberately not
+ * applied here: the parser reports what the file contains, and `submitSuite()`
+ * decides what Submit runs.
+ *
+ * `TESTS_RE` is anchored (`/^## Tests\s*$/m`), so `## Final Tests` cannot match
+ * it, and `extractSection` stops each slice at the next heading — the two
+ * sections cannot swallow each other in either order.
+ *
+ * @param body - Content after the frontmatter.
+ * @returns Parsed grading cases.
+ *
+ * @example
+ * extractFinalTests('## Final Tests\n```json\n[{ "input": { "x": 9 }, "expected": 81 }]\n```');
+ */
+export function extractFinalTests(body: string): TestCase[] {
+	return extractJsonCases(body, FINAL_TESTS_RE);
+}
+
+/** Shared slice-then-parse for the two `TestCase[]` sections. Never throws. */
+function extractJsonCases(body: string, headingRe: RegExp): TestCase[] {
+	const section = extractSection(body, headingRe);
 	if (!section) { return []; }
 	const fence = JSON_FENCE.exec(section);
 	if (!fence) { return []; }

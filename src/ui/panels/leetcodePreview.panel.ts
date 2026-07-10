@@ -1,3 +1,4 @@
+import { resolveLangId } from '../../services/language-map.service.js';
 import type {
 	ParsedLeetCode,
 	TestResult,
@@ -8,6 +9,7 @@ import {
 	renderLanguageRow,
 	renderPracticeControls,
 	renderSetups,
+	renderTestCounts,
 } from './leetcodePreview.controls.js';
 
 /**
@@ -18,37 +20,41 @@ import {
  *   - badges row: difficulty pill, status pill, algorithm tag
  *   - description paragraph
  *   - `## Examples` cards (one per parsed example)
- *   - test-case count line
- *   - language `<select id="langSelector">`
+ *   - test-count line (`2 public tests · 3 final tests`)
+ *   - language `<select id="langSelector">`, filtered by the env registry
  *   - `# Setup` starter-code blocks
  *   - reference solutions (collapsed behind a `<details>` — spoilers)
  *   - practice-mode checkboxes + time-limit input
- *   - `<button id="solveBtn">` / `<button id="submitBtn">`
- *   - `<div id="results">` results sink (populated by the webview script)
+ *   - Run Tests / Solve It / Submit
+ *   - `<div id="results">` results sink
  *
- * @param parsed    - Fully parsed LeetCode artifact.
- * @param cssUri    - Webview URI for the shared stylesheet.
- * @param cspSource - Webview CSP source token (passed through into `<meta>`).
+ * @param parsed      - Fully parsed LeetCode artifact.
+ * @param cssUri      - Webview URI for the shared stylesheet.
+ * @param cspSource   - Webview CSP source token (passed through into `<meta>`).
+ * @param resultsHtml - Results markup to seed the sink with. Reassigning
+ *   `webview.html` restarts the webview, so a result table posted immediately
+ *   afterwards can land before the listener is attached and be dropped —
+ *   seeding it into the document instead removes that race.
  * @returns Complete HTML document string.
  *
  * @example
  * renderLeetCodePreviewHtml(parsed, cssUri, panel.webview.cspSource);
  */
 export function renderLeetCodePreviewHtml(
-	parsed: ParsedLeetCode, cssUri: string, cspSource: string,
+	parsed: ParsedLeetCode, cssUri: string, cspSource: string, resultsHtml = '',
 ): string {
 	const body = [
 		`<h1 class="leet-title">${escHtml(parsed.title)}</h1>`,
 		renderBadgesRow(parsed),
 		renderDescription(parsed),
 		renderExamples(parsed),
-		renderTestsCount(parsed),
+		renderTestCounts(parsed),
 		renderLanguageRow(parsed),
 		renderSetups(parsed),
 		renderSolutionsSection(parsed),
 		renderPracticeControls(parsed),
-		renderActions(),
-		'<div id="results" class="results-container"></div>',
+		renderActions(parsed),
+		`<div id="results" class="results-container">${resultsHtml}</div>`,
 	].join('\n');
 
 	return shell(body, cssUri, cspSource);
@@ -59,7 +65,7 @@ export function renderLeetCodePreviewHtml(
  *
  * Includes a summary banner (`results-summary` with `all-pass` / `has-fail`
  * modifier) plus one row per result tagged `test-pass`, `test-fail`, or
- * `test-error`.
+ * `test-error`. Rows carrying `kind: 'final'` have their input masked.
  *
  * @param results - Ordered list of `TestResult` objects from the runner.
  * @returns HTML fragment ready to inject into the results sink.
@@ -116,11 +122,6 @@ function renderExamples(p: ParsedLeetCode): string {
 	return `<div class="slabel">Examples</div>${cards}`;
 }
 
-/** Render the inline test-case count line. */
-function renderTestsCount(p: ParsedLeetCode): string {
-	return `<div class="tests-count">${p.tests.length} test cases</div>`;
-}
-
 /**
  * Render the reference solutions, collapsed behind a `<details>` element.
  *
@@ -132,9 +133,10 @@ function renderSolutionsSection(p: ParsedLeetCode): string {
 
 	const blocks = p.solutions.map((s, i) => {
 		const labelTxt = s.label ? `${s.label} — ` : '';
+		const langId = resolveLangId(s.language);
 		return [
-			`<div class="solution-block" data-language="${escHtml(s.language)}" data-index="${i}">`,
-			`<div class="slabel">${escHtml(labelTxt)}${escHtml(s.language)}</div>`,
+			`<div class="solution-block" data-language="${escHtml(langId)}" data-index="${i}">`,
+			`<div class="slabel">${escHtml(labelTxt)}${escHtml(langId)}</div>`,
 			`<pre class="code"><code>${escHtml(s.code)}</code></pre>`,
 			'</div>',
 		].join('');
@@ -148,16 +150,35 @@ function renderSolutionsSection(p: ParsedLeetCode): string {
 	].join('\n');
 }
 
-/** Render a single result row, branching on pass / fail / error. */
+/**
+ * Render a single result row, branching on pass / fail / error.
+ *
+ * A `final` case never reveals its input or its expected value — only the label
+ * `Final #N`, the outcome, and the duration. Otherwise the grading suite would
+ * be readable straight off the results table after one deliberate failure.
+ */
 function renderResultRow(r: TestResult): string {
+	const isFinal = r.kind === 'final';
+	const label = isFinal ? `Final #${r.index + 1}` : `#${r.index + 1}`;
+
 	if (r.error) {
 		return [
-			`<div class="test-row test-error">`,
-			`<div><strong>#${r.index + 1}</strong> error: ${escHtml(r.error)}</div>`,
-			`</div>`,
+			'<div class="test-row test-error">',
+			`<div><strong>${label}</strong> error: ${escHtml(r.error)}</div>`,
+			'</div>',
 		].join('');
 	}
+
 	const cls = r.passed ? 'test-pass' : 'test-fail';
+	if (isFinal) {
+		return [
+			`<div class="test-row ${cls}">`,
+			`<div><strong>${label}</strong> input: <span class="masked">hidden</span></div>`,
+			`<div class="duration">${r.duration} ms</div>`,
+			'</div>',
+		].join('');
+	}
+
 	const expected = JSON.stringify(r.expected);
 	const inputStr = JSON.stringify(r.input);
 	const actualLine = r.passed
@@ -165,11 +186,11 @@ function renderResultRow(r: TestResult): string {
 		: `<div>actual: <code>${escHtml(r.actual)}</code></div>`;
 	return [
 		`<div class="test-row ${cls}">`,
-		`<div><strong>#${r.index + 1}</strong> input: <code>${escHtml(inputStr)}</code></div>`,
+		`<div><strong>${label}</strong> input: <code>${escHtml(inputStr)}</code></div>`,
 		`<div>expected: <code>${escHtml(expected)}</code></div>`,
 		actualLine,
 		`<div class="duration">${r.duration} ms</div>`,
-		`</div>`,
+		'</div>',
 	].join('');
 }
 
@@ -177,10 +198,11 @@ function renderResultRow(r: TestResult): string {
  * HTML shell — wraps the body, links the stylesheet, declares CSP for inline
  * scripts.
  *
- * The inline script owns three interactions: hiding every setup/solution block
+ * The inline script owns four interactions: hiding every setup/solution block
  * that does not match the selected language, gathering the practice-option
- * checkboxes plus the time limit into the `solveIt` payload, and swapping the
- * results HTML the extension posts back.
+ * checkboxes plus the time limit into the `solveIt` payload, gating the Run
+ * Tests button on the `challengeState` message, and swapping in the results
+ * HTML the extension posts back.
  *
  * @param body      - Inner HTML to place inside `<body>`.
  * @param cssUri    - Webview URI for the shared stylesheet.
@@ -205,6 +227,7 @@ ${body}
 (function () {
 	const vscode = acquireVsCodeApi();
 	const sel = document.getElementById('langSelector');
+	const runTestsBtn = document.getElementById('runTestsBtn');
 	const solveBtn = document.getElementById('solveBtn');
 	const submitBtn = document.getElementById('submitBtn');
 	const timeLimitEl = document.getElementById('timeLimit');
@@ -240,6 +263,9 @@ ${body}
 			timeLimitMinutes: timeLimitMinutes(),
 		}));
 	}
+	if (runTestsBtn) {
+		runTestsBtn.addEventListener('click', () => vscode.postMessage({ command: 'runTests', language: currentLang() }));
+	}
 	if (submitBtn) {
 		submitBtn.addEventListener('click', () => vscode.postMessage({ command: 'submit', language: currentLang() }));
 	}
@@ -256,6 +282,9 @@ ${body}
 		const msg = event.data || {};
 		if (msg.command === 'testResults' && resultsEl) {
 			resultsEl.innerHTML = msg.html || '';
+		}
+		if (msg.command === 'challengeState' && runTestsBtn) {
+			runTestsBtn.disabled = !msg.active;
 		}
 	});
 })();

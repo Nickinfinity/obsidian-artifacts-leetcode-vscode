@@ -25,6 +25,51 @@ export interface ParamDef {
 }
 
 /**
+ * How a challenge's tests are executed.
+ *
+ * Only `function` has environments registered today; the rest parse and
+ * validate but resolve to no language, which is the correct self-explaining
+ * failure (the panel offers nothing to select).
+ *
+ * - `function`      — call a free function with positional args, compare the return
+ * - `class`         — instantiate, invoke a method sequence, compare the returns
+ * - `stdin-stdout`  — feed raw stdin, compare trimmed stdout
+ * - `in-place`      — compare a mutated argument rather than the return value
+ */
+export type TestTypeId = 'function' | 'class' | 'stdin-stdout' | 'in-place';
+
+/** One entry in the `TEST_TYPES` capability table. */
+export interface TestType {
+	/** Stable id, as written in the `test.type` frontmatter field */
+	id: TestTypeId;
+	/** Whether an environment exists for this type today */
+	status: 'implemented' | 'reserved';
+	/** One-line description of the execution semantics */
+	description: string;
+}
+
+/**
+ * Execution configuration for a challenge, from the `test:` frontmatter block.
+ *
+ * Structurally a sibling of `PracticeConfig`. An absent block yields
+ * `{ type: 'function', timeoutMs: 5000 }`.
+ */
+export interface TestConfig {
+	/** Execution strategy — selects the test environment alongside the language */
+	type: TestTypeId;
+	/** Per-case budget in ms; the suite budget is `cases × this`, capped at 60 s */
+	timeoutMs: number;
+}
+
+/**
+ * Which suite a result came from.
+ *
+ * `final` cases are hidden from the solver — their inputs and expected values
+ * are never rendered, only pass/fail and duration.
+ */
+export type TestSuiteKind = 'public' | 'final';
+
+/**
  * A single test case for a LeetCode problem.
  *
  * Inputs are passed by argument name; the expected value is compared by deep
@@ -58,6 +103,11 @@ export interface TestResult {
 	duration: number;
 	/** Error message when the runner failed (compile error, throw, timeout, …) */
 	error?: string;
+	/**
+	 * Which suite this case belongs to. Optional so the runner never learns
+	 * about suites — it is stamped on afterwards by `tagSuiteKinds`.
+	 */
+	kind?: TestSuiteKind;
 }
 
 /**
@@ -166,8 +216,16 @@ export interface ParsedLeetCode {
 	description: string;
 	/** Inline `Input → Output` examples shown in the preview */
 	examples: { input: string; output: string }[];
-	/** Test cases run against the candidate function */
+	/** Public test cases from `## Tests` — visible, run by Run Tests */
 	tests: TestCase[];
+	/**
+	 * Grading cases from `## Final Tests` — hidden, appended by Submit. Raw:
+	 * `[]` when the section is absent. The legacy fallback (Submit grades the
+	 * public list) is resolved in `submitSuite`, never in the parser.
+	 */
+	finalTests: TestCase[];
+	/** Execution configuration from the `test:` frontmatter block */
+	test: TestConfig;
 	/** Per-language starter stubs from the `# Setup` section */
 	setups: ExerciseSetup[];
 	/** Practice-mode defaults declared by the artifact (or library defaults) */

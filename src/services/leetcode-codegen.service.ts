@@ -274,13 +274,39 @@ function boolLiteral(value: boolean, language: string): string {
 function arrayLiteral(arr: unknown[], language: string): string {
 	const items = arr.map(x => jsonToLiteral(x, language)).join(', ');
 	if (language === 'java') {
-		const allInt = arr.every(e => typeof e === 'number' && Number.isInteger(e));
-		if (allInt) { return `new int[]{${items}}`; }
-		const allStr = arr.every(e => typeof e === 'string');
-		if (allStr) { return `new String[]{${items}}`; }
-		return `new Object[]{${items}}`;
+		return `new ${javaElementType(arr)}[]{${items}}`;
 	}
 	return `[${items}]`;
+}
+
+/**
+ * Infer the Java element type of an array literal from its contents.
+ *
+ * Recurses through nested arrays so a matrix yields `int[]` (making the whole
+ * literal `new int[][]{…}`). Without this, a `[[1,2],[3,4]]` argument renders as
+ * `new Object[]{…}` and fails to compile against an `int[][]` parameter.
+ *
+ * A heterogeneous or empty array degrades to `Object`, which compiles wherever
+ * an `Object[]` is accepted and fails loudly where it is not — the honest
+ * outcome for a test case whose shape the type system cannot recover.
+ *
+ * @param arr - Array whose element type is needed.
+ * @returns Java type name, e.g. `'int'`, `'String'`, `'int[]'`.
+ *
+ * @example
+ * javaElementType([1, 2]);       // → 'int'
+ * javaElementType([[1], [2]]);   // → 'int[]'
+ */
+function javaElementType(arr: unknown[]): string {
+	if (arr.length === 0) { return 'Object'; }
+	if (arr.every(e => typeof e === 'number' && Number.isInteger(e))) { return 'int'; }
+	if (arr.every(e => typeof e === 'number'))  { return 'double'; }
+	if (arr.every(e => typeof e === 'string'))  { return 'String'; }
+	if (arr.every(e => typeof e === 'boolean')) { return 'boolean'; }
+	if (arr.every(e => Array.isArray(e))) {
+		return `${javaElementType(arr[0] as unknown[])}[]`;
+	}
+	return 'Object';
 }
 
 /** Format an object as a language-specific dict/object literal. */

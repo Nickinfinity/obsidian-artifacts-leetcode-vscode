@@ -3,7 +3,7 @@ import {
     renderLeetCodePreviewHtml,
     renderTestResultsHtml,
 } from '../src/ui/panels/leetcodePreview.panel.js';
-import { defaultPracticeConfig } from '../src/services/leetcode-parser.service.js';
+import { defaultPracticeConfig, defaultTestConfig } from '../src/services/leetcode-parser.service.js';
 import { PRACTICE_OPTIONS } from '../src/types/constants.js';
 import type { ParsedLeetCode, TestResult } from '../src/types/leetcode.types.js';
 
@@ -36,6 +36,8 @@ suite('leetcodePreview', () => {
             setups:       [
                 { language: 'java',   code: 'static int[] twoSum(int[] nums, int target) {}' },
             ],
+            finalTests:   [],
+            test:         defaultTestConfig(),
             practice:     defaultPracticeConfig(),
             solutions:    [
                 { language: 'java',   label: 'Brute Force', code: '// java code'   },
@@ -100,7 +102,7 @@ suite('leetcodePreview', () => {
 
         test('shows the test case count', () => {
             const html = renderLeetCodePreviewHtml(fixture(), css, csp);
-            assert.ok(/2 test cases/.test(html));
+            assert.ok(/2 tests/.test(html));
         });
 
         test('lists solutions grouped by language, each with label when present', () => {
@@ -111,17 +113,42 @@ suite('leetcodePreview', () => {
             assert.ok(html.includes('Brute Force'));
         });
 
-        test('exposes solveBtn / submitBtn / langSelector ids', () => {
+        test('exposes runTestsBtn / solveBtn / submitBtn / langSelector ids', () => {
             const html = renderLeetCodePreviewHtml(fixture(), css, csp);
+            assert.ok(html.includes('id="runTestsBtn"'));
             assert.ok(html.includes('id="solveBtn"'));
             assert.ok(html.includes('id="submitBtn"'));
             assert.ok(html.includes('id="langSelector"'));
         });
 
-        test('no longer renders a Run Tests button', () => {
+        test('Run Tests renders disabled until a challenge is live', () => {
             const html = renderLeetCodePreviewHtml(fixture(), css, csp);
-            assert.ok(!html.includes('id="runTestsBtn"'));
-            assert.ok(!html.includes('Run Tests'));
+            assert.ok(/id="runTestsBtn"[^>]*disabled/.test(html));
+        });
+
+        test('the webview script re-gates Run Tests on the challengeState message', () => {
+            const html = renderLeetCodePreviewHtml(fixture(), css, csp);
+            assert.ok(html.includes("msg.command === 'challengeState'"));
+            assert.ok(html.includes('runTestsBtn.disabled = !msg.active;'));
+        });
+
+        test('the results sink is empty by default', () => {
+            const html = renderLeetCodePreviewHtml(fixture(), css, csp);
+            assert.ok(html.includes('<div id="results" class="results-container"></div>'));
+        });
+
+        test('seeded results html lands inside the results sink', () => {
+            const html = renderLeetCodePreviewHtml(fixture(), css, csp, '<b>seeded</b>');
+            assert.ok(html.includes('<div id="results" class="results-container"><b>seeded</b></div>'));
+        });
+
+        test('counts line splits public and final when a grading suite exists', () => {
+            const withFinal = fixture({ finalTests: [{ input: { nums: [987654] }, expected: [7] }] });
+            const html = renderLeetCodePreviewHtml(withFinal, css, csp);
+            assert.ok(/2 public tests/.test(html));
+            assert.ok(/1 final tests/.test(html));
+            // The hidden case's data must not appear anywhere in the document.
+            assert.ok(!html.includes('987654'));
         });
 
         test('renders the setup starter block for each language', () => {
@@ -151,8 +178,8 @@ suite('leetcodePreview', () => {
             });
             const html = renderLeetCodePreviewHtml(locked, css, csp);
             const disabled = html.match(/ disabled>/g) ?? [];
-            // one per checkbox + the time-limit input
-            assert.strictEqual(disabled.length, PRACTICE_OPTIONS.length + 1);
+            // one per checkbox + the time-limit input + the always-disabled Run Tests button
+            assert.strictEqual(disabled.length, PRACTICE_OPTIONS.length + 2);
         });
 
         test('reference solutions are collapsed behind a details element', () => {
@@ -219,6 +246,80 @@ suite('leetcodePreview', () => {
             assert.ok(/0\s*\/\s*0\s+passed/i.test(html));
         });
 
+        // ── Final-case masking ────────────────────────────────────────────────
+
+        suite('final-case masking', () => {
+
+            const finalPass = (i: number): TestResult => ({
+                index: i, passed: true, input: { secret: 987654 },
+                expected: 'sekrit', actual: '"sekrit"', duration: 7, kind: 'final',
+            });
+
+            const finalFail = (i: number): TestResult => ({
+                index: i, passed: false, input: { secret: 987654 },
+                expected: 'sekrit', actual: '"wrong"', duration: 7, kind: 'final',
+            });
+
+            const publicFail = (i: number): TestResult => ({
+                index: i, passed: false, input: { x: 42 },
+                expected: 1, actual: '2', duration: 1, kind: 'public',
+            });
+
+            test('a passing final row hides its input, expected, and actual', () => {
+                const html = renderTestResultsHtml([finalPass(2)]);
+                assert.ok(html.includes('<span class="masked">hidden</span>'));
+                assert.ok(!html.includes('987654'));
+                assert.ok(!html.includes('sekrit'));
+            });
+
+            test('a failing final row still hides everything but the verdict', () => {
+                const html = renderTestResultsHtml([finalFail(2)]);
+                assert.ok(html.includes('test-fail'));
+                assert.ok(!html.includes('987654'));
+                assert.ok(!html.includes('sekrit'));
+                assert.ok(!html.includes('wrong'));
+            });
+
+            test('final rows are labelled Final #N', () => {
+                assert.ok(renderTestResultsHtml([finalPass(2)]).includes('Final #3'));
+            });
+
+            test('final rows still show pass/fail and duration', () => {
+                const html = renderTestResultsHtml([finalPass(0)]);
+                assert.ok(html.includes('test-pass'));
+                assert.ok(html.includes('7 ms'));
+            });
+
+            test('public rows are unmasked and keep the plain #N label', () => {
+                const html = renderTestResultsHtml([publicFail(0)]);
+                assert.ok(html.includes('42'));
+                assert.ok(html.includes('actual:'));
+                assert.ok(!html.includes('masked'));
+                assert.ok(html.includes('#1'));
+            });
+
+            test('an untagged result renders as public — the runner is suite-blind', () => {
+                const html = renderTestResultsHtml([failResult(0)]);
+                assert.ok(!html.includes('masked'));
+            });
+
+            test('a mixed run masks only the final rows', () => {
+                const html = renderTestResultsHtml([publicFail(0), finalPass(1)]);
+                assert.strictEqual((html.match(/masked/g) ?? []).length, 1);
+                assert.ok(html.includes('42'));
+            });
+
+            test('an errored final row reports the error but not the input', () => {
+                const errored: TestResult = {
+                    index: 1, passed: false, input: { secret: 987654 }, expected: 0,
+                    actual: '', duration: 0, error: 'timeout', kind: 'final',
+                };
+                const html = renderTestResultsHtml([errored]);
+                assert.ok(html.includes('timeout'));
+                assert.ok(html.includes('Final #2'));
+                assert.ok(!html.includes('987654'));
+            });
+        });
     });
 
 });

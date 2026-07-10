@@ -1,53 +1,49 @@
 import * as vscode from 'vscode';
 import { parseLeetCode } from '../services/leetcode-parser.service.js';
-import {
-	generateBoilerplate,
-	injectSolution,
-} from '../services/leetcode-codegen.service.js';
-import {
-	detectRuntime,
-	runAllTests,
-} from '../services/leetcode-runner.service.js';
-import {
-	activeChallenge,
-	endChallenge,
-	startChallenge,
-} from '../services/leetcode-challenge.service.js';
+import { endChallenge, startChallenge } from '../services/leetcode-challenge.service.js';
 import { resolveLangId } from '../services/language-map.service.js';
-import {
-	renderLeetCodePreviewHtml,
-	renderTestResultsHtml,
-} from '../ui/panels/leetcodePreview.panel.js';
-import { patchFrontmatterField } from '../services/frontmatter-patcher.service.js';
-import { javaRunner }   from '../services/lang-runners/java.runner.js';
-import { jsRunner }     from '../services/lang-runners/javascript.runner.js';
-import { pythonRunner } from '../services/lang-runners/python.runner.js';
+import { renderLeetCodePreviewHtml } from '../ui/panels/leetcodePreview.panel.js';
 import { validateObsidianVault } from '../services/vault.service.js';
 import { getVaultPath } from '../services/vault-path.store.js';
-import { SOLUTION_MARKER } from '../types/constants.js';
 import type {
-	LangRunner,
 	ParsedLeetCode,
 	PracticeConfig,
 	PracticeOptionId,
 } from '../types/leetcode.types.js';
+import {
+	handleRunTests,
+	handleSubmit,
+	postChallengeState,
+} from './leetcode-run.handlers.js';
 
-/** Markdown fence delimiter — kept as a constant so regexes can stay `String.raw`. */
-const FENCE = '```';
+/**
+ * Per-panel session state shared with the run handlers.
+ *
+ * `parsed` is mutated in place when a run changes the artifact's status, so the
+ * next `renderLeetCodePreviewHtml` reflects it without re-reading the file.
+ */
+export interface PanelCtx {
+	context: vscode.ExtensionContext;
+	panel: vscode.WebviewPanel;
+	fileUri: vscode.Uri;
+	parsed: ParsedLeetCode;
+	cssUri: string;
+}
 
-/** Lookup table of language id → built-in runner config. */
-const RUNNERS: Record<string, LangRunner> = {
-	java:       javaRunner,
-	javascript: jsRunner,
-	python:     pythonRunner,
-};
+/** Webview → extension message shapes the orchestrator understands. */
+interface WebviewMsg {
+	command: 'solveIt' | 'runTests' | 'submit' | 'selectLanguage';
+	language?: string;
+	options?: string[];
+	timeLimitMinutes?: number;
+}
 
 /**
  * Opens the LeetCode picker rooted at the `LeetCode/` artifact directory.
  *
  * Lists `.md` files via a QuickPick. On selection the file is parsed via
  * `parseLeetCode` and a dedicated webview panel is opened to drive the
- * Solve-It / Submit flow.
+ * Solve-It / Run-Tests / Submit flow.
  *
  * @param context      - Extension context owning the vault path and temp storage.
  * @param dir          - Artifact directory name (always `'LeetCode'`).
@@ -118,10 +114,8 @@ async function pickLeetCodeFile(rootUri: vscode.Uri): Promise<vscode.Uri | null>
 /**
  * Creates and wires up a LeetCode-specific webview panel for an artifact.
  *
- * The panel hosts the rendered HTML from `renderLeetCodePreviewHtml` and routes
- * incoming `solveIt` / `submit` / `selectLanguage` messages. Disposing the
- * panel ends any challenge it started, so editor restrictions never outlive the
- * window that imposed them.
+ * Disposing the panel ends any challenge it started, so editor restrictions
+ * never outlive the window that imposed them.
  *
  * @param context      - Extension context owning `globalStorageUri`.
  * @param fileUri      - Path to the `.md` artifact (used for frontmatter patches).
@@ -152,7 +146,7 @@ function openLeetCodePreviewPanel(
 		vscode.Uri.joinPath(extensionUri, 'src', 'ui', 'styles.css'),
 	).toString();
 
-	const ctx: SessionCtx = { context, panel, fileUri, parsed, cssUri };
+	const ctx: PanelCtx = { context, panel, fileUri, parsed, cssUri };
 
 	panel.webview.html = renderLeetCodePreviewHtml(parsed, cssUri, panel.webview.cspSource);
 
@@ -165,34 +159,16 @@ function openLeetCodePreviewPanel(
 	});
 }
 
-/** Per-panel session state passed to every message handler. */
-interface SessionCtx {
-	context: vscode.ExtensionContext;
-	panel: vscode.WebviewPanel;
-	fileUri: vscode.Uri;
-	parsed: ParsedLeetCode;
-	cssUri: string;
-}
-
-/** Webview → extension message shapes the orchestrator understands. */
-interface WebviewMsg {
-	command: 'solveIt' | 'submit' | 'selectLanguage';
-	language?: string;
-	options?: string[];
-	timeLimitMinutes?: number;
-}
-
 /** Route a webview message to the appropriate handler. */
-async function routeMessage(ctx: SessionCtx, msg: WebviewMsg): Promise<void> {
+async function routeMessage(ctx: PanelCtx, msg: WebviewMsg): Promise<void> {
 	if (msg.command === 'solveIt')             { await handleSolveIt(ctx, msg); }
+	else if (msg.command === 'runTests')       { await handleRunTests(ctx, msg.language); }
 	else if (msg.command === 'submit')         { await handleSubmit(ctx, msg.language); }
 	else if (msg.command === 'selectLanguage') { handleSelectLanguage(ctx, msg.language); }
 }
 
-// ── Solve It ──────────────────────────────────────────────────────────────────
-
 /**
- * Handle a "solveIt" message — open the starter file and arm practice mode.
+ * Handle a `solveIt` message — open the starter file and arm practice mode.
  *
  * The artifact wins over the webview when `practice.locked` is set: a locked
  * exercise cannot have its restrictions or its clock relaxed by editing the
@@ -204,7 +180,7 @@ async function routeMessage(ctx: SessionCtx, msg: WebviewMsg): Promise<void> {
  * @example
  * await handleSolveIt(ctx, { command: 'solveIt', language: 'javascript', options: [], timeLimitMinutes: 30 });
  */
-async function handleSolveIt(ctx: SessionCtx, msg: WebviewMsg): Promise<void> {
+async function handleSolveIt(ctx: PanelCtx, msg: WebviewMsg): Promise<void> {
 	if (!msg.language) {
 		void vscode.window.showErrorMessage('Pick a language before starting the challenge.');
 		return;
@@ -213,6 +189,7 @@ async function handleSolveIt(ctx: SessionCtx, msg: WebviewMsg): Promise<void> {
 	const config = effectivePracticeConfig(ctx.parsed, msg);
 
 	await startChallenge(ctx.context, ctx.parsed, langId, config);
+	postChallengeState(ctx, true);
 }
 
 /**
@@ -234,180 +211,11 @@ function effectivePracticeConfig(parsed: ParsedLeetCode, msg: WebviewMsg): Pract
 	};
 }
 
-// ── Submit ────────────────────────────────────────────────────────────────────
-
 /**
- * Handle a "submit" message — run every test case against the user's attempt.
- *
- * The candidate source is the live text of the temp exercise file when a
- * challenge is running in this language (unsaved edits included), falling back
- * to the artifact's stored solution otherwise — so Submit still works when the
- * panel is opened purely to check in a solution already written into the `.md`.
- *
- * @param ctx      - Panel session state.
- * @param language - Language id chosen in the panel.
- *
- * @example
- * await handleSubmit(ctx, 'python');
- */
-async function handleSubmit(ctx: SessionCtx, language: string | undefined): Promise<void> {
-	if (!language) { return; }
-	const langId = resolveLangId(language);
-
-	const runner = RUNNERS[langId];
-	if (!runner) {
-		void vscode.window.showErrorMessage(`Unsupported language: ${langId}.`);
-		return;
-	}
-
-	const code = await candidateSource(ctx, langId);
-	if (code === null) {
-		void vscode.window.showErrorMessage(`No ${langId} attempt found. Press "Solve It" first.`);
-		return;
-	}
-
-	const available = await detectRuntime(runner);
-	if (!available) {
-		void vscode.window.showErrorMessage(`Runtime not found. Install ${runner.displayName} to run tests.`);
-		return;
-	}
-
-	const source  = buildExecutable(ctx.parsed, langId, code);
-	const results = await runAllTests(source, ctx.parsed.tests, runner, ctx.parsed);
-	postResults(ctx, results);
-
-	const allPassed = results.length > 0 && results.every(r => r.passed);
-	if (!allPassed) { return; }
-
-	await finishSolved(ctx, langId);
-	postResults(ctx, results);
-}
-
-/**
- * The source text to test: the live attempt buffer, else a stored solution.
- *
- * @param ctx    - Panel session state.
- * @param langId - Canonical language id.
- * @returns Candidate source, or `null` when nothing is available.
- *
- * @example
- * await candidateSource(ctx, 'javascript');
- */
-async function candidateSource(ctx: SessionCtx, langId: string): Promise<string | null> {
-	const session = activeChallenge();
-	if (session?.langId === langId) {
-		const open = vscode.workspace.textDocuments
-			.find(d => d.uri.toString() === session.fileUri.toString());
-		if (open) { return open.getText(); }
-		const bytes = await vscode.workspace.fs.readFile(session.fileUri);
-		return new TextDecoder().decode(bytes);
-	}
-
-	const stored = ctx.parsed.solutions.find(s => resolveLangId(s.language) === langId);
-	return stored ? stored.code : null;
-}
-
-/**
- * Build the executable source for a run.
- *
- * Source that already carries the `<<SOLUTION>>` marker is treated as a
- * complete Layer-3 override file. Source that is a whole file in its own right
- * (a `# Setup` stub the user filled in — it declares its own function) is used
- * verbatim and the harness is appended around it by the runner. Anything else
- * is a bare function body and gets wrapped in generated boilerplate.
- *
- * @param parsed - Parsed artifact.
- * @param langId - Canonical language id.
- * @param code   - Candidate source.
- * @returns Full source text ready to compile/run.
- *
- * @example
- * buildExecutable(parsed, 'python', 'def two_sum(nums, target): return [0, 1]');
- */
-function buildExecutable(parsed: ParsedLeetCode, langId: string, code: string): string {
-	if (code.includes(SOLUTION_MARKER)) { return injectSolution(code, ''); }
-
-	const declaresFunction = new RegExp(String.raw`\b${escapeRe(parsed.functionName)}\s*\(`).test(code);
-	if (declaresFunction) { return code; }
-
-	return injectSolution(generateBoilerplate(parsed, langId), code);
-}
-
-/** Escape a string for literal use inside a RegExp. */
-function escapeRe(literal: string): string {
-	return literal.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
-}
-
-/** Post results back into the webview's results sink. */
-function postResults(ctx: SessionCtx, results: Awaited<ReturnType<typeof runAllTests>>): void {
-	void ctx.panel.webview.postMessage({
-		command: 'testResults',
-		html:    renderTestResultsHtml(results),
-	});
-}
-
-/**
- * Stop the clock, persist `status: solved`, restore the editor, re-render.
- *
- * @param ctx    - Panel session state.
- * @param langId - Canonical language id whose solution receives the meta comment.
- *
- * @example
- * await finishSolved(ctx, 'python');
- */
-async function finishSolved(ctx: SessionCtx, langId: string): Promise<void> {
-	const session = activeChallenge();
-	let duration: string | null = null;
-	if (session?.timer.isRunning()) { duration = session.timer.stop(); }
-
-	await endChallenge();
-	await persistSolved(ctx.fileUri, langId, duration);
-
-	ctx.parsed.status = 'solved';
-	ctx.panel.webview.html = renderLeetCodePreviewHtml(
-		ctx.parsed, ctx.cssUri, ctx.panel.webview.cspSource,
-	);
-}
-
-/**
- * Persist the "solved" status and optional duration metadata into the `.md`
- * file.
- *
- * Writes `status: solved` into the frontmatter via `patchFrontmatterField`.
- * When `duration` is supplied, inserts a `<!-- meta: { … } -->` comment
- * immediately before the first fenced code block for `language`.
- *
- * @param fileUri  - Path to the `.md` artifact.
- * @param language - Language id whose solution should receive the meta comment.
- * @param duration - Optional `XmYs` formatted timer result.
- *
- * @example
- * await persistSolved(fileUri, 'python', '3m12s');
- */
-async function persistSolved(
-	fileUri: vscode.Uri, language: string, duration: string | null,
-): Promise<void> {
-	const raw = new TextDecoder().decode(await vscode.workspace.fs.readFile(fileUri));
-	let next = patchFrontmatterField(raw, 'status', 'solved');
-
-	if (duration) {
-		const meta = `<!-- meta: { "solved_at": "${new Date().toISOString()}", "duration": "${duration}" } -->`;
-		const fenceRe = new RegExp(String.raw`(^|\n)(${FENCE}${escapeRe(language)}\r?\n)`);
-		const m = fenceRe.exec(next);
-		if (m) {
-			const insertAt = m.index + m[1].length;
-			next = `${next.slice(0, insertAt)}${meta}\n${next.slice(insertAt)}`;
-		}
-	}
-
-	await vscode.workspace.fs.writeFile(fileUri, new TextEncoder().encode(next));
-}
-
-/**
- * Handle a "selectLanguage" message — no state change today; the webview
+ * Handle a `selectLanguage` message — no state change today; the webview
  * already drives the visible blocks. Hook left in place so future iterations
  * can re-render the panel with the chosen language highlighted.
  */
-function handleSelectLanguage(_ctx: SessionCtx, _language: string | undefined): void {
+function handleSelectLanguage(_ctx: PanelCtx, _language: string | undefined): void {
 	// Intentionally a no-op for now — the webview script handles UI state.
 }

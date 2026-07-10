@@ -1,4 +1,4 @@
-import type { PracticeOption } from './leetcode.types.js';
+import type { PracticeOption, TestType } from './leetcode.types.js';
 
 /**
  * Markdown code-fence shorthand → canonical VS Code `languageId`.
@@ -152,6 +152,61 @@ export const PRACTICE_OPTIONS: readonly PracticeOption[] = [
 		},
 	},
 ];
+
+/**
+ * Execution strategies a challenge may declare via `test.type`.
+ *
+ * Only `function` has environments registered (see `test-envs/`). A reserved id
+ * parses and validates, but `languagesForType()` resolves it to `[]`, so the
+ * panel offers no selectable language — the correct, self-explaining failure
+ * rather than a run that dies inside a compiler.
+ *
+ * @example
+ * TEST_TYPES.find(t => t.id === 'function')?.status; // → 'implemented'
+ */
+export const TEST_TYPES: readonly TestType[] = [
+	{
+		id: 'function',
+		status: 'implemented',
+		description: 'Call a free function with positional args, compare the return value.',
+	},
+	{
+		id: 'class',
+		status: 'reserved',
+		description: 'Instantiate, invoke a method sequence, compare the sequence of returns (LRUCache, MinStack).',
+	},
+	{
+		id: 'stdin-stdout',
+		status: 'reserved',
+		description: 'Feed raw stdin, compare trimmed stdout.',
+	},
+	{
+		id: 'in-place',
+		status: 'reserved',
+		description: 'Compare a mutated argument rather than the return value (removeDuplicates).',
+	},
+];
+
+/** Test type assumed when the artifact declares no `test:` block. */
+export const DEFAULT_TEST_TYPE = 'function';
+
+/** Per-case execution budget when `test.timeoutMs` is absent or unusable. */
+export const DEFAULT_TEST_TIMEOUT_MS = 5_000;
+
+/** Floor on `test.timeoutMs` — anything smaller is a typo, not an intention. */
+export const MIN_TEST_TIMEOUT_MS = 100;
+
+/** Hard ceiling on the whole suite's wall-clock budget, regardless of case count. */
+export const MAX_SUITE_TIMEOUT_MS = 60_000;
+
+/**
+ * Line prefix every generated test program stamps on its result lines.
+ *
+ * Exists so an incidental `print` / `console.log` in the solver's own code
+ * cannot be mistaken for a case outcome, and so stdout truncated by a
+ * timeout-kill stays parseable up to the last intact line.
+ */
+export const LEET_SENTINEL = '__LEET__';
 
 /**
  * Time limit (minutes) pre-filled in the panel when the artifact does not
