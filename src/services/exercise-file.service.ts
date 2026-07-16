@@ -12,13 +12,16 @@ export { exerciseFileName, resolveStarterCode, slugify } from './exercise-file.h
  * workspace and outside the Obsidian vault, so nothing the extension writes is
  * ever indexed by Obsidian or committed by the user.
  *
+ * Calling this twice for the same problem + language returns two **different**
+ * URIs — `exerciseFileName` mints a fresh run suffix on every call.
+ *
  * @param context - Extension context owning `globalStorageUri`.
  * @param title   - Artifact title (slugified into the filename).
  * @param langId  - Canonical `languageId` (drives the file extension).
- * @returns URI such as `…/globalStorage/<ext-id>/attempts/leetcode_two-sum.js`.
+ * @returns URI such as `…/globalStorage/<ext-id>/attempts/leetcode_two-sum_kx3f2q1.js`.
  *
  * @example
- * exerciseFileUri(ctx, 'Two Sum', 'python'); // → …/attempts/leetcode_two-sum.py
+ * exerciseFileUri(ctx, 'Two Sum', 'python'); // → …/attempts/leetcode_two-sum_kx3f2q1.py
  */
 export function exerciseFileUri(
 	context: vscode.ExtensionContext, title: string, langId: string,
@@ -27,11 +30,14 @@ export function exerciseFileUri(
 }
 
 /**
- * Create (or reuse) the temp exercise file and open it in the main editor group.
+ * Create a fresh temp exercise file and open it in the main editor group.
  *
- * An existing file is **never overwritten** — a previous attempt is reopened as
- * it was left, so a mis-click on *Solve It* cannot discard work in progress.
- * The document's language is set explicitly as well as via the extension, since
+ * Every call writes a **new** file — `exerciseFileUri` mints a unique run
+ * suffix each time, so there is nothing to overwrite. *Solve It* is therefore
+ * always a fresh attempt, never a resumed buffer; the previous run's file is
+ * left on disk until `discardChallenge` deletes it (or forever, if the run is
+ * abandoned — see the P1.5 "no reopen-to-retry" decision). The document's
+ * language is set explicitly as well as via the extension, since
  * `globalStorageUri` is outside any workspace and file-association rules there
  * are not guaranteed.
  *
@@ -51,10 +57,8 @@ export async function openExerciseFile(
 		vscode.Uri.joinPath(context.globalStorageUri, ATTEMPTS_DIR),
 	);
 
-	if (!await fileExists(fileUri)) {
-		const starter = resolveStarterCode(parsed, langId);
-		await vscode.workspace.fs.writeFile(fileUri, new TextEncoder().encode(`${starter}\n`));
-	}
+	const starter = resolveStarterCode(parsed, langId);
+	await vscode.workspace.fs.writeFile(fileUri, new TextEncoder().encode(`${starter}\n`));
 
 	const doc = await vscode.workspace.openTextDocument(fileUri);
 	await vscode.languages.setTextDocumentLanguage(doc, langId).then(undefined, () => doc);
@@ -66,19 +70,62 @@ export async function openExerciseFile(
 }
 
 /**
- * Stat-probe for a URI.
+ * Delete a temp exercise file, ignoring a missing file.
  *
- * @param uri - File to test.
- * @returns True when the file exists.
+ * Called by `discardChallenge` on Back/Close. Abandoned runs (window closed,
+ * no explicit discard) intentionally leave their file behind — this is the
+ * only path that deletes one.
+ *
+ * @param fileUri - Temp exercise file to remove.
  *
  * @example
- * await fileExists(vscode.Uri.file('/tmp/x.js'));
+ * await deleteExerciseFile(session.fileUri);
  */
-async function fileExists(uri: vscode.Uri): Promise<boolean> {
+export async function deleteExerciseFile(fileUri: vscode.Uri): Promise<void> {
 	try {
-		await vscode.workspace.fs.stat(uri);
-		return true;
+		await vscode.workspace.fs.delete(fileUri);
 	} catch {
-		return false;
+		// already gone — nothing to do
 	}
+}
+
+/**
+ * Close the editor tab showing `fileUri`, if one is open.
+ *
+ * VS Code exposes no stable id for a temp-file tab, so the match is by URI —
+ * unique per run since P1.5-3. A no-op when the tab is already gone.
+ *
+ * @param fileUri - Temp exercise file whose tab should close.
+ *
+ * @example
+ * await closeExerciseEditor(session.fileUri);
+ */
+export async function closeExerciseEditor(fileUri: vscode.Uri): Promise<void> {
+	const tab = findExerciseTab(fileUri);
+	if (tab) { await vscode.window.tabGroups.close(tab); }
+}
+
+/**
+ * Whether `fileUri` currently has an open editor tab.
+ *
+ * @param fileUri - Temp exercise file to probe.
+ * @returns True when a tab for this exact URI is open in any tab group.
+ *
+ * @example
+ * isExerciseEditorOpen(session.fileUri); // → true while Solve It's tab is open
+ */
+export function isExerciseEditorOpen(fileUri: vscode.Uri): boolean {
+	return findExerciseTab(fileUri) !== undefined;
+}
+
+/** Locate the open tab (if any) whose text input matches `fileUri`. */
+function findExerciseTab(fileUri: vscode.Uri): vscode.Tab | undefined {
+	const target = fileUri.toString();
+	for (const group of vscode.window.tabGroups.all) {
+		const tab = group.tabs.find(t =>
+			t.input instanceof vscode.TabInputText && t.input.uri.toString() === target,
+		);
+		if (tab) { return tab; }
+	}
+	return undefined;
 }

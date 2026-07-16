@@ -36,6 +36,8 @@ suite('leetcode-codegen', () => {
             test:         defaultTestConfig(),
             practice:     defaultPracticeConfig(),
             solutions:    [],
+            attempts:     [],
+            tags:         [],
             ...overrides,
         };
     }
@@ -60,6 +62,11 @@ suite('leetcode-codegen', () => {
             assert.ok(/System\.out\.print/.test(out()));
         });
         test('contains <<SOLUTION>> marker', () => assert.ok(out().includes('<<SOLUTION>>')));
+
+        test('a functions: override names the method instead of functionName', () => {
+            const src = generateBoilerplate(fixture({ functions: { java: 'twoSumImpl' } }), 'java');
+            assert.ok(src.includes('int[] twoSumImpl(int[] nums, int target)'));
+        });
     });
 
     // ── generateBoilerplate — Python ──────────────────────────────────────────
@@ -70,6 +77,11 @@ suite('leetcode-codegen', () => {
         test('declares def with parsed param names', () => {
             const src = out();
             assert.ok(/def\s+twoSum\(nums,\s*target\)/.test(src));
+        });
+
+        test('a functions: override names the def instead of functionName', () => {
+            const src = generateBoilerplate(fixture({ functions: { python: 'two_sum' } }), 'python');
+            assert.ok(/def\s+two_sum\(nums,\s*target\)/.test(src));
         });
         test('uses if __name__ == "__main__": entry block', () => {
             assert.ok(out().includes('if __name__ == "__main__":'));
@@ -95,6 +107,11 @@ suite('leetcode-codegen', () => {
             assert.ok(src.includes('readline'));
         });
         test('contains <<SOLUTION>> marker', () => assert.ok(out().includes('<<SOLUTION>>')));
+
+        test('a functions: override names the function instead of functionName', () => {
+            const src = generateBoilerplate(fixture({ functions: { javascript: 'twoSumImpl' } }), 'javascript');
+            assert.ok(/function\s+twoSumImpl\(nums,\s*target\)/.test(src));
+        });
     });
 
     // ── generateTestHarness ───────────────────────────────────────────────────

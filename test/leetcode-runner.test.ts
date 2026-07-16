@@ -40,6 +40,8 @@ suite('leetcode-runner', () => {
             setups:       [],
             practice:     defaultPracticeConfig(),
             solutions:    [],
+            attempts:     [],
+            tags:         [],
             ...overrides,
         };
     }

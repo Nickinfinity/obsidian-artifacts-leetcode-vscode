@@ -3,6 +3,7 @@ import {
     renderLeetCodePreviewHtml,
     renderTestResultsHtml,
 } from '../src/ui/panels/leetcodePreview.panel.js';
+import type { ChallengePhase } from '../src/types/leetcode.types.js';
 import { defaultPracticeConfig, defaultTestConfig } from '../src/services/leetcode-parser.service.js';
 import { PRACTICE_OPTIONS } from '../src/types/constants.js';
 import type { ParsedLeetCode, TestResult } from '../src/types/leetcode.types.js';
@@ -43,6 +44,8 @@ suite('leetcodePreview', () => {
                 { language: 'java',   label: 'Brute Force', code: '// java code'   },
                 { language: 'python', label: undefined,     code: '# python code' },
             ],
+            attempts:     [],
+            tags:         [],
             ...overrides,
         };
     }
@@ -113,23 +116,86 @@ suite('leetcodePreview', () => {
             assert.ok(html.includes('Brute Force'));
         });
 
-        test('exposes runTestsBtn / solveBtn / submitBtn / langSelector ids', () => {
+        test('defaults to the idle phase: langSelector + solveBtn, no runTestsBtn/submitBtn', () => {
             const html = renderLeetCodePreviewHtml(fixture(), css, csp);
-            assert.ok(html.includes('id="runTestsBtn"'));
-            assert.ok(html.includes('id="solveBtn"'));
-            assert.ok(html.includes('id="submitBtn"'));
             assert.ok(html.includes('id="langSelector"'));
+            assert.ok(html.includes('id="solveBtn"'));
+            assert.ok(!html.includes('id="runTestsBtn"'));
+            assert.ok(!html.includes('id="submitBtn"'));
         });
 
-        test('Run Tests renders disabled until a challenge is live', () => {
-            const html = renderLeetCodePreviewHtml(fixture(), css, csp);
-            assert.ok(/id="runTestsBtn"[^>]*disabled/.test(html));
+        test('the running phase exposes runTestsBtn and submitBtn, not solveBtn', () => {
+            const html = renderLeetCodePreviewHtml(fixture(), css, csp, '', 'running');
+            assert.ok(html.includes('id="runTestsBtn"'));
+            assert.ok(html.includes('id="submitBtn"'));
+            assert.ok(!html.includes('id="solveBtn"'));
+        });
+
+        test('Run Tests carries no disabled attribute once rendered in the running phase', () => {
+            const html = renderLeetCodePreviewHtml(fixture(), css, csp, '', 'running');
+            assert.ok(!/id="runTestsBtn"[^>]*disabled/.test(html));
+        });
+
+        // ── State gating (P3 button-state machine) ────────────────────────────
+
+        suite('state gating', () => {
+
+            test('idle and attempted render the back-arrow nav header', () => {
+                for (const phase of ['idle', 'attempted'] as ChallengePhase[]) {
+                    const html = renderLeetCodePreviewHtml(fixture(), css, csp, '', phase);
+                    assert.ok(html.includes('id="backBtn"'), phase);
+                    assert.ok(!html.includes('id="closeBtn"'), phase);
+                }
+            });
+
+            test('running renders the close nav header', () => {
+                const html = renderLeetCodePreviewHtml(fixture(), css, csp, '', 'running');
+                assert.ok(html.includes('id="closeBtn"'));
+                assert.ok(!html.includes('id="backBtn"'));
+            });
+
+            test('solved renders the .solved-summary block and hides practice settings', () => {
+                const html = renderLeetCodePreviewHtml(fixture(), css, csp, '', 'solved');
+                assert.ok(html.includes('class="solved-summary"'));
+                assert.ok(!html.includes('class="practice-option"'));
+                assert.ok(!html.includes('id="runTestsBtn"'));
+                assert.ok(!html.includes('id="submitBtn"'));
+            });
+
+            test('attempted renders the same controls block as idle', () => {
+                // Both render identically apart from the seeded `data-phase`
+                // attribute (P7) — attempted and idle are distinct
+                // `ChallengePhase` values, so that attribute legitimately
+                // differs even though the controls markup does not.
+                const idleHtml = renderLeetCodePreviewHtml(fixture(), css, csp, '', 'idle')
+                    .replace('data-phase="idle"', 'data-phase="X"');
+                const attemptedHtml = renderLeetCodePreviewHtml(fixture(), css, csp, '', 'attempted')
+                    .replace('data-phase="attempted"', 'data-phase="X"');
+                assert.strictEqual(attemptedHtml, idleHtml);
+            });
+
+            test('the webview script stamps body[data-phase] on the viewState message', () => {
+                const html = renderLeetCodePreviewHtml(fixture(), css, csp);
+                assert.ok(html.includes("msg.command === 'viewState'"));
+                assert.ok(html.includes("document.body.dataset.phase = msg.phase"));
+            });
         });
 
         test('the webview script re-gates Run Tests on the challengeState message', () => {
             const html = renderLeetCodePreviewHtml(fixture(), css, csp);
             assert.ok(html.includes("msg.command === 'challengeState'"));
             assert.ok(html.includes('runTestsBtn.disabled = !msg.active;'));
+        });
+
+        test('the webview script wires the nav back / close controls', () => {
+            // Regression guard: renderNavHeader draws #backBtn/#closeBtn, but the
+            // buttons are dead unless the script posts their messages. The script
+            // wires both ids unconditionally, so any phase carries both listeners.
+            const html = renderLeetCodePreviewHtml(fixture(), css, csp, '', 'running');
+            assert.ok(html.includes("getElementById('closeBtn')"));
+            assert.ok(html.includes("vscode.postMessage({ command: 'close' })"));
+            assert.ok(html.includes("getElementById('backBtn')"));
+            assert.ok(html.includes("vscode.postMessage({ command: 'back' })"));
         });
 
         test('the results sink is empty by default', () => {
@@ -178,8 +244,9 @@ suite('leetcodePreview', () => {
             });
             const html = renderLeetCodePreviewHtml(locked, css, csp);
             const disabled = html.match(/ disabled>/g) ?? [];
-            // one per checkbox + the time-limit input + the always-disabled Run Tests button
-            assert.strictEqual(disabled.length, PRACTICE_OPTIONS.length + 2);
+            // one per checkbox + the time-limit input — Run Tests/Submit no longer
+            // render at all in the idle phase, so there is no third disabled control.
+            assert.strictEqual(disabled.length, PRACTICE_OPTIONS.length + 1);
         });
 
         test('reference solutions are collapsed behind a details element', () => {

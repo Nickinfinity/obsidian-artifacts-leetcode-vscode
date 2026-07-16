@@ -31,6 +31,8 @@ suite('exercise-file', () => {
             test:         defaultTestConfig(),
             practice:     defaultPracticeConfig(),
             solutions:    [],
+            attempts:     [],
+            tags:         [],
             ...overrides,
         };
     }
@@ -66,14 +68,21 @@ suite('exercise-file', () => {
 
     suite('exerciseFileName', () => {
 
-        test('prefixes the slug and appends the language extension', () => {
-            assert.strictEqual(exerciseFileName('Two Sum', 'javascript'), 'leetcode_two-sum.js');
-            assert.strictEqual(exerciseFileName('Two Sum', 'python'), 'leetcode_two-sum.py');
-            assert.strictEqual(exerciseFileName('Two Sum', 'java'), 'leetcode_two-sum.java');
+        test('prefixes the slug, appends a run suffix, and the language extension', () => {
+            assert.match(exerciseFileName('Two Sum', 'javascript'), /^leetcode_two-sum_[a-z0-9]+\.js$/);
+            assert.match(exerciseFileName('Two Sum', 'python'), /^leetcode_two-sum_[a-z0-9]+\.py$/);
+            assert.match(exerciseFileName('Two Sum', 'java'), /^leetcode_two-sum_[a-z0-9]+\.java$/);
         });
 
         test('an unknown but safe language id becomes its own extension', () => {
-            assert.strictEqual(exerciseFileName('Two Sum', 'nim'), 'leetcode_two-sum.nim');
+            assert.match(exerciseFileName('Two Sum', 'nim'), /^leetcode_two-sum_[a-z0-9]+\.nim$/);
+        });
+
+        test('produces a distinct name on successive calls for the same title + language', () => {
+            const names = new Set(
+                Array.from({ length: 20 }, () => exerciseFileName('Two Sum', 'javascript')),
+            );
+            assert.strictEqual(names.size, 20);
         });
     });
 

@@ -11,7 +11,7 @@ function fixture(overrides: Partial<ParsedLeetCode> = {}): ParsedLeetCode {
         params: [{ name: 'nums', type: 'int[]' }, { name: 'target', type: 'int' }],
         returns: 'int[]', description: '', examples: [],
         tests: [], finalTests: [], test: defaultTestConfig(),
-        setups: [], practice: defaultPracticeConfig(), solutions: [],
+        setups: [], practice: defaultPracticeConfig(), solutions: [], attempts: [], tags: [],
         ...overrides,
     };
 }
@@ -63,6 +63,16 @@ suite('function × javascript env', () => {
             assert.ok(fileNamed(emit(), 'runner.js').includes('const __fn = __sandbox["twoSum"]'));
         });
 
+        test('a functions: override is what the runner pulls from the sandbox, not functionName', () => {
+            const parsed = fixture({ functions: { javascript: 'solve' } });
+            const overrideCode = 'function solve(nums, target) { return [0, 1]; }';
+            const runner = fileNamed(
+                javascriptFunctionEnv.emit({ parsed, langId: 'javascript', code: overrideCode, cases: CASES }),
+                'runner.js',
+            );
+            assert.ok(runner.includes('const __fn = __sandbox["solve"]'));
+        });
+
         test('emits argument literals and per-case try/catch', () => {
             const runner = fileNamed(emit(), 'runner.js');
             assert.ok(runner.includes('[[2, 7], 9]'));
@@ -92,6 +102,13 @@ suite('function × javascript env', () => {
             const msg = check('function solve(a, b) { return a; }');
             assert.ok(msg);
             assert.ok(/twoSum/.test(msg));
+        });
+
+        test('a functions: override requires the overridden name, not functionName', () => {
+            const parsed = fixture({ functions: { javascript: 'solve' } });
+            const msg = javascriptFunctionEnv.validate!({ parsed, langId: 'javascript', code: CODE, cases: CASES });
+            assert.ok(msg);
+            assert.ok(/solve/.test(msg));
         });
     });
 

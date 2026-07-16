@@ -54,19 +54,43 @@ export function slugify(title: string): string {
 	return slug || 'exercise';
 }
 
+/** Monotonic counter breaking ties between calls landing in the same millisecond. */
+let runSeq = 0;
+
+/**
+ * A short, unique-per-call run id (timestamp + a tie-breaking counter).
+ *
+ * Each *Solve It* starts a fresh attempt file rather than reopening a
+ * previous one (see [sidebar-view-1.5.md](../../docs/plans/sidebar-view-1.5.md)),
+ * so the id only needs to be unique within one extension-host lifetime, not
+ * globally.
+ *
+ * @returns A base-36 id such as `'kx3f2q1'`.
+ *
+ * @example
+ * nextRunId(); // → 'kx3f2q1'
+ */
+function nextRunId(): string {
+	runSeq += 1;
+	return `${Date.now().toString(36)}${runSeq.toString(36)}`;
+}
+
 /**
  * Basename of the temp exercise file for a problem + language.
  *
  * Kept separate from `exerciseFileUri()` so the naming rule can be unit-tested
  * without an `ExtensionContext` (and therefore without the `vscode` module).
+ * Carries a per-call run suffix — every call names a distinct file, so
+ * `openExerciseFile` never has to choose between overwriting a previous
+ * attempt and reopening it (see the P1.5 "no reopen-to-retry" decision).
  *
  * @param title  - Artifact title (slugified into the filename).
  * @param langId - Canonical `languageId` (drives the file extension).
- * @returns Filename such as `leetcode_two-sum.js`.
+ * @returns Filename such as `leetcode_two-sum_kx3f2q1.js`.
  *
  * @example
- * exerciseFileName('Two Sum', 'python'); // → 'leetcode_two-sum.py'
+ * exerciseFileName('Two Sum', 'python'); // → 'leetcode_two-sum_kx3f2q1.py'
  */
 export function exerciseFileName(title: string, langId: string): string {
-	return `${EXERCISE_FILE_PREFIX}${slugify(title)}.${extForLang(langId)}`;
+	return `${EXERCISE_FILE_PREFIX}${slugify(title)}_${nextRunId()}.${extForLang(langId)}`;
 }

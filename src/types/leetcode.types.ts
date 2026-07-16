@@ -130,6 +130,32 @@ export interface LeetCodeSolution {
 }
 
 /**
+ * One recorded run from the `# Attempts` section of a LeetCode artifact.
+ *
+ * Written by `appendAttempt` (writer) on every live Submit — pass or fail,
+ * including a timeout auto-submit — and read back by `extractAttempts`
+ * (parser). `bigO` / `confidence` are omitted rather than defaulted when the
+ * Big-O heuristic was never run against this entry's code (they are optional
+ * on both the write and read side for that reason).
+ */
+export interface Attempt {
+	/** Raw, lower-cased `## <Language>` heading text this entry was recorded under */
+	language: string;
+	/** ISO-8601 timestamp of the run */
+	at: string;
+	/** Human-readable elapsed time, e.g. `'8m22s'` */
+	duration: string;
+	/** True when every case (public + final) passed on this run */
+	passed: boolean;
+	/** Big-O notation from `estimateBigO`, e.g. `'O(n)'`, when computed for this run */
+	bigO?: string;
+	/** Confidence tier of the Big-O estimate (`'high' | 'medium' | 'low'`), when computed */
+	confidence?: string;
+	/** The submitted buffer, verbatim */
+	code: string;
+}
+
+/**
  * Identifier of a practice-mode restriction offered before a challenge starts.
  *
  * The literal union is the contract between `PRACTICE_OPTIONS` (constants.ts),
@@ -179,6 +205,63 @@ export interface PracticeConfig {
 }
 
 /**
+ * Result of one clock tick, bounded or unbounded (P7).
+ *
+ * `unlimited: true` means `ms` is elapsed time counting up from the start
+ * (`practice.timeLimit` was `0`/empty); `unlimited: false` means `ms` is
+ * remaining time counting down to zero, clamped so it never goes negative.
+ * The `MM:SS` rendering (`formatRemaining`) is identical for both — only the
+ * "no limit" label and the auto-submit-at-zero behaviour differ.
+ */
+export interface TimerTick {
+	/** `true` when this run has no deadline — `ms` counts up instead of down */
+	unlimited: boolean;
+	/** Milliseconds elapsed (unlimited) or remaining (bounded, clamped to 0) */
+	ms: number;
+}
+
+/**
+ * Lifecycle phase of the challenge selected in the sidebar view.
+ *
+ * - `idle`      — an exercise is open but no run has started (or a prior run ended)
+ * - `running`   — Solve It has opened the attempt file; the countdown is live
+ * - `solved`    — Submit graded every case as passing
+ * - `attempted` — Submit ended the run with at least one failing case
+ */
+export type ChallengePhase = 'idle' | 'running' | 'solved' | 'attempted';
+
+/**
+ * Everything the sidebar view needs to know about the selected challenge.
+ *
+ * Owned by the live `ChallengeSession` while a run is in flight — kept current
+ * by `leetcode-challenge.service.ts` and read by `leetcode-challenge.service.ts`
+ * consumers (the view provider, and eventually the button-state and timer
+ * features) via `challengeState()`.
+ */
+export interface ChallengeState {
+	/** String form of the `.md` artifact's URI */
+	exerciseUri: string;
+	/** Display title, shown in confirmation dialogs */
+	title: string;
+	/** Canonical `languageId` chosen for this run */
+	langId: string;
+	/** String form of the attempt temp-file URI; `null` before Solve It */
+	tempFileUri: string | null;
+	/** Whether the attempt editor currently has an open tab */
+	editorOpen: boolean;
+	/** Practice restrictions applied for this run */
+	options: PracticeOptionId[];
+	/** Countdown length in minutes; `0` means unlimited */
+	timeLimitMinutes: number;
+	/** Epoch ms the run started; `null` when idle */
+	startedAt: number | null;
+	/** Epoch ms the countdown expires; `null` when unlimited or idle */
+	deadline: number | null;
+	/** Current lifecycle phase */
+	phase: ChallengePhase;
+}
+
+/**
  * Starter code for one language — the signature stub the solver begins from.
  *
  * Parsed from the `# Setup` section's `## <Language>` fences. A language with
@@ -204,6 +287,13 @@ export interface ParsedLeetCode {
 	difficulty: LeetCodeDifficulty;
 	/** Identifier of the candidate function the user is expected to implement */
 	functionName: string;
+	/**
+	 * Per-language override of `functionName`, from the `functions:` frontmatter
+	 * block. Keyed by canonical `languageId` (aliases resolved at parse time).
+	 * Absent entirely, or missing a given language, falls back to `functionName`
+	 * — use `functionNameFor()` rather than reading this directly.
+	 */
+	functions?: Record<string, string>;
 	/** Optional algorithm tag (e.g. `'two-pointer'`, `'dp'`) */
 	algorithm?: string;
 	/** Current solve status derived from stored run history */
@@ -232,6 +322,32 @@ export interface ParsedLeetCode {
 	practice: PracticeConfig;
 	/** Stored solution attempts across languages */
 	solutions: LeetCodeSolution[];
+	/** Recorded Submit runs (pass and fail) from the `# Attempts` section, newest first per language */
+	attempts: Attempt[];
+	/** Organisational tags from frontmatter (e.g. `['arrays', 'hash-map']`); `[]` when absent */
+	tags: string[];
+}
+
+/**
+ * The subset of `ParsedLeetCode` the exercise picker needs to render a
+ * `QuickPickItem` — title, difficulty, status, algorithm, tags.
+ *
+ * `parseLeetCode` (full parse) and `parseFrontmatterOnly` (frontmatter-only
+ * fast path) both produce a `ParsedLeetCode` / `LeetCodeSummary` respectively;
+ * `buildQuickPickItems` accepts either since a full `ParsedLeetCode` is a
+ * structural superset of this shape.
+ */
+export interface LeetCodeSummary {
+	/** Display title of the problem */
+	title: string;
+	/** Canonical difficulty tier */
+	difficulty: LeetCodeDifficulty;
+	/** Current solve status derived from stored run history */
+	status: LeetCodeStatus;
+	/** Optional algorithm tag (e.g. `'two-pointer'`, `'dp'`) */
+	algorithm?: string;
+	/** Organisational tags from frontmatter; `[]` when absent */
+	tags: string[];
 }
 
 /**
