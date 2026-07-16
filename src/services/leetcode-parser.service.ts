@@ -10,6 +10,7 @@ import {
 import type {
 	LeetCodeDifficulty,
 	LeetCodeStatus,
+	LeetCodeSummary,
 	ParamDef,
 	ParsedLeetCode,
 	PracticeConfig,
@@ -18,6 +19,7 @@ import type {
 	TestTypeId,
 } from '../types/leetcode.types.js';
 import {
+	extractAttempts,
 	extractDescription,
 	extractExamples,
 	extractFinalTests,
@@ -25,6 +27,7 @@ import {
 	extractSolutions,
 	extractTests,
 } from './leetcode-sections.helpers.js';
+import { resolveLangId } from './language-map.service.js';
 
 const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/;
 const KV_RE          = /^(\w+):\s*(.*)$/;
@@ -63,6 +66,7 @@ export function parseLeetCode(content: string): ParsedLeetCode {
 		title:        fm.title ?? '',
 		difficulty:   fm.difficulty,
 		functionName: fm.functionName ?? '',
+		functions:    fm.functions,
 		algorithm:    fm.algorithm,
 		status:       fm.status,
 		params:       fm.params,
@@ -75,6 +79,35 @@ export function parseLeetCode(content: string): ParsedLeetCode {
 		setups:       extractSetups(body),
 		practice:     fm.practice,
 		solutions:    extractSolutions(body),
+		attempts:     extractAttempts(body),
+		tags:         fm.tags ?? [],
+	};
+}
+
+/**
+ * Parses only the frontmatter block, skipping the description/examples/tests/
+ * setup/solution body entirely.
+ *
+ * Fast path for the exercise picker (`buildQuickPickItems`), which only needs
+ * title/difficulty/status/algorithm/tags to render a `QuickPickItem` — running
+ * the full `parseLeetCode` per file would parse every test case and solution
+ * block just to throw them away.
+ *
+ * @param content - Full UTF-8 string content of the `.md` file.
+ * @returns A `LeetCodeSummary` — same frontmatter defaults as `parseLeetCode`.
+ *
+ * @example
+ * parseFrontmatterOnly('---\ntitle: Two Sum\n---\n\nBody...');
+ */
+export function parseFrontmatterOnly(content: string): LeetCodeSummary {
+	const fmMatch = FRONTMATTER_RE.exec(content);
+	const fm = parseFrontmatter(fmMatch ? fmMatch[1] : '');
+	return {
+		title:      fm.title ?? '',
+		difficulty: fm.difficulty,
+		status:     fm.status,
+		algorithm:  fm.algorithm,
+		tags:       fm.tags ?? [],
 	};
 }
 
@@ -112,12 +145,14 @@ interface FM {
 	title?: string;
 	difficulty: LeetCodeDifficulty;
 	functionName?: string;
+	functions?: Record<string, string>;
 	algorithm?: string;
 	status: LeetCodeStatus;
 	params: ParamDef[];
 	returns?: string;
 	practice: PracticeConfig;
 	test: TestConfig;
+	tags?: string[];
 }
 
 /**
@@ -164,9 +199,23 @@ function parseFrontmatter(raw: string): FM {
 			continue;
 		}
 
+		if (key === 'functions') {
+			const { functions, next } = parseFunctionsBlock(lines, i);
+			fm.functions = functions;
+			i = next;
+			continue;
+		}
+
 		if (key === 'test') {
 			const { test, next } = parseTestBlock(lines, i);
 			fm.test = test;
+			i = next;
+			continue;
+		}
+
+		if (key === 'tags') {
+			const { tags, next } = parseTagsBlock(lines, i, val);
+			fm.tags = tags;
 			i = next;
 			continue;
 		}
@@ -307,6 +356,99 @@ function parseTimeLimit(val: string): number {
 	const n = Number.parseInt(val, 10);
 	if (Number.isNaN(n) || n < 0) { return DEFAULT_TIME_LIMIT_MINUTES; }
 	return n;
+}
+
+// ── functions: block ──────────────────────────────────────────────────────────
+
+/**
+ * Parses the indented `functions:` frontmatter block — a per-language override
+ * of the top-level `function:` name.
+ *
+ * Each line is `<language>: <name>`; the language key goes through
+ * `resolveLangId` so an alias (`py:`) lands under its canonical id
+ * (`python`), matching the setup/solution heading resolution rule. `function:`
+ * remains the default and the fallback for any language not listed here — see
+ * `functionNameFor`.
+ *
+ * @param lines - All frontmatter lines.
+ * @param start - Index of the `functions:` line.
+ * @returns `{ functions, next }` — canonical-langId → name map (possibly
+ *   empty) and the index of the first non-consumed line.
+ *
+ * @example
+ * parseFunctionsBlock(['functions:', '  python: ab_check', '  rust: ab_check'], 0);
+ */
+function parseFunctionsBlock(lines: string[], start: number): { functions: Record<string, string>; next: number } {
+	const functions: Record<string, string> = {};
+	let i = start + 1;
+
+	while (i < lines.length && /^\s/.test(lines[i])) {
+		const trimmed = lines[i].trim();
+		if (trimmed === '') { i++; continue; }
+
+		const kv = KV_RE.exec(trimmed);
+		if (kv) {
+			const langId = resolveLangId(kv[1]);
+			const val    = kv[2].trim();
+			if (val !== '') { functions[langId] = val; }
+		}
+		i++;
+	}
+	return { functions, next: i };
+}
+
+/**
+ * Resolves the function name a candidate must declare in `langId`.
+ *
+ * Looks up `parsed.functions[langId]` (the `functions:` frontmatter override);
+ * falls back to `parsed.functionName` when the map is absent or has no entry
+ * for that language. Every call site that used to read `parsed.functionName`
+ * directly for a specific language should call this instead.
+ *
+ * @param parsed - Parsed artifact carrying `functionName` and the optional map.
+ * @param langId - Canonical `languageId` (already through `resolveLangId`).
+ * @returns The name to declare/call for this language.
+ *
+ * @example
+ * functionNameFor({ functionName: 'ABCheck', functions: { python: 'ab_check' }, … }, 'python');
+ * // → 'ab_check'
+ * functionNameFor({ functionName: 'ABCheck', functions: { python: 'ab_check' }, … }, 'java');
+ * // → 'ABCheck'
+ */
+export function functionNameFor(parsed: ParsedLeetCode, langId: string): string {
+	return parsed.functions?.[langId] ?? parsed.functionName;
+}
+
+// ── tags: block ───────────────────────────────────────────────────────────────
+
+/**
+ * Parses the `tags:` frontmatter field — inline `[a, b]` or an indented YAML
+ * `- a` list. Unlike `options:`, any string is accepted (no fixed id set).
+ *
+ * @param lines - All frontmatter lines.
+ * @param start - Index of the `tags:` line.
+ * @param val   - Trimmed value after `tags:` (`''`, `'[]'`, or `'[a, b]'`).
+ * @returns `{ tags, next }` — parsed tag list and the index of the first
+ *   non-consumed line.
+ *
+ * @example
+ * parseTagsBlock(['tags: [leetcode, arrays, hash-map]'], 0, '[leetcode, arrays, hash-map]');
+ */
+function parseTagsBlock(lines: string[], start: number, val: string): { tags: string[]; next: number } {
+	if (val.startsWith('[')) {
+		const inner = val.replace(/^\[|\]$/g, '').trim();
+		const tags = inner === '' ? [] : inner.split(',').map(t => t.trim().replace(/^['"]|['"]$/g, '')).filter(t => t !== '');
+		return { tags, next: start + 1 };
+	}
+
+	const tags: string[] = [];
+	let i = start + 1;
+	while (i < lines.length && /^\s/.test(lines[i])) {
+		const trimmed = lines[i].trim();
+		if (trimmed.startsWith('- ')) { tags.push(trimmed.slice(2).trim().replace(/^['"]|['"]$/g, '')); }
+		i++;
+	}
+	return { tags, next: i };
 }
 
 // ── params: block ─────────────────────────────────────────────────────────────

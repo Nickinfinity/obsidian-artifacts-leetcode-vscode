@@ -2,8 +2,56 @@ import { resolveLangId } from '../../services/language-map.service.js';
 import { hasFinalTests, publicCount } from '../../services/leetcode-suite.helpers.js';
 import { languagesForType } from '../../services/test-envs/env.registry.js';
 import { PRACTICE_OPTIONS } from '../../types/constants.js';
-import type { ParsedLeetCode } from '../../types/leetcode.types.js';
+import type { ChallengePhase, ParsedLeetCode } from '../../types/leetcode.types.js';
 import { escHtml } from '../../utils/html.helpers.js';
+
+/**
+ * Render the sidebar view's return/close control, plus the running-state
+ * countdown (P4, extended P7 for the unlimited/count-up mode).
+ *
+ * `running` gets a right-aligned close `✕` (native `title="close"` tooltip) —
+ * clicking it should be gated behind a confirmation, since it discards the run
+ * — preceded by a `#challengeTimer` span that seeds `remainingLabel` (already
+ * formatted `MM:SS`, or `''` before the first `tick` message arrives) and is
+ * then kept live by the webview script's `tick` message listener. When
+ * `unlimited` is true (no `practice.timeLimit` set — the clock counts up and
+ * never auto-submits) an additional `#challengeNoLimit` "no limit" span is
+ * emitted beside the clock; a bounded run omits it entirely. Every other
+ * phase gets a left-aligned back arrow and no timer — returning to the picker
+ * from an unstarted, solved, or attempted exercise loses nothing, so it needs
+ * no confirmation and there is no clock running to show.
+ *
+ * @param phase          - Current `ChallengeState['phase']` for the open exercise.
+ * @param remainingLabel - Pre-formatted `MM:SS` countdown/elapsed text to seed the
+ *   `running` header with (from `ChallengeState.deadline`/`startedAt` at render
+ *   time), or `''`/omitted before the first `tick` message arrives.
+ * @param unlimited      - `true` when this run has no deadline — renders the
+ *   `#challengeNoLimit` "no limit" span; ignored outside `running`.
+ * @returns HTML for the nav header appropriate to `phase`.
+ *
+ * @example
+ * renderNavHeader('running', '29:58', false); // → bounded: timer only
+ * renderNavHeader('running', '00:07', true);  // → unlimited: timer + '#challengeNoLimit'
+ */
+export function renderNavHeader(phase: ChallengePhase, remainingLabel = '', unlimited = false): string {
+	if (phase === 'running') {
+		const noLimitSpan = unlimited
+			? '<span id="challengeNoLimit" class="nav-nolimit">no limit</span>'
+			: '';
+		return [
+			'<div class="nav-header nav-header-right">',
+			`<span id="challengeTimer" class="nav-timer">${escHtml(remainingLabel)}</span>`,
+			noLimitSpan,
+			'<button id="closeBtn" class="nav-close" title="close">&#10005;</button>',
+			'</div>',
+		].join('');
+	}
+	return [
+		'<div class="nav-header nav-header-left">',
+		'<button id="backBtn" class="nav-back" title="Back to exercises">&#8249;</button>',
+		'</div>',
+	].join('');
+}
 
 /**
  * Render the language `<select>` for the challenge.
@@ -146,6 +194,133 @@ export function renderActions(p: ParsedLeetCode): string {
 		'<button id="runTestsBtn" class="btn btn-secondary" disabled>Run Tests</button>',
 		`<button id="solveBtn"  class="btn btn-insert"${solveAttrs}>Solve It</button>`,
 		`<button id="submitBtn" class="btn btn-secondary"${solveAttrs}>Submit</button>`,
+		'</div>',
+	].join('');
+}
+
+/**
+ * Render the state-gated challenge controls: language selector, practice
+ * settings, and the action buttons appropriate to `state`.
+ *
+ * Supersedes always rendering `renderActions` + `renderPracticeControls`
+ * together — the panel now shows exactly the controls that make sense for the
+ * current lifecycle phase, so a solver never sees a Submit button before
+ * Solve It has opened an attempt, nor practice-mode checkboxes once the clock
+ * is already running.
+ *
+ * | Phase | Visible | Hidden |
+ * |---|---|---|
+ * | `idle` / `attempted` | language select, practice settings, Solve It | Run Tests, Submit |
+ * | `running` | language select, Run Tests, Submit | practice settings, Solve It |
+ * | `solved` | language select, `.solved-summary`, Solve It (retry) | Run Tests, Submit, practice settings |
+ *
+ * `attempted` renders identically to `idle` — a failed Submit already ended
+ * the challenge and lifted every restriction, so the solver lands back on the
+ * same pre-challenge screen (see `docs/plans/3-button-state.md`).
+ *
+ * @param state - Current `ChallengeState['phase']`.
+ * @param p - Parsed LeetCode artifact.
+ * @returns HTML for the controls block appropriate to `state`.
+ *
+ * @example
+ * renderControls('running', parsed); // → language row + Run Tests + Submit, no practice settings
+ */
+export function renderControls(state: ChallengePhase, p: ParsedLeetCode): string {
+	if (state === 'running') { return renderRunningControls(p); }
+	if (state === 'solved')  { return renderSolvedControls(p); }
+	return renderIdleControls(p);
+}
+
+/**
+ * Render the pre-challenge controls: language select, practice settings, and
+ * a solo Solve It button. Shared by the `idle` and `attempted` phases — a
+ * finished-but-failed run has nothing left to gate, so it is indistinguishable
+ * from never having started one.
+ *
+ * @param p - Parsed LeetCode artifact.
+ * @returns HTML for the idle/attempted controls block.
+ *
+ * @example
+ * renderIdleControls(parsed);
+ */
+function renderIdleControls(p: ParsedLeetCode): string {
+	const runnable = availableLanguages(p).length > 0;
+	const disabledAttr = runnable ? '' : ' disabled';
+	return [
+		renderLanguageRow(p),
+		renderPracticeControls(p),
+		'<div class="actions">',
+		`<button id="solveBtn" class="btn btn-insert"${disabledAttr}>Solve It</button>`,
+		'</div>',
+	].join('\n');
+}
+
+/**
+ * Render the in-challenge controls: the language select plus Run Tests and
+ * Submit. Practice settings and Solve It are gone — the run is already live,
+ * so there is nothing left to configure and nothing to start a second time.
+ *
+ * @param p - Parsed LeetCode artifact.
+ * @returns HTML for the running controls block.
+ *
+ * @example
+ * renderRunningControls(parsed);
+ */
+function renderRunningControls(p: ParsedLeetCode): string {
+	return [
+		renderLanguageRow(p),
+		'<div class="actions">',
+		'<button id="runTestsBtn" class="btn btn-secondary">Run Tests</button>',
+		'<button id="submitBtn" class="btn btn-secondary">Submit</button>',
+		'</div>',
+	].join('\n');
+}
+
+/**
+ * Render the post-Submit success screen: a `.solved-summary` recap plus a
+ * Solve It button that starts a fresh retry attempt.
+ *
+ * @param p - Parsed LeetCode artifact.
+ * @returns HTML for the solved controls block.
+ *
+ * @example
+ * renderSolvedControls(parsed);
+ */
+function renderSolvedControls(p: ParsedLeetCode): string {
+	return [
+		renderLanguageRow(p),
+		renderSolvedSummary(p),
+		'<div class="actions">',
+		'<button id="solveBtn" class="btn btn-insert">Solve It</button>',
+		'</div>',
+	].join('\n');
+}
+
+/**
+ * Render the `.solved-summary` recap shown after an all-green Submit: a
+ * solved badge plus the best known elapsed time for this problem, when the
+ * artifact recorded one.
+ *
+ * The Big-O estimate called for in the plan's summary sketch has no backing
+ * field on `ParsedLeetCode` yet (that lands with the Big-O heuristic plan) —
+ * DDD says a concept earns markup only once it has a named type, so this
+ * renders exactly the two facts the domain model can currently support.
+ *
+ * @param p - Parsed LeetCode artifact.
+ * @returns HTML for the summary block.
+ *
+ * @example
+ * renderSolvedSummary(parsed); // → '<div class="solved-summary">…</div>'
+ */
+function renderSolvedSummary(p: ParsedLeetCode): string {
+	const timed = p.solutions.find(s => s.duration);
+	const timeLine = timed
+		? `<span class="summary-time">Time: ${escHtml(timed.duration ?? '')}</span>`
+		: '';
+	return [
+		'<div class="solved-summary">',
+		'<span class="badge status-solved">Solved</span>',
+		timeLine,
 		'</div>',
 	].join('');
 }

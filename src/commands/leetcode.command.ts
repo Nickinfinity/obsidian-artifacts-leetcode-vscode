@@ -1,81 +1,56 @@
 import * as vscode from 'vscode';
-import { parseLeetCode } from '../services/leetcode-parser.service.js';
-import { endChallenge, startChallenge } from '../services/leetcode-challenge.service.js';
-import { resolveLangId } from '../services/language-map.service.js';
-import { renderLeetCodePreviewHtml } from '../ui/panels/leetcodePreview.panel.js';
+import { parseFrontmatterOnly, parseLeetCode } from '../services/leetcode-parser.service.js';
 import { validateObsidianVault } from '../services/vault.service.js';
 import { getVaultPath } from '../services/vault-path.store.js';
-import type {
-	ParsedLeetCode,
-	PracticeConfig,
-	PracticeOptionId,
-} from '../types/leetcode.types.js';
-import {
-	handleRunTests,
-	handleSubmit,
-	postChallengeState,
-} from './leetcode-run.handlers.js';
+import type { ParsedLeetCode } from '../types/leetcode.types.js';
+import { buildQuickPickItems } from './quickpick-item.helpers.js';
+import type { QuickPickEntry } from './quickpick-item.helpers.js';
 
-/**
- * Per-panel session state shared with the run handlers.
- *
- * `parsed` is mutated in place when a run changes the artifact's status, so the
- * next `renderLeetCodePreviewHtml` reflects it without re-reading the file.
- */
-export interface PanelCtx {
-	context: vscode.ExtensionContext;
-	panel: vscode.WebviewPanel;
+/** Result of a successful pick — the file that was chosen plus its parsed contents. */
+export interface PickedExercise {
 	fileUri: vscode.Uri;
 	parsed: ParsedLeetCode;
-	cssUri: string;
-}
-
-/** Webview → extension message shapes the orchestrator understands. */
-interface WebviewMsg {
-	command: 'solveIt' | 'runTests' | 'submit' | 'selectLanguage';
-	language?: string;
-	options?: string[];
-	timeLimitMinutes?: number;
 }
 
 /**
- * Opens the LeetCode picker rooted at the `LeetCode/` artifact directory.
+ * Validates the vault, lets the user pick a `.md` file under `dir`, and parses it.
  *
- * Lists `.md` files via a QuickPick. On selection the file is parsed via
- * `parseLeetCode` and a dedicated webview panel is opened to drive the
- * Solve-It / Run-Tests / Submit flow.
+ * The single entry point for "open an exercise" — both the `obsidian-leetcode.open`
+ * command (palette / view-title button) and the sidebar view's empty-state button
+ * call this so the two triggers can never drift out of sync.
  *
- * @param context      - Extension context owning the vault path and temp storage.
- * @param dir          - Artifact directory name (always `'LeetCode'`).
- * @param _name        - Display name (unused; kept for signature parity with `openArtifactPicker`).
- * @param extensionUri - Extension root URI — used to scope webview resource access.
- * @returns Resolves once the picker is dismissed or a panel is opened.
+ * @param context - Extension context owning the vault path.
+ * @param dir     - Artifact directory name (always `'LeetCode'`).
+ * @returns The picked file and its parsed contents, or `null` when the vault is
+ *   unconfigured, the directory is missing, or the picker was dismissed.
  *
  * @example
- * openLeetCodePicker(context, 'LeetCode', 'LeetCode', context.extensionUri);
+ * const picked = await pickLeetCodeExercise(context, 'LeetCode');
  */
-export async function openLeetCodePicker(
-	context: vscode.ExtensionContext, dir: string, _name: string, extensionUri: vscode.Uri,
-): Promise<void> {
+export async function pickLeetCodeExercise(
+	context: vscode.ExtensionContext, dir: string,
+): Promise<PickedExercise | null> {
 	const vaultPath = getVaultPath(context);
 	if (!vaultPath || !validateObsidianVault(vaultPath)) {
 		void vscode.window.showErrorMessage('Obsidian vault is not configured.');
-		return;
+		return null;
 	}
 
 	const rootUri = vscode.Uri.joinPath(vscode.Uri.file(vaultPath), dir);
 	const file = await pickLeetCodeFile(rootUri);
-	if (!file) { return; }
+	if (!file) { return null; }
 
 	const bytes = await vscode.workspace.fs.readFile(file);
 	const content = new TextDecoder().decode(bytes);
-	const parsed = parseLeetCode(content);
-
-	openLeetCodePreviewPanel(context, file, parsed, extensionUri);
+	return { fileUri: file, parsed: parseLeetCode(content) };
 }
 
 /**
  * Walks `rootUri` (one level deep) and lets the user pick a `.md` file.
+ *
+ * Each candidate's frontmatter is parsed (via `parseFrontmatterOnly` — the
+ * body is never touched, so a large `# Solutions` tree costs nothing here)
+ * to enrich the picker with difficulty, solve status, algorithm, and tags.
  *
  * @param rootUri - Folder URI to enumerate.
  * @returns Selected file URI, or `null` when the picker is dismissed.
@@ -84,138 +59,47 @@ export async function openLeetCodePicker(
  * await pickLeetCodeFile(vscode.Uri.file('/vault/LeetCode'));
  */
 async function pickLeetCodeFile(rootUri: vscode.Uri): Promise<vscode.Uri | null> {
-	let entries: [string, vscode.FileType][];
+	let dirEntries: [string, vscode.FileType][];
 	try {
-		entries = await vscode.workspace.fs.readDirectory(rootUri);
+		dirEntries = await vscode.workspace.fs.readDirectory(rootUri);
 	} catch {
 		void vscode.window.showErrorMessage('LeetCode directory is missing from the vault.');
 		return null;
 	}
 
-	const items = entries
+	const fileNames = dirEntries
 		.filter(([name, type]) => type === vscode.FileType.File && name.endsWith('.md'))
-		.map(([name]) => ({
-			label:  `$(beaker) ${name.replace(/\.md$/, '')}`,
-			fileName: name,
-		}));
-	if (items.length === 0) {
+		.map(([name]) => name);
+	if (fileNames.length === 0) {
 		void vscode.window.showInformationMessage('No LeetCode artifacts found.');
 		return null;
 	}
 
+	const entries = await Promise.all(fileNames.map(fileName => summarizeExercise(rootUri, fileName)));
+	const items = buildQuickPickItems(entries);
+
 	const pick = await vscode.window.showQuickPick(items, {
 		title: 'LeetCode artifacts',
 		placeHolder: 'Pick a problem',
+		matchOnDescription: true,
+		matchOnDetail: true,
 	});
 	if (!pick) { return null; }
 	return vscode.Uri.joinPath(rootUri, pick.fileName);
 }
 
 /**
- * Creates and wires up a LeetCode-specific webview panel for an artifact.
+ * Reads and frontmatter-parses one candidate file for the picker.
  *
- * Disposing the panel ends any challenge it started, so editor restrictions
- * never outlive the window that imposed them.
- *
- * @param context      - Extension context owning `globalStorageUri`.
- * @param fileUri      - Path to the `.md` artifact (used for frontmatter patches).
- * @param parsed       - Parsed artifact returned by `parseLeetCode`.
- * @param extensionUri - Extension root URI for webview resource scoping.
+ * @param rootUri  - LeetCode directory URI.
+ * @param fileName - Basename of the `.md` file within it.
+ * @returns A `QuickPickEntry` ready for `buildQuickPickItems`.
  *
  * @example
- * openLeetCodePreviewPanel(ctx, uri, parsed, ctx.extensionUri);
+ * await summarizeExercise(rootUri, 'two-sum.md');
  */
-function openLeetCodePreviewPanel(
-	context: vscode.ExtensionContext,
-	fileUri: vscode.Uri,
-	parsed: ParsedLeetCode,
-	extensionUri: vscode.Uri,
-): void {
-	const panel = vscode.window.createWebviewPanel(
-		'obsidianArtifactLeetCodePreview',
-		`LeetCode: ${parsed.title}`,
-		vscode.ViewColumn.Beside,
-		{
-			enableScripts: true,
-			retainContextWhenHidden: true,
-			localResourceRoots: [vscode.Uri.joinPath(extensionUri, 'src', 'ui')],
-		},
-	);
-
-	const cssUri = panel.webview.asWebviewUri(
-		vscode.Uri.joinPath(extensionUri, 'src', 'ui', 'styles.css'),
-	).toString();
-
-	const ctx: PanelCtx = { context, panel, fileUri, parsed, cssUri };
-
-	panel.webview.html = renderLeetCodePreviewHtml(parsed, cssUri, panel.webview.cspSource);
-
-	panel.webview.onDidReceiveMessage((msg: WebviewMsg) => {
-		void routeMessage(ctx, msg);
-	});
-
-	panel.onDidDispose(() => {
-		void endChallenge();
-	});
-}
-
-/** Route a webview message to the appropriate handler. */
-async function routeMessage(ctx: PanelCtx, msg: WebviewMsg): Promise<void> {
-	if (msg.command === 'solveIt')             { await handleSolveIt(ctx, msg); }
-	else if (msg.command === 'runTests')       { await handleRunTests(ctx, msg.language); }
-	else if (msg.command === 'submit')         { await handleSubmit(ctx, msg.language); }
-	else if (msg.command === 'selectLanguage') { handleSelectLanguage(ctx, msg.language); }
-}
-
-/**
- * Handle a `solveIt` message — open the starter file and arm practice mode.
- *
- * The artifact wins over the webview when `practice.locked` is set: a locked
- * exercise cannot have its restrictions or its clock relaxed by editing the
- * checkboxes in the panel.
- *
- * @param ctx - Panel session state.
- * @param msg - Webview payload carrying the language, options, and time limit.
- *
- * @example
- * await handleSolveIt(ctx, { command: 'solveIt', language: 'javascript', options: [], timeLimitMinutes: 30 });
- */
-async function handleSolveIt(ctx: PanelCtx, msg: WebviewMsg): Promise<void> {
-	if (!msg.language) {
-		void vscode.window.showErrorMessage('Pick a language before starting the challenge.');
-		return;
-	}
-	const langId = resolveLangId(msg.language);
-	const config = effectivePracticeConfig(ctx.parsed, msg);
-
-	await startChallenge(ctx.context, ctx.parsed, langId, config);
-	postChallengeState(ctx, true);
-}
-
-/**
- * Merge the artifact's declared practice config with the webview's selections.
- *
- * @param parsed - Parsed artifact (source of truth when `practice.locked`).
- * @param msg    - Webview payload.
- * @returns The config the challenge should run under.
- *
- * @example
- * effectivePracticeConfig(parsed, { command: 'solveIt', options: ['noAiAgents'], timeLimitMinutes: 15 });
- */
-function effectivePracticeConfig(parsed: ParsedLeetCode, msg: WebviewMsg): PracticeConfig {
-	if (parsed.practice.locked) { return parsed.practice; }
-	return {
-		options: (msg.options ?? []) as PracticeOptionId[],
-		timeLimitMinutes: Math.max(0, msg.timeLimitMinutes ?? 0),
-		locked: false,
-	};
-}
-
-/**
- * Handle a `selectLanguage` message — no state change today; the webview
- * already drives the visible blocks. Hook left in place so future iterations
- * can re-render the panel with the chosen language highlighted.
- */
-function handleSelectLanguage(_ctx: PanelCtx, _language: string | undefined): void {
-	// Intentionally a no-op for now — the webview script handles UI state.
+async function summarizeExercise(rootUri: vscode.Uri, fileName: string): Promise<QuickPickEntry> {
+	const bytes = await vscode.workspace.fs.readFile(vscode.Uri.joinPath(rootUri, fileName));
+	const content = new TextDecoder().decode(bytes);
+	return { fileName, parsed: parseFrontmatterOnly(content) };
 }

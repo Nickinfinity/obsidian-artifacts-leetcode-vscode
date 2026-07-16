@@ -23,7 +23,7 @@ suite('function × java env', () => {
             params: [{ name: 'nums', type: 'int[]' }, { name: 'target', type: 'int' }],
             returns: 'int[]', description: '', examples: [],
             tests: [], finalTests: [], test: defaultTestConfig(),
-            setups: [], practice: defaultPracticeConfig(), solutions: [],
+            setups: [], practice: defaultPracticeConfig(), solutions: [], attempts: [], tags: [],
             ...overrides,
         };
     }
@@ -85,6 +85,13 @@ suite('function × java env', () => {
             assert.ok(runner.includes('List<Supplier<Object>> __cases = new ArrayList<>();'));
             assert.ok(runner.includes('__cases.add(() -> Solution.twoSum(new int[]{2, 7}, 9));'));
             assert.ok(runner.includes('} catch (Throwable __e) {'));
+        });
+
+        test('a functions: override is what the driver calls on Solution, not functionName', () => {
+            const parsed = fixture({ functions: { java: 'solve' } });
+            const overrideCode = '\tpublic static int[] solve(int[] nums, int target) { return new int[]{0, 1}; }';
+            const runner = fileNamed(emit(parsed, CASES, overrideCode), 'Runner.java');
+            assert.ok(runner.includes('__cases.add(() -> Solution.solve(new int[]{2, 7}, 9));'));
         });
 
         test('the whole suite compiles once — one main, one case per test', () => {
@@ -169,6 +176,13 @@ suite('function × java env', () => {
             const msg = check('public static int[] solve(int[] n, int t){ return n; }');
             assert.ok(msg);
             assert.ok(/twoSum/.test(msg));
+        });
+
+        test('a functions: override requires the overridden name, not functionName', () => {
+            const parsed = fixture({ functions: { java: 'solve' } });
+            const msg = javaFunctionEnv.validate!({ parsed, langId: 'java', code: CODE, cases: CASES });
+            assert.ok(msg);
+            assert.ok(/solve/.test(msg));
         });
 
         test('an import above the method does not trip the class check', () => {

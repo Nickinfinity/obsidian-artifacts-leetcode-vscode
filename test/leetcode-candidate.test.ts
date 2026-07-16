@@ -18,7 +18,7 @@ suite('leetcode-candidate', () => {
             params: [{ name: 'a', type: 'int' }, { name: 'b', type: 'int' }],
             returns: 'int', description: '', examples: [],
             tests: [], finalTests: [], test: defaultTestConfig(),
-            setups: [], practice: defaultPracticeConfig(), solutions: [],
+            setups: [], practice: defaultPracticeConfig(), solutions: [], attempts: [], tags: [],
             ...overrides,
         };
     }
@@ -43,6 +43,29 @@ suite('leetcode-candidate', () => {
 
         test('an empty function name never matches', () => {
             assert.ok(!declaresFunction('anything()', ''));
+        });
+    });
+
+    // ── functionNameFor wiring ────────────────────────────────────────────────
+
+    suite('buildExecutable with a functions: override', () => {
+
+        test('a functions: override is what gets checked for a verbatim declaration', () => {
+            const parsed = fixture({ functions: { python: 'ab_check' } });
+            const code = 'def ab_check(a, b):\n\treturn a + b';
+            assert.strictEqual(buildExecutable(parsed, 'python', code), code);
+        });
+
+        test('a bare body is wrapped under the overridden name, not functionName', () => {
+            const parsed = fixture({ functions: { python: 'ab_check' } });
+            const out = buildExecutable(parsed, 'python', 'return a + b');
+            assert.strictEqual(out, 'def ab_check(a, b):\n\treturn a + b');
+        });
+
+        test('a language with no override still falls back to functionName', () => {
+            const parsed = fixture({ functions: { python: 'ab_check' } });
+            const out = buildExecutable(parsed, 'javascript', 'return a + b;');
+            assert.strictEqual(out, 'function add(a, b) {\n\treturn a + b;\n}');
         });
     });
 

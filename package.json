@@ -37,7 +37,8 @@
       {
         "command": "obsidian-leetcode.open",
         "category": "Obsidian Artifacts",
-        "title": "Open LeetCode Exercise"
+        "title": "Open LeetCode Exercise",
+        "icon": "$(beaker)"
       },
       {
         "command": "obsidian-leetcode.endChallenge",
@@ -51,6 +52,24 @@
         "label": "Obsidian Artifacts"
       }
     ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "obsidian-leetcode",
+          "title": "Obsidian Artifacts: LeetCode",
+          "icon": "resources/leetcode.svg"
+        }
+      ]
+    },
+    "views": {
+      "obsidian-leetcode": [
+        {
+          "id": "obsidian-leetcode.view",
+          "name": "LeetCode",
+          "type": "webview"
+        }
+      ]
+    },
     "menus": {
       "editor/context": [
         {
@@ -66,17 +85,19 @@
         {
           "command": "obsidian-leetcode.create",
           "group": "obsidian@2"
-        },
-        {
-          "command": "obsidian-leetcode.open",
-          "when": "obsidian-leetcode.vaultConfigured",
-          "group": "obsidian@3"
         }
       ],
       "commandPalette": [
         {
           "command": "obsidian-leetcode.open",
           "when": "obsidian-leetcode.vaultConfigured"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "obsidian-leetcode.open",
+          "when": "view == obsidian-leetcode.view && obsidian-leetcode.vaultConfigured",
+          "group": "navigation"
         }
       ]
     }

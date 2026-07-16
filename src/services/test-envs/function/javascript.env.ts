@@ -1,5 +1,6 @@
 import { LEET_SENTINEL } from '../../../types/constants.js';
 import { jsonToLiteral } from '../../leetcode-codegen.service.js';
+import { functionNameFor } from '../../leetcode-parser.service.js';
 import type { CaseOutcome, EmittedProgram, EnvContext, TestEnv } from '../env.types.js';
 import { parseSentinelLines } from '../sentinel.helpers.js';
 
@@ -36,7 +37,7 @@ export const javascriptFunctionEnv: TestEnv = {
 	 * javascriptFunctionEnv.validate({ code: '// empty', … }); // → 'must define twoSum'
 	 */
 	validate(ctx: EnvContext): string | null {
-		const fn = ctx.parsed.functionName;
+		const fn = functionNameFor(ctx.parsed, ctx.langId);
 		if (!new RegExp(String.raw`\b${escapeRe(fn)}\b`).test(ctx.code)) {
 			return `JavaScript setup must define \`${fn}\` (as a function, const, or export).`;
 		}
@@ -87,8 +88,8 @@ export const javascriptFunctionEnv: TestEnv = {
  * runnerSource({ parsed, cases, … });
  */
 function runnerSource(ctx: EnvContext): string {
-	const { parsed, cases } = ctx;
-	const fn = parsed.functionName;
+	const { parsed, cases, langId } = ctx;
+	const fn = functionNameFor(parsed, langId);
 	const argRows = cases.map(c => {
 		const args = parsed.params.map(p => jsonToLiteral(c.input[p.name], 'javascript'));
 		return `  [${args.join(', ')}],`;

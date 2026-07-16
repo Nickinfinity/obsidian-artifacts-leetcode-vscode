@@ -1,5 +1,6 @@
 import { LEET_SENTINEL } from '../../../types/constants.js';
 import { jsonToLiteral } from '../../leetcode-codegen.service.js';
+import { functionNameFor } from '../../leetcode-parser.service.js';
 import type { CaseOutcome, EmittedProgram, EnvContext, TestEnv } from '../env.types.js';
 import { parseSentinelLines } from '../sentinel.helpers.js';
 
@@ -36,7 +37,7 @@ export const pythonFunctionEnv: TestEnv = {
 	 * pythonFunctionEnv.validate({ code: 'class S:\n def f(): ...', … }); // → 'define a top-level function…'
 	 */
 	validate(ctx: EnvContext): string | null {
-		const fn = ctx.parsed.functionName;
+		const fn = functionNameFor(ctx.parsed, ctx.langId);
 		if (!topLevelDefRe(fn).test(ctx.code)) {
 			return `Python setup must define a top-level function \`def ${fn}(…)\` — not nested inside a class.`;
 		}
@@ -86,7 +87,8 @@ export const pythonFunctionEnv: TestEnv = {
  * runnerSource({ parsed, cases, … });
  */
 function runnerSource(ctx: EnvContext): string {
-	const { parsed, cases } = ctx;
+	const { parsed, cases, langId } = ctx;
+	const fn = functionNameFor(parsed, langId);
 	const argRows = cases.map(c => {
 		const args = parsed.params.map(p => jsonToLiteral(c.input[p.name], 'python'));
 		return `    [${args.join(', ')}],`;
@@ -103,7 +105,7 @@ function runnerSource(ctx: EnvContext): string {
 		'__spec = __ilu.spec_from_file_location("sol", __os.path.join(__here, "sol.py"))',
 		'__mod = __ilu.module_from_spec(__spec)',
 		'__spec.loader.exec_module(__mod)',
-		`__fn = getattr(__mod, ${JSON.stringify(parsed.functionName)})`,
+		`__fn = getattr(__mod, ${JSON.stringify(fn)})`,
 		'',
 		'__cases = [',
 		...argRows,

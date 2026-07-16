@@ -1,19 +1,22 @@
 import type {
+	Attempt,
 	ExerciseSetup,
 	LeetCodeSolution,
 	TestCase,
 } from '../types/leetcode.types.js';
 
-const SOLUTIONS_RE    = /^# Solutions\s*$/m;
-const SETUP_RE        = /^# Setup\s*$/m;
-const EXAMPLES_RE     = /^## Examples\s*$/m;
-const TESTS_RE        = /^## Tests\s*$/m;
-const FINAL_TESTS_RE  = /^## Final Tests\s*$/m;
-const EXAMPLE_FENCE   = /```example\r?\n([\s\S]*?)```/g;
-const JSON_FENCE      = /```json\r?\n([\s\S]*?)```/;
-const META_RE         = /<!-- meta:\s*(\{[\s\S]*?\})\s*-->/;
-const FENCE_W_META_RE = /(?:<!-- meta:\s*(\{[\s\S]*?\})\s*-->\s*\r?\n)?```\w+\r?\n([\s\S]*?)```/g;
-const FENCE_LANG_RE   = /```\w+\r?\n([\s\S]*?)```/;
+const SOLUTIONS_RE     = /^# Solutions\s*$/m;
+const SETUP_RE         = /^# Setup\s*$/m;
+const ATTEMPTS_RE      = /^# Attempts\s*$/m;
+const EXAMPLES_RE      = /^## Examples\s*$/m;
+const TESTS_RE         = /^## Tests\s*$/m;
+const FINAL_TESTS_RE   = /^## Final Tests\s*$/m;
+const EXAMPLE_FENCE    = /```example\r?\n([\s\S]*?)```/g;
+const JSON_FENCE       = /```json\r?\n([\s\S]*?)```/;
+const META_RE          = /<!-- meta:\s*(\{[\s\S]*?\})\s*-->/;
+const FENCE_W_META_RE  = /(?:<!-- meta:\s*(\{[\s\S]*?\})\s*-->\s*\r?\n)?```\w+\r?\n([\s\S]*?)```/g;
+const FENCE_W_ATTEMPT_RE = /(?:<!-- attempt:\s*(\{[\s\S]*?\})\s*-->\s*\r?\n)?```\w+\r?\n([\s\S]*?)```/g;
+const FENCE_LANG_RE    = /```\w+\r?\n([\s\S]*?)```/;
 
 /**
  * Returns the prose between the closing frontmatter `---` and the first
@@ -165,6 +168,35 @@ export function extractSolutions(body: string): LeetCodeSolution[] {
 	return result;
 }
 
+/**
+ * Parses the `# Attempts` tree into a flat, file-order list of recorded runs.
+ *
+ * Shares the `## <Language>` splitting of `extractSolutions`, but each fenced
+ * code block is preceded by a mandatory `<!-- attempt: { … } -->` comment
+ * (carrying `at` / `duration` / `passed`, and optionally `bigO` /
+ * `confidence`) instead of an optional `### <Label>` heading — the shape
+ * `appendAttempt` writes. A fence whose comment is missing, malformed, or
+ * missing a required field is skipped rather than producing a partial entry;
+ * `Attempt` has no optional `at` / `duration` / `passed`, so there is nothing
+ * sensible to fill in. Never throws.
+ *
+ * @param body - Content after the frontmatter.
+ * @returns Attempts in file order — `appendAttempt` always prepends, so this
+ *   is newest-first per language.
+ *
+ * @example
+ * extractAttempts('# Attempts\n\n## Java\n<!-- attempt: { "at": "2026-01-01T00:00:00Z", "duration": "1m0s", "passed": true } -->\n```java\nint x;\n```');
+ * // → [{ language: 'java', at: '2026-01-01T00:00:00Z', duration: '1m0s', passed: true, code: 'int x;' }]
+ */
+export function extractAttempts(body: string): Attempt[] {
+	const section = extractTopLevelSection(body, ATTEMPTS_RE);
+	if (!section) { return []; }
+
+	const out: Attempt[] = [];
+	for (const chunk of splitLanguageSections(section)) { out.push(...parseAttemptLanguageSection(chunk)); }
+	return out;
+}
+
 // ── Section slicing ───────────────────────────────────────────────────────────
 
 /**
@@ -282,14 +314,70 @@ function parseLabeledSection(chunk: string, language: string): LeetCodeSolution 
 
 /** Parse the `<!-- meta: { … } -->` JSON payload into `solvedAt` / `duration`. */
 function parseMeta(raw: string | undefined): { solvedAt?: string; duration?: string } {
-	if (!raw) { return {}; }
+	const obj = parseHtmlCommentJson(raw);
+	if (!obj) { return {}; }
+	return {
+		solvedAt: typeof obj.solved_at === 'string' ? obj.solved_at : undefined,
+		duration: typeof obj.duration  === 'string' ? obj.duration  : undefined,
+	};
+}
+
+/**
+ * Shared `JSON.parse` step for an HTML-comment payload already isolated by a
+ * caller's own regex capture (`meta:` via `META_RE` / `FENCE_W_META_RE`,
+ * `attempt:` via `FENCE_W_ATTEMPT_RE`). Never throws.
+ *
+ * @param raw - Captured JSON text, or `undefined` when the comment was absent.
+ * @returns The parsed object, or `null` when absent or malformed.
+ *
+ * @example
+ * parseHtmlCommentJson('{ "duration": "3m12s" }'); // → { duration: '3m12s' }
+ */
+function parseHtmlCommentJson(raw: string | undefined): Record<string, unknown> | null {
+	if (!raw) { return null; }
 	try {
-		const obj = JSON.parse(raw) as Record<string, unknown>;
-		return {
-			solvedAt: typeof obj.solved_at === 'string' ? obj.solved_at : undefined,
-			duration: typeof obj.duration  === 'string' ? obj.duration  : undefined,
-		};
+		return JSON.parse(raw) as Record<string, unknown>;
 	} catch {
-		return {};
+		return null;
 	}
+}
+
+// ── Attempts tree ─────────────────────────────────────────────────────────────
+
+/** Parse a single `## <Language>` chunk of the Attempts tree into its entries. */
+function parseAttemptLanguageSection(section: string): Attempt[] {
+	const headingM = /^## (.+)\r?\n/.exec(section);
+	if (!headingM) { return []; }
+	const language = headingM[1].trim().toLowerCase();
+	const body     = section.slice(headingM[0].length);
+
+	const out: Attempt[] = [];
+	const re = new RegExp(FENCE_W_ATTEMPT_RE.source, FENCE_W_ATTEMPT_RE.flags);
+	for (let m = re.exec(body); m !== null; m = re.exec(body)) {
+		const fields = parseAttemptComment(m[1]);
+		if (!fields) { continue; }
+		out.push({ language, code: m[2].trimEnd(), ...fields });
+	}
+	return out;
+}
+
+/**
+ * Parse the `<!-- attempt: { … } -->` JSON payload into the required
+ * `Attempt` fields (plus the optional Big-O ones); `null` when the comment is
+ * absent, malformed, or missing `at` / `duration` / `passed` — those three
+ * have no sensible default, unlike the solution `meta:` comment's fields.
+ */
+function parseAttemptComment(raw: string | undefined): Omit<Attempt, 'language' | 'code'> | null {
+	const obj = parseHtmlCommentJson(raw);
+	if (!obj) { return null; }
+	if (typeof obj.at !== 'string' || typeof obj.duration !== 'string' || typeof obj.passed !== 'boolean') {
+		return null;
+	}
+	return {
+		at:         obj.at,
+		duration:   obj.duration,
+		passed:     obj.passed,
+		bigO:       typeof obj.bigO       === 'string' ? obj.bigO       : undefined,
+		confidence: typeof obj.confidence === 'string' ? obj.confidence : undefined,
+	};
 }

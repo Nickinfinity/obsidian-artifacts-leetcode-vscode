@@ -2,7 +2,9 @@ import * as assert from 'node:assert';
 import {
     availableLanguages,
     renderActions,
+    renderControls,
     renderLanguageRow,
+    renderNavHeader,
     renderPracticeControls,
     renderSetups,
     renderTestCounts,
@@ -36,9 +38,68 @@ suite('leetcodePreview.controls', () => {
             test:         defaultTestConfig(),
             practice:     defaultPracticeConfig(),
             solutions:    [{ language: 'python', code: '# python' }],
+            attempts:     [],
+            tags:         [],
             ...overrides,
         };
     }
+
+    // ── renderNavHeader ───────────────────────────────────────────────────────
+
+    suite('renderNavHeader', () => {
+
+        test('idle renders the back arrow, top-left, no close button', () => {
+            const html = renderNavHeader('idle');
+            assert.ok(html.includes('id="backBtn"'));
+            assert.ok(html.includes('nav-header-left'));
+            assert.ok(!html.includes('id="closeBtn"'));
+        });
+
+        test('running renders the close button, top-right, no back arrow', () => {
+            const html = renderNavHeader('running');
+            assert.ok(html.includes('id="closeBtn"'));
+            assert.ok(html.includes('title="close"'));
+            assert.ok(html.includes('nav-header-right'));
+            assert.ok(!html.includes('id="backBtn"'));
+        });
+
+        test('solved and attempted both fall back to the back arrow', () => {
+            for (const phase of ['solved', 'attempted'] as const) {
+                const html = renderNavHeader(phase);
+                assert.ok(html.includes('id="backBtn"'), phase);
+                assert.ok(!html.includes('id="closeBtn"'), phase);
+            }
+        });
+
+        test('running + bounded shows the timer, no "no limit" span', () => {
+            const html = renderNavHeader('running', '29:58', false);
+            assert.ok(html.includes('id="challengeTimer"'));
+            assert.ok(html.includes('29:58'));
+            assert.ok(!html.includes('id="challengeNoLimit"'));
+        });
+
+        test('running + unlimited shows the timer plus a #challengeNoLimit "no limit" span', () => {
+            const html = renderNavHeader('running', '00:07', true);
+            assert.ok(html.includes('id="challengeTimer"'));
+            assert.ok(html.includes('00:07'));
+            assert.ok(html.includes('id="challengeNoLimit"'));
+            assert.ok(/no limit/i.test(html));
+        });
+
+        test('unlimited defaults to false — omitting the arg keeps bounded rendering', () => {
+            const html = renderNavHeader('running', '10:00');
+            assert.ok(!html.includes('id="challengeNoLimit"'));
+        });
+
+        test('idle/solved/attempted output is unchanged by the unlimited flag', () => {
+            for (const phase of ['idle', 'solved', 'attempted'] as const) {
+                const withFlag = renderNavHeader(phase, '', true);
+                const without = renderNavHeader(phase);
+                assert.strictEqual(withFlag, without, phase);
+                assert.ok(!withFlag.includes('id="challengeNoLimit"'), phase);
+            }
+        });
+    });
 
     // ── availableLanguages ────────────────────────────────────────────────────
 
@@ -205,6 +266,68 @@ suite('leetcodePreview.controls', () => {
             const html = renderActions(fixture({ test: { type: 'class', timeoutMs: 5000 } }));
             assert.ok(/id="solveBtn"[^>]*disabled/.test(html));
             assert.ok(/id="submitBtn"[^>]*disabled/.test(html));
+        });
+    });
+
+    // ── renderControls ────────────────────────────────────────────────────────
+
+    suite('renderControls', () => {
+
+        test('idle shows the language select, practice settings, and Solve It', () => {
+            const html = renderControls('idle', fixture());
+            assert.ok(html.includes('id="langSelector"'));
+            assert.ok(html.includes('class="practice-option"'));
+            assert.ok(html.includes('id="solveBtn"'));
+        });
+
+        test('idle hides Run Tests and Submit', () => {
+            const html = renderControls('idle', fixture());
+            assert.ok(!html.includes('id="runTestsBtn"'));
+            assert.ok(!html.includes('id="submitBtn"'));
+        });
+
+        test('running shows Run Tests and Submit', () => {
+            const html = renderControls('running', fixture());
+            assert.ok(html.includes('id="runTestsBtn"'));
+            assert.ok(html.includes('id="submitBtn"'));
+        });
+
+        test('running hides practice settings and Solve It', () => {
+            const html = renderControls('running', fixture());
+            assert.ok(!html.includes('class="practice-option"'));
+            assert.ok(!html.includes('id="timeLimit"'));
+            assert.ok(!html.includes('id="solveBtn"'));
+        });
+
+        test('solved shows the .solved-summary block and a Solve It retry button', () => {
+            const html = renderControls('solved', fixture());
+            assert.ok(html.includes('class="solved-summary"'));
+            assert.ok(html.includes('id="solveBtn"'));
+        });
+
+        test('solved hides Run Tests, Submit, and practice settings', () => {
+            const html = renderControls('solved', fixture());
+            assert.ok(!html.includes('id="runTestsBtn"'));
+            assert.ok(!html.includes('id="submitBtn"'));
+            assert.ok(!html.includes('class="practice-option"'));
+        });
+
+        test('solved summary surfaces the recorded solve duration when present', () => {
+            const p = fixture({
+                solutions: [{ language: 'python', code: '# python', duration: '3m12s' }],
+            });
+            const html = renderControls('solved', p);
+            assert.ok(html.includes('3m12s'));
+        });
+
+        test('attempted renders identically to idle', () => {
+            const p = fixture();
+            assert.strictEqual(renderControls('attempted', p), renderControls('idle', p));
+        });
+
+        test('Solve It is disabled in idle when no language has a test environment', () => {
+            const html = renderControls('idle', fixture({ setups: [], solutions: [] }));
+            assert.ok(/id="solveBtn"[^>]*disabled/.test(html));
         });
     });
 

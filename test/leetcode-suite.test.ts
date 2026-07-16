@@ -24,7 +24,7 @@ suite('leetcode-suite helpers', () => {
             title: 'T', difficulty: 'easy', functionName: 'f', status: 'unsolved',
             params: [], returns: 'int', description: '', examples: [],
             tests, finalTests, test: defaultTestConfig(),
-            setups: [], practice: defaultPracticeConfig(), solutions: [],
+            setups: [], practice: defaultPracticeConfig(), solutions: [], attempts: [], tags: [],
         };
     }
 

@@ -11,7 +11,7 @@ function fixture(overrides: Partial<ParsedLeetCode> = {}): ParsedLeetCode {
         params: [{ name: 'nums', type: 'int[]' }, { name: 'flag', type: 'bool' }],
         returns: 'int[]', description: '', examples: [],
         tests: [], finalTests: [], test: defaultTestConfig(),
-        setups: [], practice: defaultPracticeConfig(), solutions: [],
+        setups: [], practice: defaultPracticeConfig(), solutions: [], attempts: [], tags: [],
         ...overrides,
     };
 }
@@ -75,6 +75,16 @@ suite('function × python env', () => {
             assert.ok(fileNamed(emit(), 'runner.py').includes('__sys.stdout.flush()'));
         });
 
+        test('a functions: override is what the runner imports off the module, not functionName', () => {
+            const parsed = fixture({ functions: { python: 'two_sum' } });
+            const overrideCode = 'def two_sum(nums, flag):\n    return [0, 1]';
+            const runner = fileNamed(
+                pythonFunctionEnv.emit({ parsed, langId: 'python', code: overrideCode, cases: CASES }),
+                'runner.py',
+            );
+            assert.ok(runner.includes('__fn = getattr(__mod, "two_sum")'));
+        });
+
         test('the candidate file is never asked to read input()', () => {
             assert.ok(!fileNamed(emit(), 'sol.py').includes('input()'));
         });
@@ -101,6 +111,15 @@ suite('function × python env', () => {
             const msg = check('def two_sum(nums, flag):\n    return nums');
             assert.ok(msg);
             assert.ok(/twoSum/.test(msg));
+        });
+
+        test('a functions: override requires the overridden name, not functionName', () => {
+            const parsed = fixture({ functions: { python: 'two_sum' } });
+            const msg = pythonFunctionEnv.validate!({
+                parsed, langId: 'python', code: CODE, cases: CASES,
+            });
+            assert.ok(msg);
+            assert.ok(/two_sum/.test(msg));
         });
     });
 

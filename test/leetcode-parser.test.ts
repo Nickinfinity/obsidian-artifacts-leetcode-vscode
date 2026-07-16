@@ -1,5 +1,13 @@
 import * as assert from 'node:assert';
-import { parseLeetCode } from '../src/services/leetcode-parser.service.js';
+import {
+    defaultPracticeConfig,
+    defaultTestConfig,
+    functionNameFor,
+    parseFrontmatterOnly,
+    parseLeetCode,
+} from '../src/services/leetcode-parser.service.js';
+import { extractAttempts } from '../src/services/leetcode-sections.helpers.js';
+import type { ParsedLeetCode } from '../src/types/leetcode.types.js';
 
 /**
  * Unit tests for parseLeetCode(content): ParsedLeetCode.
@@ -447,6 +455,348 @@ suite('parseLeetCode', () => {
         const parsed = parseLeetCode(build(fm, body));
         assert.strictEqual(parsed.solutions[0].solvedAt, undefined);
         assert.strictEqual(parsed.solutions[0].duration, undefined);
+    });
+
+    // ── Attempts (wiring only — extractAttempts itself is tested below) ─────────
+
+    test('# Attempts is wired into parsed.attempts', () => {
+        const fm = [
+            'type: leetcode',
+            'title: Demo',
+            'function: demo',
+            'params: []',
+            'returns: int',
+        ].join('\n');
+        const body = [
+            '# Attempts',
+            '',
+            '## Java',
+            '<!-- attempt: { "at": "2026-07-10T00:00:00Z", "duration": "1m0s", "passed": true } -->',
+            FENCE + 'java',
+            'int x;',
+            FENCE,
+        ].join('\n');
+        const parsed = parseLeetCode(build(fm, body));
+        assert.strictEqual(parsed.attempts.length, 1);
+        assert.strictEqual(parsed.attempts[0].language, 'java');
+    });
+
+    test('no # Attempts section → empty attempts array', () => {
+        const fm = [
+            'type: leetcode',
+            'title: Demo',
+            'function: demo',
+            'params: []',
+            'returns: int',
+        ].join('\n');
+        const parsed = parseLeetCode(build(fm, ''));
+        assert.deepStrictEqual(parsed.attempts, []);
+    });
+
+    // ── functions: block ──────────────────────────────────────────────────────
+
+    test('parses a functions: block into a per-language map', () => {
+        const fm = [
+            'type: leetcode',
+            'title: AB Check',
+            'function: ABCheck',
+            'params: []',
+            'returns: bool',
+            'functions:',
+            '  python: ab_check',
+            '  rust: ab_check',
+        ].join('\n');
+        const parsed = parseLeetCode(build(fm, ''));
+        assert.deepStrictEqual(parsed.functions, { python: 'ab_check', rust: 'ab_check' });
+    });
+
+    test('an aliased language key in functions: resolves to its canonical id', () => {
+        const fm = [
+            'type: leetcode',
+            'title: Demo',
+            'function: demo',
+            'params: []',
+            'returns: int',
+            'functions:',
+            '  py: demo_snake',
+        ].join('\n');
+        const parsed = parseLeetCode(build(fm, ''));
+        assert.deepStrictEqual(parsed.functions, { python: 'demo_snake' });
+    });
+
+    test('no functions: block → undefined map', () => {
+        const fm = [
+            'type: leetcode',
+            'title: Demo',
+            'function: demo',
+            'params: []',
+            'returns: int',
+        ].join('\n');
+        const parsed = parseLeetCode(build(fm, ''));
+        assert.strictEqual(parsed.functions, undefined);
+    });
+
+    // ── tags: block ──────────────────────────────────────────────────────────
+
+    test('parses an inline tags: array', () => {
+        const fm = [
+            'type: leetcode',
+            'title: Two Sum',
+            'function: twoSum',
+            'params: []',
+            'returns: int[]',
+            'tags: [leetcode, arrays, hash-map]',
+        ].join('\n');
+        const parsed = parseLeetCode(build(fm, ''));
+        assert.deepStrictEqual(parsed.tags, ['leetcode', 'arrays', 'hash-map']);
+    });
+
+    test('parses a YAML list tags: block', () => {
+        const fm = [
+            'type: leetcode',
+            'title: Two Sum',
+            'function: twoSum',
+            'params: []',
+            'returns: int[]',
+            'tags:',
+            '  - leetcode',
+            '  - arrays',
+        ].join('\n');
+        const parsed = parseLeetCode(build(fm, ''));
+        assert.deepStrictEqual(parsed.tags, ['leetcode', 'arrays']);
+    });
+
+    test('no tags: field → empty array', () => {
+        const fm = [
+            'type: leetcode',
+            'title: Demo',
+            'function: demo',
+            'params: []',
+            'returns: int',
+        ].join('\n');
+        const parsed = parseLeetCode(build(fm, ''));
+        assert.deepStrictEqual(parsed.tags, []);
+    });
+
+    test('tags: [] → empty array', () => {
+        const fm = [
+            'type: leetcode',
+            'title: Demo',
+            'function: demo',
+            'params: []',
+            'returns: int',
+            'tags: []',
+        ].join('\n');
+        const parsed = parseLeetCode(build(fm, ''));
+        assert.deepStrictEqual(parsed.tags, []);
+    });
+
+});
+
+// ── parseFrontmatterOnly ────────────────────────────────────────────────────────
+
+suite('parseFrontmatterOnly', () => {
+
+    function build(frontmatter: string, body: string): string {
+        return ['---', frontmatter, '---', '', body].join('\n');
+    }
+
+    test('parses title, difficulty, status, algorithm, tags without touching the body', () => {
+        const fm = [
+            'type: leetcode',
+            'title: Two Sum',
+            'difficulty: medium',
+            'function: twoSum',
+            'algorithm: hash-map',
+            'status: solved',
+            'tags: [arrays, hash-map]',
+            'params: []',
+            'returns: int[]',
+        ].join('\n');
+        const body = [
+            '## Tests',
+            '```json',
+            'not valid json — must never be touched',
+            '```',
+        ].join('\n');
+        const summary = parseFrontmatterOnly(build(fm, body));
+        assert.deepStrictEqual(summary, {
+            title: 'Two Sum',
+            difficulty: 'medium',
+            status: 'solved',
+            algorithm: 'hash-map',
+            tags: ['arrays', 'hash-map'],
+        });
+    });
+
+    test('defaults match parseLeetCode when frontmatter is minimal', () => {
+        const fm = ['type: leetcode', 'title: Demo', 'function: demo', 'params: []', 'returns: int'].join('\n');
+        const summary = parseFrontmatterOnly(build(fm, ''));
+        assert.strictEqual(summary.difficulty, 'easy');
+        assert.strictEqual(summary.status, 'unsolved');
+        assert.strictEqual(summary.algorithm, undefined);
+        assert.deepStrictEqual(summary.tags, []);
+    });
+
+});
+
+// ── functionNameFor ───────────────────────────────────────────────────────────
+
+suite('functionNameFor', () => {
+
+    function fixture(overrides: Partial<ParsedLeetCode> = {}): ParsedLeetCode {
+        return {
+            title: 'AB Check', difficulty: 'easy', functionName: 'ABCheck', status: 'unsolved',
+            params: [], returns: 'bool', description: '', examples: [],
+            tests: [], finalTests: [], test: defaultTestConfig(),
+            setups: [], practice: defaultPracticeConfig(), solutions: [], attempts: [], tags: [],
+            ...overrides,
+        };
+    }
+
+    test('returns the override for a listed language', () => {
+        const parsed = fixture({ functions: { python: 'ab_check' } });
+        assert.strictEqual(functionNameFor(parsed, 'python'), 'ab_check');
+    });
+
+    test('falls back to functionName for an unlisted language', () => {
+        const parsed = fixture({ functions: { python: 'ab_check' } });
+        assert.strictEqual(functionNameFor(parsed, 'java'), 'ABCheck');
+    });
+
+    test('falls back to functionName when no functions map is declared', () => {
+        const parsed = fixture();
+        assert.strictEqual(functionNameFor(parsed, 'python'), 'ABCheck');
+    });
+});
+
+// ── extractAttempts ──────────────────────────────────────────────────────────
+
+suite('extractAttempts', () => {
+
+    const FENCE = '```';
+
+    test('no # Attempts section → empty array', () => {
+        assert.deepStrictEqual(extractAttempts(''), []);
+        assert.deepStrictEqual(extractAttempts('## Tests\n```json\n[]\n```'), []);
+    });
+
+    test('parses a single attempt entry under a language heading', () => {
+        const body = [
+            '# Attempts',
+            '',
+            '## Java',
+            '<!-- attempt: { "at": "2026-07-10T14:32:00Z", "duration": "8m22s", "passed": true, "bigO": "O(n)", "confidence": "medium" } -->',
+            FENCE + 'java',
+            'int x = 0;',
+            FENCE,
+        ].join('\n');
+        const attempts = extractAttempts(body);
+        assert.strictEqual(attempts.length, 1);
+        assert.deepStrictEqual(attempts[0], {
+            language: 'java',
+            at: '2026-07-10T14:32:00Z',
+            duration: '8m22s',
+            passed: true,
+            bigO: 'O(n)',
+            confidence: 'medium',
+            code: 'int x = 0;',
+        });
+    });
+
+    test('optional bigO / confidence are omitted, not defaulted', () => {
+        const body = [
+            '# Attempts',
+            '',
+            '## Python',
+            '<!-- attempt: { "at": "2026-07-10T00:00:00Z", "duration": "1m0s", "passed": false } -->',
+            FENCE + 'python',
+            'pass',
+            FENCE,
+        ].join('\n');
+        const attempts = extractAttempts(body);
+        assert.strictEqual(attempts[0].bigO, undefined);
+        assert.strictEqual(attempts[0].confidence, undefined);
+    });
+
+    test('multiple entries under one language are parsed in file order (newest first on disk)', () => {
+        const body = [
+            '# Attempts',
+            '',
+            '## Python',
+            '<!-- attempt: { "at": "2026-07-11T00:00:00Z", "duration": "2m0s", "passed": true } -->',
+            FENCE + 'python',
+            'pass # newest',
+            FENCE,
+            '',
+            '<!-- attempt: { "at": "2026-07-10T00:00:00Z", "duration": "5m0s", "passed": false } -->',
+            FENCE + 'python',
+            'pass # oldest',
+            FENCE,
+        ].join('\n');
+        const attempts = extractAttempts(body);
+        assert.strictEqual(attempts.length, 2);
+        assert.strictEqual(attempts[0].at, '2026-07-11T00:00:00Z');
+        assert.strictEqual(attempts[1].at, '2026-07-10T00:00:00Z');
+    });
+
+    test('multiple ## language headings are parsed independently', () => {
+        const body = [
+            '# Attempts',
+            '',
+            '## Java',
+            '<!-- attempt: { "at": "2026-07-10T00:00:00Z", "duration": "1m0s", "passed": true } -->',
+            FENCE + 'java',
+            'int x;',
+            FENCE,
+            '',
+            '## Python',
+            '<!-- attempt: { "at": "2026-07-10T00:00:00Z", "duration": "1m0s", "passed": false } -->',
+            FENCE + 'python',
+            'x = 1',
+            FENCE,
+        ].join('\n');
+        const attempts = extractAttempts(body);
+        assert.deepStrictEqual(attempts.map(a => a.language), ['java', 'python']);
+    });
+
+    test('malformed attempt comment (invalid JSON) is skipped, never throws', () => {
+        const body = [
+            '# Attempts',
+            '',
+            '## Java',
+            '<!-- attempt: {not valid json} -->',
+            FENCE + 'java',
+            'int x;',
+            FENCE,
+        ].join('\n');
+        assert.doesNotThrow(() => extractAttempts(body));
+        assert.deepStrictEqual(extractAttempts(body), []);
+    });
+
+    test('a fenced block with no preceding attempt comment is skipped', () => {
+        const body = [
+            '# Attempts',
+            '',
+            '## Java',
+            FENCE + 'java',
+            'int x;',
+            FENCE,
+        ].join('\n');
+        assert.deepStrictEqual(extractAttempts(body), []);
+    });
+
+    test('an attempt comment missing a required field (passed) is skipped', () => {
+        const body = [
+            '# Attempts',
+            '',
+            '## Java',
+            '<!-- attempt: { "at": "2026-07-10T00:00:00Z", "duration": "1m0s" } -->',
+            FENCE + 'java',
+            'int x;',
+            FENCE,
+        ].join('\n');
+        assert.deepStrictEqual(extractAttempts(body), []);
     });
 
 });

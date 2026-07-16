@@ -64,7 +64,8 @@ The user flow:
 6. **Submit** grades *public + hidden* `## Final Tests` and ends the challenge
    either way: all green → `status: solved` plus a `<!-- meta: … -->` duration
    comment; any failure → `status: attempted`. Editor settings are restored on
-   both paths. Solve It reopens the same file so the run can be retried.
+   both paths. Solve It again starts a **fresh** attempt file, not a reopened
+   one (see "Challenge session" below).
 
 ---
 
@@ -72,86 +73,26 @@ The user flow:
 
 ```
 src/
-├── extension.ts                       # Entry point — activate() / deactivate()
-├── commands/
-│   ├── openSettings.command.ts        # Registers obsidian-leetcode.settings
-│   ├── createExercise.command.ts      # Registers obsidian-leetcode.create (placeholder)
-│   ├── leetcode.command.ts            # openLeetCodePicker — QuickPick + panel wiring + solveIt
-│   └── leetcode-run.handlers.ts       # handleRunTests / handleSubmit / persistStatus
-├── services/
-│   ├── vault.service.ts               # validateObsidianVault(), createVaultDirectory(), LEETCODE_DIR
-│   ├── vault-path.store.ts            # getVaultPath/setVaultPath/migrateLegacyVaultPath — globalState
-│   ├── context.service.ts             # refreshVaultContext(context) — single vaultConfigured key
-│   ├── frontmatter-patcher.service.ts # patchFrontmatterField() — status writeback on Submit
-│   ├── leetcode-parser.service.ts     # parseLeetCode(), defaultPracticeConfig(), defaultTestConfig()
-│   ├── leetcode-sections.helpers.ts   # extractDescription/Examples/Tests/FinalTests/Setups/Solutions
-│   ├── leetcode-suite.helpers.ts      # publicSuite/submitSuite/publicCount/hasFinalTests/tagSuiteKinds
-│   ├── leetcode-candidate.helpers.ts  # buildExecutable(), declaresFunction()
-│   ├── leetcode-codegen.service.ts    # mapType(), generateBoilerplate(), generateTestHarness(),
-│   │                                  # jsonToLiteral(), injectSolution()
-│   ├── leetcode-runner.service.ts     # detectRuntime(), runSuite(), suiteTimeout()
-│   ├── leetcode-timer.service.ts      # LeetCodeTimer — start/stop/getElapsed/reset
-│   ├── leetcode-challenge.service.ts  # startChallenge/endChallenge/activeChallenge + countdown
-│   ├── exercise-file.service.ts       # exerciseFileUri(), openExerciseFile()
-│   ├── exercise-file.helpers.ts       # resolveStarterCode(), slugify(), exerciseFileName()
-│   ├── practice-mode.service.ts       # PracticeMode — apply/restore editor restrictions
-│   ├── language-map.service.ts        # resolveLangId(), extForLang(), extForFenceLang()
-│   ├── test-envs/
-│   │   ├── env.types.ts               # TestEnv, EnvContext, CaseOutcome, EmittedProgram/File
-│   │   ├── env.registry.ts            # register(), testEnvFor(), languagesForType()
-│   │   ├── sentinel.helpers.ts        # parseSentinelLines() — the __LEET__ batch protocol
-│   │   └── function/
-│   │       ├── java.env.ts            # Solution.java (verbatim) + generated Runner.java, validate
-│   │       ├── python.env.ts          # sol.py imported by generated runner.py, validate
-│   │       └── javascript.env.ts      # sol.js run in a vm sandbox by runner.js, validate
-│   └── lang-runners/
-│       ├── runner.types.ts            # Re-export of LangRunner from types/
-│       ├── java.runner.ts             # javaRunner config
-│       ├── javascript.runner.ts       # jsRunner config
-│       └── python.runner.ts           # pythonRunner config
+├── extension.ts        # Entry point — activate() / deactivate(), command + view registration
+├── commands/           # VS Code command handlers + the run orchestration (picker, solveIt, submit)
+├── services/           # All domain logic: parse, codegen, runner, challenge/timer, vault, exercise-file
+│   ├── test-envs/      # (test type × language) environments — validate/emit/parse a suite
+│   │   └── function/   # The three built-in `function` envs (java, python, javascript)
+│   └── lang-runners/   # Per-language toolchain configs (detectCmd, displayName)
 ├── ui/
-│   ├── panels/
-│   │   ├── settings.panel.ts          # Vault-folder picker webview (no artifact toggles)
-│   │   ├── leetcodePreview.panel.ts   # renderLeetCodePreviewHtml(), renderTestResultsHtml()
-│   │   └── leetcodePreview.controls.ts# renderLanguageRow/TestCounts/Setups/PracticeControls/Actions
-│   └── styles.css                     # Webview stylesheet — loaded via webview.asWebviewUri()
-├── types/
-│   ├── constants.ts                   # LANG_ALIAS, LANG_EXT, PRACTICE_OPTIONS, TEST_TYPES,
-│   │                                  # LEET_SENTINEL, ATTEMPTS_DIR, SOLUTION_MARKER, timeouts
-│   └── leetcode.types.ts              # LeetCodeStatus, LeetCodeDifficulty, ParamDef, TestCase,
-│                                      # TestResult, TestTypeId, TestConfig, TestSuiteKind,
-│                                      # LeetCodeSolution, ExerciseSetup, PracticeOption(Id),
-│                                      # PracticeConfig, ParsedLeetCode, LangRunner
-└── utils/
-    ├── helpers.ts                     # getNonce() for CSP nonces
-    ├── canonical-json.ts              # canonicalJson() — sorted keys, no whitespace
-    └── html.helpers.ts                # escHtml() for webview HTML escaping
-test/
-├── leetcode-parser.test.ts            # parseLeetCode coverage
-├── leetcode-setup-practice.test.ts    # # Setup section + practice: frontmatter block
-├── leetcode-test-config.test.ts       # test: frontmatter block — type + timeoutMs clamping
-├── leetcode-final-tests.test.ts       # ## Final Tests parsing + section non-interference
-├── leetcode-suite.test.ts             # publicSuite / submitSuite / tagSuiteKinds
-├── leetcode-candidate.test.ts         # buildExecutable / declaresFunction
-├── canonical-json.test.ts             # canonicalJson key sorting / escaping / null handling
-├── test-env-registry.test.ts          # testEnvFor / languagesForType / register
-├── function-env-java.test.ts          # generated Java source (never spawns javac)
-├── function-env-python.test.ts        # generated Python source + sentinel parse
-├── function-env-javascript.test.ts    # generated JS source + sentinel parse
-├── leetcode-language-map.test.ts      # resolveLangId / extForLang / extForFenceLang
-├── leetcode-exercise-file.test.ts     # slugify / exerciseFileName / resolveStarterCode
-├── leetcode-typemap.test.ts           # mapType primitives / arrays / maps / passthrough
-├── leetcode-codegen.test.ts           # generateBoilerplate / generateTestHarness / jsonToLiteral
-├── leetcode-runners.test.ts           # java/javascript/python runner configs
-├── leetcode-runner.test.ts            # detectRuntime / runSuite / suiteTimeout
-├── leetcode-timer.test.ts             # LeetCodeTimer class
-├── leetcode-inject.test.ts            # injectSolution
-├── leetcode-preview.test.ts           # renderLeetCodePreviewHtml / renderTestResultsHtml
-└── leetcode-preview-controls.test.ts  # selector / counts / practice controls / actions
+│   ├── panels/         # Webview HTML renderers + message handling (settings, preview)
+│   ├── views/          # Activity-Bar WebviewView providers (sidebar)
+│   └── styles.css      # Shared webview stylesheet
+├── types/              # constants.ts + leetcode.types.ts — literals, config, and all interfaces
+└── utils/              # Pure, dependency-free helpers (nonce, canonical-json, html escaping)
+test/                   # One `*.test.ts` per source concern; fixtures inline, no test/fixtures/ dir
 ```
 
-> The `fixture()` helper used by the codegen tests is defined inline in the
-> test files — there is no `test/fixtures/` directory.
+**Where new code goes:** domain logic → `services/` (a new `*.service.ts` for a
+stateful concern, a `*.helpers.ts` sibling for its pure functions); types →
+`types/`; webview rendering/handling → `ui/panels` or `ui/views`; anything pure
+and cross-cutting → `utils/`. Command/panel/view files stay thin — they wire
+VS Code to services, they do not hold logic. See the complexity limits below.
 
 ---
 
@@ -222,8 +163,20 @@ artifact code:
 | webview → ext | `runTests` | `{ language }` — public suite only, live buffer only |
 | webview → ext | `submit` | `{ language }` — public **+** final suite |
 | webview → ext | `selectLanguage` | `{ language }` |
+| webview → ext | `back` | none — no-confirmation discard (see "Challenge session"), returns to the empty state |
+| webview → ext | `close` | none — modal-confirmed discard while running, returns to the empty state |
 | ext → webview | `testResults` | `{ html }` — rendered results table |
-| ext → webview | `challengeState` | `{ active: boolean }` — gates the Run Tests button |
+| ext → webview | `challengeState` | `{ active: boolean, editorOpen?: boolean }` — gates the Run Tests button; `editorOpen` reflects the attempt tab's live open/closed state |
+| ext → webview | `tick` | `{ unlimited: boolean, ms: number }` — once a second while `running` (P7); writes `#challengeTimer` and toggles `#challengeNoLimit` |
+
+`renderNavHeader(phase)` ([leetcodePreview.controls.ts](src/ui/panels/leetcodePreview.controls.ts))
+renders the back-arrow (`#backBtn`, not running) / close-✕ (`#closeBtn`,
+running) control that posts `back` / `close` — pure and unit-tested, but not
+yet wired into `renderLeetCodePreviewHtml`'s body: that integration lands with
+the button-state work, which switches the panel's rendering onto
+`ChallengeState['phase']` wholesale. The extension-side handling (`back` /
+`close` routing, `discardChallenge()`) is live today; only the HTML that emits
+those messages is still pending.
 
 A locked artifact (`practice.locked: true`) causes the extension to ignore the
 `options` / `timeLimitMinutes` fields and use its own frontmatter.
@@ -245,6 +198,16 @@ syntax-highlight solution code.
 
 ## LeetCode Vault File Format
 
+> **Authoritative on-disk spec: [ARTIFACT_LEETCODE_FILE_FORMAT.md](ARTIFACT_LEETCODE_FILE_FORMAT.md).**
+> That file is the single source of truth for the file structure — every
+> frontmatter field, section heading regex, fence info-string, and the
+> `<!-- meta: … -->` / `<!-- attempt: … -->` comment shapes — grounded in the
+> parser (`leetcode-parser.service.ts` + `leetcode-sections.helpers.ts`). The
+> summary below stays for orientation; when the two disagree, the spec file (and
+> the parser) win. **Any change to the `.md` format must update
+> `ARTIFACT_LEETCODE_FILE_FORMAT.md` in the same change** — keep it in sync with
+> the parser, always.
+
 A `type: leetcode` artifact carries problem metadata, a Markdown description,
 `## Examples`, `## Tests`, a `# Setup` tree, and a `# Solutions` tree:
 
@@ -253,7 +216,9 @@ A `type: leetcode` artifact carries problem metadata, a Markdown description,
 type: leetcode
 title: Two Sum
 difficulty: easy
-function: twoSum
+function: twoSum        # default / fallback
+functions:              # optional per-language override
+  python: two_sum
 algorithm: hash-map
 status: unsolved
 params:
@@ -325,7 +290,8 @@ def two_sum(nums, target): ...
 | `type` | `'leetcode'` | yes | — | Discriminator |
 | `title` | string | yes | — | Display title |
 | `difficulty` | `LeetCodeDifficulty` | no | `'easy'` | `easy` / `medium` / `hard` |
-| `function` | string | yes | — | Function name to implement |
+| `function` | string | yes | — | Function name to implement — default and fallback |
+| `functions` | `Record<string,string>` | no | — | Per-language override of `function` (e.g. `{ python: ab_check }`); keys resolve through the same language-alias table as setup/solution headings. Read via `functionNameFor(parsed, langId)`, never `parsed.functionName` directly, for any code that targets a specific language |
 | `algorithm` | string | no | — | Category tag (e.g. `hash-map`) |
 | `status` | `LeetCodeStatus` | no | `'unsolved'` | Auto-updated on successful Submit |
 | `params` | `{ name, type }[]` | yes | — | Generic types (see mapping below) |
@@ -357,7 +323,7 @@ inside a compiler.
 
 | Sub-key | Type | Default | Notes |
 |---|---|---|---|
-| `timeLimit` | number (minutes) | `0` | `0` = no countdown. Negative / unparsable → `0` |
+| `timeLimit` | number (minutes) | `0` | `0`/empty ⇒ unlimited: the clock counts **up** from the start and shows a "no limit" label, never auto-submits. `>0` ⇒ bounded: the clock counts **down** and auto-submits at zero. Negative / unparsable → `0` |
 | `locked` | boolean | `false` | `true` renders the panel controls disabled and makes the settings mandatory |
 | `options` | `PracticeOptionId[]` | `[noCompletion, noAiAgents]` | Inline `[a, b]` or YAML `- a` list; unknown ids dropped. `options: []` = no restrictions |
 
@@ -484,26 +450,73 @@ key order was a coin flip.
 - `detectRuntime(runner)` (in the handlers, before `runSuite`) shells out `runner.detectCmd`; `env.detect()` gates in addition when present.
 - **Run Tests** executes the **public** suite against the live buffer. It never writes frontmatter, never stops the clock, never lifts the restrictions. Without a live challenge the button is `disabled` and the handler guards anyway.
 - **Submit** executes **public + final** against the live buffer, falling back to the artifact's stored solution when no challenge is running. All green → `status: 'solved'` + `<!-- meta: … -->`. Any failure **during a live challenge** → `status: 'attempted'`. A failure with no live challenge writes nothing — a dry run against a stored solution must never downgrade a solved artifact.
-- Submit is **one shot**: pass or fail, the challenge ends and the restrictions lift. *Solve It* reopens the same temp file with the code intact and re-arms it; `attempted → solved` is allowed.
+- Submit is **one shot**: pass or fail, the challenge ends and the restrictions lift. *Solve It* opens a **new** temp file and re-arms the challenge; `attempted → solved` is allowed. The finished run's file is left on disk (see "Challenge session") until the sidebar view's Back control discards it.
 - Runners exist for `java`, `javascript`, `python` only, and the selector is intersected with `languagesForType(test.type)` — a language with a `# Setup` block but no env is never offered.
 
 ### Challenge session
 
 `startChallenge()` ([leetcode-challenge.service.ts](src/services/leetcode-challenge.service.ts))
 owns the single in-flight run: the temp file, the `PracticeMode` snapshot, the
-`LeetCodeTimer`, and the status-bar countdown. Only one session may be active
+`LeetCodeTimer`, and the status-bar clock. Only one session may be active
 per window — starting a second ends the first, so a settings snapshot is never
-stranded. The temp file is created under `globalStorageUri/attempts/` and is
-**never overwritten** if it already exists: a mis-clicked *Solve It* reopens the
-previous attempt rather than discarding it.
+stranded. The session also carries a `state: ChallengeState`
+([leetcode.types.ts](src/types/leetcode.types.ts)) — exercise URI, temp-file
+URI, practice options, timing, and `phase` — read via the `challengeState()`
+accessor by the sidebar view and (eventually) the button-state and timer
+features.
+
+**No reopen-to-retry.** Every *Solve It* writes a **new**, uniquely-named temp
+file under `globalStorageUri/attempts/` (`exerciseFileName` mints a fresh run
+suffix each call — see [exercise-file.helpers.ts](src/services/exercise-file.helpers.ts)) —
+there is nothing to overwrite, and a second *Solve It* is always a fresh
+attempt, never a resumed buffer. A run that ends without being explicitly
+discarded (solved, attempted, or the window closed mid-run) leaves its temp
+file on disk; only `discardChallenge()`
+([leetcode-run.handlers.ts](src/commands/leetcode-run.handlers.ts)) deletes
+one, via the sidebar view's Back (idle, no confirmation) or Close (running,
+modal confirmation) control. Back also sweeps up a stale attempt left by an
+already-finished run — the view tracks the last attempt's URI independently of
+the live session so there is something to sweep once the session itself has
+ended. Abandoned files are an accepted, intentional trade-off: a future
+"resume unfinished runs" feature owns listing and cleanup
+([resume-runs.md](docs/plans/resume-runs.md)).
 
 ### Timer
 
 `LeetCodeTimer` starts when the challenge starts and stops on a successful
 Submit. Elapsed time is formatted as `XmYs` and recorded in the solution
-metadata comment. When `practice.timeLimit > 0` a status-bar countdown ticks
-down beside it; expiry warns but never closes the editor or lifts the
-restrictions — abandoning a run is the user's call.
+metadata comment, independent of everything below — that stopwatch always
+runs regardless of `practice.timeLimit`.
+
+The **status-bar clock and in-view header timer always run** (P7) — every
+challenge gets one, not just runs with a time limit set. One pure function,
+`timerTick(startedAt, deadline, now): TimerTick`
+([leetcode-challenge.helpers.ts](src/services/leetcode-challenge.helpers.ts)),
+decides both modes from a single `deadline: number | null`:
+
+- **Bounded** (`practice.timeLimit > 0`): `deadline = startedAt + minutes *
+  60_000`. The clock counts **down** (`{ unlimited: false, ms: remaining }`,
+  clamped to `0`), the status bar reads `$(watch) MM:SS`, and reaching zero
+  auto-submits via the same `handleSubmit` path a manual click uses (guarded
+  by the re-entrancy peek below).
+- **Unlimited** (`practice.timeLimit` `0`/empty): `deadline = null`. The
+  clock counts **up** from `startedAt` (`{ unlimited: true, ms: elapsed }`),
+  the status bar reads `$(watch) MM:SS · no limit`, and it **never**
+  auto-submits — `expire()` is only ever called when `!unlimited && ms <= 0`.
+
+Both modes render through the same `formatRemaining()` `MM:SS` formatter —
+the only difference is what `ms` measures and the unlimited "no limit" label.
+The tick fans out from `leetcode-challenge.service.ts`'s `startTimer()`
+(renamed from `startCountdown` — it now runs unconditionally in
+`startChallenge`, never gated on a positive time limit) through
+`ChallengeCallbacks.onTick(tick: TimerTick)` to the sidebar view provider's
+`timerSeed()` (initial-render seed, reusing the same `timerTick()`) and
+`postTick()` (`{ command: 'tick', unlimited, ms }` posted to the live
+webview — never a `webview.html` reassignment, which would restart the
+webview and kill the timer mid-run). The webview writes `formatRemainingLabel(msg.ms)`
+into `#challengeTimer` and shows/hides the `#challengeNoLimit` "no limit"
+span from `msg.unlimited`. Expiry warns but never closes the editor or lifts
+the restrictions — abandoning a bounded run is still the user's call.
 
 ### Preview panel
 
@@ -554,6 +567,34 @@ hidden case without learning what it was.
 ---
 
 ## Code Style
+
+### ⚠️ Development methodology (READ FIRST)
+
+Implementation follows **TDD, CUPID, and DDD**. In order:
+
+- **TDD — test first, where it makes sense.** For any pure, `vscode`-free unit
+  (parsers, codegen, the env `emit`/`validate`, suite selection, helpers), write
+  the failing test **before** the code, then make it pass, then refactor. The
+  existing `test/*.test.ts` suite is the pattern: `node:assert`, Mocha **TDD**
+  (`suite`/`test`), fixtures inline. Code that must import `vscode` (webviews,
+  views, commands, timers) is verified by the **F5 manual pass** instead — do
+  not contort it to be unit-testable; push the logic down into a pure helper
+  that *is* tested, and keep the `vscode` layer a thin wire.
+- **CUPID — properties, not rules.** Prefer code that is **C**omposable (small
+  surface, few deps), **U**nix-philosophy (does one thing), **P**redictable (no
+  hidden state or surprises), **I**diomatic (reads like the surrounding code),
+  and **D**omain-based (names come from the LeetCode domain, not the framework).
+  When a choice is ambiguous, pick the option that improves one of these without
+  hurting another.
+- **DDD — model the domain.** The domain vocabulary — exercise, challenge,
+  attempt, suite (public/final), test environment, practice mode — lives in
+  `src/types/` and drives the names in `services/`. Keep the domain model free
+  of VS Code types; the `vscode` API is an adapter at the edges (commands,
+  panels, views), never in the core services. New concepts get a named type
+  before they get behaviour.
+
+These three reinforce each other: DDD names the units, CUPID shapes them,
+TDD proves them. The file-organisation rules below are how they land on disk.
 
 ### ⚠️ File complexity limits (READ FIRST)
 

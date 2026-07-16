@@ -1,4 +1,5 @@
 import type { ParsedLeetCode } from '../types/leetcode.types.js';
+import { functionNameFor } from './leetcode-parser.service.js';
 
 /** Primitive → language-native lookup. */
 const PRIMITIVES: Record<string, Record<string, string>> = {
@@ -127,6 +128,7 @@ export function generateBoilerplate(parsed: ParsedLeetCode, language: string): s
 
 /** Java wrapper: imports + `class Main` + signature + Scanner stdin + System.out.print. */
 function javaBoilerplate(p: ParsedLeetCode): string {
+	const fn     = functionNameFor(p, 'java');
 	const ret    = mapType(p.returns, 'java');
 	const params = p.params.map(pa => `${mapType(pa.type, 'java')} ${pa.name}`).join(', ');
 	const readers = p.params.map(pa => `\t\t// read ${pa.name} from sc`).join('\n');
@@ -134,7 +136,7 @@ function javaBoilerplate(p: ParsedLeetCode): string {
 		'import java.util.*;',
 		'',
 		'class Main {',
-		`\tpublic static ${ret} ${p.functionName}(${params}) {`,
+		`\tpublic static ${ret} ${fn}(${params}) {`,
 		'\t\t<<SOLUTION>>',
 		'\t}',
 		'',
@@ -150,34 +152,36 @@ function javaBoilerplate(p: ParsedLeetCode): string {
 
 /** Python wrapper: `def` + `if __name__ == "__main__":` + `input()`. */
 function pythonBoilerplate(p: ParsedLeetCode): string {
+	const fn     = functionNameFor(p, 'python');
 	const params = p.params.map(pa => pa.name).join(', ');
 	const reads  = p.params.map(pa => `\t${pa.name} = input()`).join('\n');
 	return [
-		`def ${p.functionName}(${params}):`,
+		`def ${fn}(${params}):`,
 		'\t<<SOLUTION>>',
 		'',
 		'if __name__ == "__main__":',
 		reads || '\tpass',
-		`\tprint(${p.functionName}(${params}))`,
+		`\tprint(${fn}(${params}))`,
 		'',
 	].join('\n');
 }
 
 /** JavaScript wrapper: `function` + `readline` + `process.stdin`. */
 function jsBoilerplate(p: ParsedLeetCode): string {
+	const fn     = functionNameFor(p, 'javascript');
 	const params = p.params.map(pa => pa.name).join(', ');
 	return [
 		"const readline = require('readline');",
 		"const rl = readline.createInterface({ input: process.stdin });",
 		'',
-		`function ${p.functionName}(${params}) {`,
+		`function ${fn}(${params}) {`,
 		'\t<<SOLUTION>>',
 		'}',
 		'',
 		'const lines = [];',
 		"rl.on('line', (l) => lines.push(l));",
 		"rl.on('close', () => {",
-		`\tconst result = ${p.functionName}(${params});`,
+		`\tconst result = ${fn}(${params});`,
 		'\tprocess.stdout.write(String(result));',
 		'});',
 		'',

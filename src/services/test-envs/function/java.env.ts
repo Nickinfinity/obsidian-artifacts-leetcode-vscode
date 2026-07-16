@@ -1,5 +1,6 @@
 import { LEET_SENTINEL } from '../../../types/constants.js';
 import { jsonToLiteral } from '../../leetcode-codegen.service.js';
+import { functionNameFor } from '../../leetcode-parser.service.js';
 import type { CaseOutcome, EmittedProgram, EnvContext, TestEnv } from '../env.types.js';
 import { parseSentinelLines } from '../sentinel.helpers.js';
 
@@ -48,9 +49,9 @@ export const javaFunctionEnv: TestEnv = {
 	 * javaFunctionEnv.validate({ code: 'class Main { … }', … }); // → 'Write only the method…'
 	 */
 	validate(ctx: EnvContext): string | null {
-		const { code, parsed } = ctx;
+		const { code, parsed, langId } = ctx;
 		const bodyOnly = stripImportsAndPackage(code).body;
-		const fn = parsed.functionName;
+		const fn = functionNameFor(parsed, langId);
 
 		if (TYPE_DECL_RE.test(bodyOnly)) {
 			return `Java setup must be a bare method, not a class. Remove the surrounding \`class …\` — the runner wraps your \`${fn}\` method in its own class.`;
@@ -119,10 +120,11 @@ export const javaFunctionEnv: TestEnv = {
  * runnerSource({ parsed, cases, … });
  */
 function runnerSource(ctx: EnvContext): string {
-	const { parsed, cases } = ctx;
+	const { parsed, cases, langId } = ctx;
+	const fn = functionNameFor(parsed, langId);
 	const caseRows = cases.map(c => {
 		const args = parsed.params.map(p => jsonToLiteral(c.input[p.name], 'java'));
-		return `\t\t__cases.add(() -> Solution.${parsed.functionName}(${args.join(', ')}));`;
+		return `\t\t__cases.add(() -> Solution.${fn}(${args.join(', ')}));`;
 	});
 
 	return [
