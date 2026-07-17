@@ -25,7 +25,7 @@ export function canonicalJson(value: unknown): string {
 	}
 	if (typeof value === 'object') {
 		const entries = Object.keys(value as Record<string, unknown>)
-			.sort()
+			.sort((a, b) => a.localeCompare(b))
 			.map(k => `${JSON.stringify(k)}:${canonicalJson((value as Record<string, unknown>)[k])}`);
 		return `{${entries.join(',')}}`;
 	}

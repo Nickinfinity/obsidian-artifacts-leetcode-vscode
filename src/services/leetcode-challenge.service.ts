@@ -13,7 +13,7 @@ const TICK_MS = 1000;
 
 /**
  * A live challenge run: one temp file, one set of editor restrictions, one
- * timer (P7: always running, bounded or unlimited).
+ * timer (always running, bounded or unlimited).
  *
  * Only one may be active per window — `startChallenge()` ends any predecessor
  * before starting a new run, so editor settings are always restored from the

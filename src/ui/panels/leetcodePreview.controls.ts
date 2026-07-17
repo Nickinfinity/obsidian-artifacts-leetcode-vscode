@@ -6,8 +6,7 @@ import type { ChallengePhase, ParsedLeetCode } from '../../types/leetcode.types.
 import { escHtml } from '../../utils/html.helpers.js';
 
 /**
- * Render the sidebar view's return/close control, plus the running-state
- * countdown (P4, extended P7 for the unlimited/count-up mode).
+ * Render the sidebar view's return/close control, plus the running-state countdown.
  *
  * `running` gets a right-aligned close `✕` (native `title="close"` tooltip) —
  * clicking it should be gated behind a confirmation, since it discards the run
