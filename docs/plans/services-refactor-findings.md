@@ -85,3 +85,37 @@ serve different concerns:
 So T2's registry covers the genuinely hand-synced **executable-language metadata** only. `detectCmd`/
 `displayName` sit ready for T4 to consume when it **deletes** `lang-runners/` (editing those files
 in T2 just to delete them in T4 would be churn — transient dup removed by deletion).
+
+## T3 — Codegen dispatch collapse (behavior-critical)
+
+**Changed:** killed the genuine multi-way per-language cascades in
+`leetcode-codegen.service.ts` — `wrapArray` (3-way), `wrapMap` (5-way), the `SUPPORTED_LANGS` gate,
+and the `generateBoilerplate`/`generateTestHarness` 4-way ifs — replacing them with two dispatch
+tables: `TYPE_SYNTAX: Record<string, TypeSyntax>` (java/python/javascript/**rust**, drives
+`mapType`) and `LANG_CODEGEN: Record<LangId, LangCodegen>` (runnable set from the T2 registry,
+drives boilerplate + harness via an `isLangId` gate). Adding a language = one row per table.
+
+**Improved:** first real consumer of the T2 registry (`isLangId`/`LangId`). File 354→353L (neutral;
+the win is one dispatch source, not fewer lines). Gate 493→**504** (+11 byte-exact golden tests).
+
+**Golden net:** captured the pre-refactor emit for every boilerplate/harness path as byte-exact
+`strictEqual` snapshots (`test/leetcode-codegen-golden.test.ts`) **before** editing — these + the
+already-byte-exact `leetcode-typemap` (all 4 langs incl. rust, java-box, passthroughs) and
+`jsonToLiteral` suites are the byte-identical proof. Wrote golden first, never edited during the
+refactor.
+
+**Rule learned / deviations (grounded in KISS + CLAUDE.md's own 400-line rule):**
+- **Two dispatch tables, not one `CODEGEN_BY_LANG`.** Type-mapping spans 4 langs (rust is
+  type-mappable≠runnable — dropping it breaks `leetcode-typemap.test.ts`); boilerplate/harness span
+  the runnable 3. Forcing one `Record<LangId,…>` would silently drop rust type-mapping. The two
+  concerns get two correctly-keyed tables — better DDD than a lossy merge.
+- **No `codegen/` folder split.** Plan wanted a folder; file is 353L, under CLAUDE.md's 400
+  threshold. Splitting cohesive sub-400 logic into 5 files hurts navigation for zero gain.
+- **jsonToLiteral's python/java branches left as binary `? :` specializations.** They aren't
+  sprawling cascades — they're 2-way (special-vs-default) with a graceful default for *unknown*
+  languages. Mapping them would need `?? default` everywhere = more code, and would risk the
+  defensive default. Not the defect the phase targets.
+- **`wrapBareBody` (candidate.helpers) cross-dedup declined.** Plan wanted a "shared per-language
+  decl fn" between it and codegen. The overlaps are one-line signature fragments with different
+  indentation/marker/class-wrapping; a shared helper parameterised over all that reads worse than
+  two small functions. Cross-file coupling for a one-liner is negative value.
