@@ -349,3 +349,43 @@ export interface LeetCodeSummary {
 	/** Organisational tags from frontmatter; `[]` when absent */
 	tags: string[];
 }
+
+/** Confidence tier for a `BigOEstimate` — how much of the classification was inferred vs. counted. */
+export type BigOConfidence = 'high' | 'medium' | 'low';
+
+/**
+ * Result of a static Big-O heuristic pass over one candidate's source.
+ *
+ * This is **informational, never pass/fail** — static loop-counting is easily
+ * fooled (hidden library costs, early returns, amortised structures), so a
+ * caller must always render `confidence` and `reason` alongside `notation`
+ * rather than treating the notation as a verdict.
+ */
+export interface BigOEstimate {
+	/** Complexity class, e.g. `'O(n)'`, `'O(n^2)'`, `'O(n log n)'`, `'O(2^n)?'` */
+	notation: string;
+	/** How much of `notation` was counted directly vs. inferred/guessed */
+	confidence: BigOConfidence;
+	/** One-line, user-facing explanation of how `notation` was reached */
+	reason: string;
+}
+
+/**
+ * One run to append to an artifact's `# Attempts` section — the writer-side
+ * counterpart of `Attempt` (no `language`; that comes from the `langId`
+ * argument to `appendAttempt`, resolved to canonical the same way).
+ */
+export interface AttemptEntry {
+	/** ISO-8601 timestamp of the run */
+	at: string;
+	/** Human-readable elapsed time, e.g. `'8m22s'` */
+	duration: string;
+	/** True when every case (public + final) passed on this run */
+	passed: boolean;
+	/** Big-O notation from `estimateBigO`, when computed for this run */
+	bigO?: string;
+	/** Confidence tier of the Big-O estimate, when computed */
+	confidence?: string;
+	/** The submitted buffer, verbatim */
+	code: string;
+}

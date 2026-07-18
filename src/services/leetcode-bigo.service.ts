@@ -9,26 +9,7 @@ import {
 	stripPythonComments,
 } from './leetcode-bigo.helpers.js';
 import { isLangId, type LangId } from '../types/languages.js';
-
-/** Confidence tier for a `BigOEstimate` — how much of the classification was inferred vs. counted. */
-export type BigOConfidence = 'high' | 'medium' | 'low';
-
-/**
- * Result of a static Big-O heuristic pass over one candidate's source.
- *
- * This is **informational, never pass/fail** — static loop-counting is easily
- * fooled (hidden library costs, early returns, amortised structures), so a
- * caller must always render `confidence` and `reason` alongside `notation`
- * rather than treating the notation as a verdict.
- */
-export interface BigOEstimate {
-	/** Complexity class, e.g. `'O(n)'`, `'O(n^2)'`, `'O(n log n)'`, `'O(2^n)?'` */
-	notation: string;
-	/** How much of `notation` was counted directly vs. inferred/guessed */
-	confidence: BigOConfidence;
-	/** One-line, user-facing explanation of how `notation` was reached */
-	reason: string;
-}
+import type { BigOConfidence, BigOEstimate } from '../types/leetcode.types.js';
 
 /** Languages this heuristic understands. Anything else is reported, not guessed. */
 type SupportedLang = LangId;

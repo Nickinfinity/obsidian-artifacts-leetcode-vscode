@@ -1,7 +1,7 @@
 import { formatRemaining } from '../../services/leetcode-challenge.helpers.js';
 import { resolveLangId } from '../../services/language-map.service.js';
-import type { BigOEstimate } from '../../services/leetcode-bigo.service.js';
 import type {
+	BigOEstimate,
 	ChallengePhase,
 	ParsedLeetCode,
 	TestResult,

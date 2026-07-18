@@ -13,9 +13,7 @@ import { patchFrontmatterField } from '../services/frontmatter-patcher.service.j
 import { resolveLangId } from '../services/language-map.service.js';
 import { functionNameFor } from '../services/leetcode-parser.service.js';
 import { estimateBigO } from '../services/leetcode-bigo.service.js';
-import type { BigOEstimate } from '../services/leetcode-bigo.service.js';
 import { appendAttempt } from '../services/attempts-writer.service.js';
-import type { AttemptEntry } from '../services/attempts-writer.service.js';
 import { testEnvFor } from '../services/test-envs/env.registry.js';
 import type { TestEnv } from '../services/test-envs/env.types.js';
 import {
@@ -25,7 +23,7 @@ import {
 } from '../ui/panels/leetcodePreview.panel.js';
 import { FENCE } from '../types/constants.js';
 import { isLangId, LANGUAGES, type LanguageConfig } from '../types/languages.js';
-import type { ChallengePhase, LeetCodeStatus, TestResult } from '../types/leetcode.types.js';
+import type { AttemptEntry, BigOEstimate, ChallengePhase, LeetCodeStatus, TestResult } from '../types/leetcode.types.js';
 import type { PanelCtx } from '../ui/views/leetcodeView.provider.js';
 
 /**

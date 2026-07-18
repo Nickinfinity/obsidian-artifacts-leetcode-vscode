@@ -1,4 +1,5 @@
 import { FENCE } from '../types/constants.js';
+import type { AttemptEntry } from '../types/leetcode.types.js';
 import { sectionBounds, type SectionBounds } from './leetcode-section-bounds.helpers.js';
 import { resolveLangId } from './language-map.service.js';
 
@@ -6,26 +7,6 @@ const ATTEMPTS_HEADING_RE  = /^# Attempts\s*$/m;
 const SOLUTIONS_HEADING_RE = /^# Solutions\s*$/m;
 const TOP_BOUNDARY_RE      = /^# /m;
 const SUB_HEADING_RE       = /^## (.+)\r?\n/gm;
-
-/**
- * One run to append to an artifact's `# Attempts` section — the writer-side
- * counterpart of `Attempt` (no `language`; that comes from the `langId`
- * argument to `appendAttempt`, resolved to canonical the same way).
- */
-export interface AttemptEntry {
-	/** ISO-8601 timestamp of the run */
-	at: string;
-	/** Human-readable elapsed time, e.g. `'8m22s'` */
-	duration: string;
-	/** True when every case (public + final) passed on this run */
-	passed: boolean;
-	/** Big-O notation from `estimateBigO`, when computed for this run */
-	bigO?: string;
-	/** Confidence tier of the Big-O estimate, when computed */
-	confidence?: string;
-	/** The submitted buffer, verbatim */
-	code: string;
-}
 
 /**
  * Appends one attempt entry to an artifact's `# Attempts` section — newest
