@@ -149,3 +149,35 @@ source/test file the stale compiled `.js` keeps running under the mocha glob and
 count (saw a phantom 507). **Always `rm -rf dist` before the gate whenever a file was deleted or
 renamed.** Byte-identical proof for T4b came from the unchanged per-language `function-env-*` tests
 passing against the factory-built envs.
+
+## T5 — Section-slice + safe-JSON dedupe + parser split (two commits)
+
+**T5a (`67a8957`):** two single-sourcings. `safeJsonParse<T>` (`src/utils/safe-json.ts`) replaces the
+guarded `JSON.parse` copied in `parseSentinelLines`, `extractJsonCases`, and `parseHtmlCommentJson`.
+`sectionBounds(text, headingRe, boundaryRe)` (`leetcode-section-bounds.helpers.ts`) replaces the
+identical find-heading→find-boundary→compute-bounds math the reader
+(`extractSection`/`extractTopLevelSection`) and the writer (`locateTopSection`, whose own comment
+said it "mirrors the reader") each had. Reader slices `[headingEnd,bodyEnd)`, writer splices around
+them; the writer's private `TopSection` type is now the shared `SectionBounds`.
+
+**T5b (`02d7452`):** split the 539L parser. Public API (`parseLeetCode`, `parseFrontmatterOnly`,
+`functionNameFor`) stays in `leetcode-parser.service.ts` (**114L**); all frontmatter-block parsing
+moved to `leetcode-parser.helpers.ts` (431L), re-exporting the two config defaults so existing
+importers are unaffected. Extracted `scanIndentedBlock(lines, start, onLine)` — the
+`while(/^\s/){trim; skip-blank}` loop the 6 block parsers shared; each now supplies only its
+per-line dispatch. Merged params' two equivalent early-returns.
+
+**Improved:** guarded-JSON single-sourced (3→1); section slicing single-sourced (3→1, reader+writer
+no longer drift); parser god-file broken up. Gate 491→**499** (+5 section-bounds, +3 safe-json).
+
+**Rule learned:**
+- **The helpers file landed at 431L, over the plan's "<400" target.** Kept it: it's *one* cohesive
+  concern (frontmatter parsing), under CLAUDE.md's own 500 "plan a split" / 700 "must split"
+  thresholds, and JSDoc-mandated density inflates it. Splitting the dispatcher from its 6 tightly
+  coupled block parsers just to hit 400 would fragment one concern across two files — worse to read.
+  The real goal (no 539L god-file mixing public API + internals) is met: 114L API + 431L internals.
+- **`sectionBounds` slices *include* the leading `\n`** after the heading (the `$` heading match
+  stops before the newline) — exactly as the pre-refactor `extractSection` did; callers trim or
+  fence-match past it. My first boundary-helper test asserted the trimmed form and failed 3× — the
+  function was right, the naive test was wrong. Real sections/parser tests staying green was the
+  proof of byte-identity; I corrected the new test to the true bounds.

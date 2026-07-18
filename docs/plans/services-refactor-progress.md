@@ -12,10 +12,10 @@ drop is fine when documented loudly (commit + findings) and live coverage is rel
 drop still means a lost test. **Always `rm -rf dist` before gating after any file delete/rename** —
 `tsc` leaves orphaned `dist/*.js` that keep running and inflate the count.
 
-> **RESUME HERE:** T4 done + committed (T4a `1c61be6` run-infra, T4b `96a215e` factory, gate
-> **491**). Next unchecked = **T5** (section-slice + safe-JSON dedupe + parser split <400L).
+> **RESUME HERE:** T5 done + committed (T5a `67a8957` safe-json+section-bounds, T5b `02d7452`
+> parser split, gate **499**). Next unchecked = **T6** (narrow I/O extractions + type relocation).
 > Execution is **inline** (user declined subagent spawns) — the Opus orchestrator edits directly,
-> same per-phase gate+review+commit loop.
+> same per-phase gate+review+commit loop. (T7 CSS still pending, parallel-safe.)
 
 Legend: `[ ]` pending · `[~]` in progress · `[x]` done + gated + committed.
 Sub-steps per task: edit → gate#1 → mastering-typescript → sonar-analyze → review → remediate →
@@ -26,7 +26,7 @@ gate#2 → committed.
 - [x] **T2** Central `LANGUAGES` registry (`languages.ts` + bigo derive + drift test) — gate 493
 - [x] **T3** Codegen dispatch collapse (TYPE_SYNTAX + LANG_CODEGEN maps; golden byte-identical) — gate 504
 - [x] **T4** Run-infra unify + `makeFunctionEnv` (deleted lang-runners+LangRunner; envs→factory) — gate 491
-- [ ] **T5** Section-slice/JSON dedupe + parser split <400L — needs T1
+- [x] **T5** Section-slice/JSON dedupe + parser split (safeJsonParse, sectionBounds, parser 539→114L + helpers 431L) — gate 499
 - [ ] **T6** Narrow I/O extract + type relocation — needs T3/T4
 - [ ] **T7** CSS delete dead + split live — **parallel-safe**
 - [ ] **Phase 8** Finalize (orchestrator) — security sweep + open PR
@@ -42,5 +42,7 @@ Gate log (zero failures; pass-count ≥ previous row, baseline **467**):
 | T3 | ✅ codegen dispatch maps | 504 | 6d67bbc |
 | T4a | ✅ delete lang-runners (dead-code test drop, documented) | 485 | 1c61be6 |
 | T4b | ✅ makeFunctionEnv factory | 491 | 96a215e |
+| T5a | ✅ safeJsonParse + sectionBounds | 499 | 67a8957 |
+| T5b | ✅ parser split + scanIndentedBlock | 499 | 02d7452 |
 
 **Gotcha:** T1 & T7 both edit `leetcode-run.handlers.ts` → run serially, never concurrent.
