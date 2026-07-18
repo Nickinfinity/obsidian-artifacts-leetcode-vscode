@@ -44,3 +44,44 @@ was *learned*.
 ---
 
 <!-- Per-phase entries appended below as the run proceeds (T1…T7). -->
+
+## T1 — Shared utils + constants (verified already landed)
+
+**Discovered:** T1 was **already implemented + committed** in prior work, though the ledger/memory
+said "not started". Reality on branch: `escapeRe` single-sourced in `src/utils/regex.helpers.ts`
+(3 envs import it, `candidate.helpers` re-exports); `src/utils/time.helpers.ts` exists with
+`splitMs`/`formatClock`/`formatDuration`, and `leetcode-challenge.helpers` re-exports
+`formatClock as formatRemaining`; `FENCE`, `SOLUTION_MARKER`, and all config consts
+(`LEETCODE_DIR`/`TICK_MS`/`CONFIG_NS`/`VAULT_*`/`END_CHALLENGE_COMMAND`/`SOLUTION_HINT`) live in
+`constants.ts`; `VALID_DIFFICULTY` derived from a `DIFFICULTIES` array. Tests
+`time.helpers.test.ts` + `regex.helpers.test.ts` present.
+
+**Rule learned:** trust the tree over the ledger — verify each task's claimed state before
+dispatching. Re-run the Gate and grep for the target literals first.
+
+## T2 — Central LANGUAGES registry
+
+**Changed:** added `src/types/languages.ts` — `LangId` union + `LANGUAGES` registry (id,
+displayName, fileExt, commentPrefix, detectCmd, aliases) + `LANG_IDS` + `isLangId` guard. Rewired
+`leetcode-bigo.service.ts` `SupportedLang`/`toSupportedLang` to derive from it. Added
+`leetcode-languages.test.ts` locking the registry against `LANG_ALIAS`/`LANG_EXT` drift and pinning
+the runnable set.
+
+**Improved:** the runnable-language set now has ONE home; bigo's hand-typed 3-way `||` gone.
+Gate 467 → **493** passing (+8 registry tests, zero failures).
+
+**Rule learned (scoping):** the plan's "derive LANG_ALIAS/LANG_EXT/HASH_COMMENT_LANGS/
+SUPPORTED_LANGS from LANGUAGES" over-reaches. Those are **not duplicated** (each lives once) and
+serve different concerns:
+- `LANG_ALIAS`/`LANG_EXT` are broad **cosmetic** tables (40+ languages, fence→id/ext) — folding
+  them into a 3-language runnable registry would bloat, not simplify. Guarded against drift with a
+  consistency test instead.
+- codegen `SUPPORTED_LANGS` includes `rust` because rust is **type-mappable** (has typemap tests)
+  but not **runnable** — a correct distinction, not the drift bug. Left for T3 (codegen owns it);
+  dropping rust would break `leetcode-typemap.test.ts` (invariant violation).
+- `HASH_COMMENT_LANGS` (`{python,ruby,shellscript,perl,r,yaml}`) lives once and its non-executable
+  entries are **unreachable** (`generateBoilerplate` returns `''` for them before the prefix line).
+  No dedup to gain; left alone.
+So T2's registry covers the genuinely hand-synced **executable-language metadata** only. `detectCmd`/
+`displayName` sit ready for T4 to consume when it **deletes** `lang-runners/` (editing those files
+in T2 just to delete them in T4 would be churn — transient dup removed by deletion).
