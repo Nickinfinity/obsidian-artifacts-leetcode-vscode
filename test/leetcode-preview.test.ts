@@ -53,7 +53,7 @@ suite('leetcodePreview', () => {
     // ── renderLeetCodePreviewHtml ─────────────────────────────────────────────
 
     suite('renderLeetCodePreviewHtml', () => {
-        const css = 'vscode-webview://test/styles.css';
+        const css = ['vscode-webview://test/styles.css', 'vscode-webview://test/leetcode-preview.css'];
         const csp = 'vscode-webview://test';
 
         test('contains title inside <h1>', () => {

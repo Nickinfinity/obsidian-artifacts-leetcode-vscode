@@ -299,7 +299,7 @@ async function finishChallenge(args: FinishArgs): Promise<void> {
 	const phase: ChallengePhase = status === 'solved' ? 'solved' : 'attempted';
 	postViewState(ctx, phase);
 	ctx.panel.webview.html = renderLeetCodePreviewHtml(
-		ctx.parsed, ctx.cssUri, ctx.panel.webview.cspSource, html, phase,
+		ctx.parsed, ctx.cssUris, ctx.panel.webview.cspSource, html, phase,
 	);
 }
 
