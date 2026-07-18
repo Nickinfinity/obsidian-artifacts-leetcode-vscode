@@ -18,24 +18,15 @@ import { appendAttempt } from '../services/attempts-writer.service.js';
 import type { AttemptEntry } from '../services/attempts-writer.service.js';
 import { testEnvFor } from '../services/test-envs/env.registry.js';
 import type { TestEnv } from '../services/test-envs/env.types.js';
-import { javaRunner }   from '../services/lang-runners/java.runner.js';
-import { jsRunner }     from '../services/lang-runners/javascript.runner.js';
-import { pythonRunner } from '../services/lang-runners/python.runner.js';
 import {
 	renderBigOEstimateHtml,
 	renderLeetCodePreviewHtml,
 	renderTestResultsHtml,
 } from '../ui/panels/leetcodePreview.panel.js';
 import { FENCE } from '../types/constants.js';
-import type { ChallengePhase, LangRunner, LeetCodeStatus, TestResult } from '../types/leetcode.types.js';
+import { isLangId, LANGUAGES, type LanguageConfig } from '../types/languages.js';
+import type { ChallengePhase, LeetCodeStatus, TestResult } from '../types/leetcode.types.js';
 import type { PanelCtx } from '../ui/views/leetcodeView.provider.js';
-
-/** Lookup table of language id → built-in runner config. */
-const RUNNERS: Record<string, LangRunner> = {
-	java:       javaRunner,
-	javascript: jsRunner,
-	python:     pythonRunner,
-};
 
 /**
  * Handle a `runTests` message — grade the **public** suite, change nothing.
@@ -58,7 +49,7 @@ const RUNNERS: Record<string, LangRunner> = {
 export async function handleRunTests(ctx: PanelCtx, language: string | undefined): Promise<void> {
 	const setup = resolveRunSetup(ctx, language);
 	if (!setup) { return; }
-	const { langId, runner, env } = setup;
+	const { langId, lang, env } = setup;
 
 	const session = activeChallenge();
 	if (session?.langId !== langId) {
@@ -67,7 +58,7 @@ export async function handleRunTests(ctx: PanelCtx, language: string | undefined
 	}
 
 	const code = await liveBuffer(session.fileUri);
-	if (!await runtimeReady(runner, env)) { return; }
+	if (!await runtimeReady(lang, env)) { return; }
 
 	const cases   = publicSuite(ctx.parsed);
 	const source  = buildExecutable(ctx.parsed, langId, code);
@@ -109,7 +100,7 @@ export async function handleRunTests(ctx: PanelCtx, language: string | undefined
 export async function handleSubmit(ctx: PanelCtx, language: string | undefined): Promise<void> {
 	const setup = resolveRunSetup(ctx, language);
 	if (!setup) { return; }
-	const { langId, runner, env } = setup;
+	const { langId, lang, env } = setup;
 
 	// Claimed synchronously, before any `await` below — see the re-entrancy
 	// note above. `liveSession` (not a fresh `activeChallenge()` call) is what
@@ -123,7 +114,7 @@ export async function handleSubmit(ctx: PanelCtx, language: string | undefined):
 		void vscode.window.showErrorMessage(`No ${langId} attempt found. Press "Solve It" first.`);
 		return;
 	}
-	if (!await runtimeReady(runner, env)) {
+	if (!await runtimeReady(lang, env)) {
 		// This attempt never reaches `finishChallenge` — release the claim so a
 		// later retry (manual, after installing the runtime) is not blocked
 		// forever by a session stuck mid-claim.
@@ -172,7 +163,7 @@ export async function discardChallenge(tempFileUri: vscode.Uri | null): Promise<
 // ── Preflight ─────────────────────────────────────────────────────────────────
 
 /** Everything a run needs, once the language has been validated. */
-interface RunSetup { langId: string; runner: LangRunner; env: TestEnv }
+interface RunSetup { langId: string; lang: LanguageConfig; env: TestEnv }
 
 /**
  * Resolve the language to a `(runner, env)` pair, reporting why if impossible.
@@ -192,11 +183,11 @@ function resolveRunSetup(ctx: PanelCtx, language: string | undefined): RunSetup 
 	if (!language) { return null; }
 	const langId = resolveLangId(language);
 
-	const runner = RUNNERS[langId];
-	if (!runner) {
+	if (!isLangId(langId)) {
 		void vscode.window.showErrorMessage(`Unsupported language: ${langId}.`);
 		return null;
 	}
+	const lang = LANGUAGES[langId];
 
 	const env = testEnvFor(ctx.parsed.test.type, langId);
 	if (!env) {
@@ -205,23 +196,23 @@ function resolveRunSetup(ctx: PanelCtx, language: string | undefined): RunSetup 
 		);
 		return null;
 	}
-	return { langId, runner, env };
+	return { langId, lang, env };
 }
 
 /**
  * Confirm the toolchain is installed, and the env's own dependency when it
  * declares one.
  *
- * @param runner - Language runner to probe via `detectCmd`.
- * @param env    - Env whose optional `detect()` gates in addition.
+ * @param lang - Language config to probe via its `detectCmd`.
+ * @param env  - Env whose optional `detect()` gates in addition.
  * @returns True when the suite can actually be executed.
  *
  * @example
- * await runtimeReady(pythonRunner, pythonFunctionEnv);
+ * await runtimeReady(LANGUAGES.python, pythonFunctionEnv);
  */
-async function runtimeReady(runner: LangRunner, env: TestEnv): Promise<boolean> {
-	if (!await detectRuntime(runner)) {
-		void vscode.window.showErrorMessage(`Runtime not found. Install ${runner.displayName} to run tests.`);
+async function runtimeReady(lang: LanguageConfig, env: TestEnv): Promise<boolean> {
+	if (!await detectRuntime(lang.detectCmd)) {
+		void vscode.window.showErrorMessage(`Runtime not found. Install ${lang.displayName} to run tests.`);
 		return false;
 	}
 	if (env.detect && !await env.detect()) {

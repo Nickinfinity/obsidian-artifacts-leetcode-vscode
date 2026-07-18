@@ -56,6 +56,23 @@ suite('languages registry', () => {
         }
     });
 
+    // Exact detect/display values — relocated from the deleted lang-runners test
+    // (the runtime toolchain probe now reads these straight from the registry).
+    test('java detectCmd and displayName', () => {
+        assert.strictEqual(LANGUAGES.java.detectCmd, 'java --version');
+        assert.strictEqual(LANGUAGES.java.displayName, 'Java');
+    });
+
+    test('python detectCmd and displayName', () => {
+        assert.strictEqual(LANGUAGES.python.detectCmd, 'python3 --version');
+        assert.strictEqual(LANGUAGES.python.displayName, 'Python');
+    });
+
+    test('javascript detectCmd and displayName', () => {
+        assert.strictEqual(LANGUAGES.javascript.detectCmd, 'node --version');
+        assert.strictEqual(LANGUAGES.javascript.displayName, 'JavaScript');
+    });
+
     test('isLangId narrows runnable ids and rejects everything else', () => {
         assert.ok(isLangId('java'));
         assert.ok(isLangId('python'));

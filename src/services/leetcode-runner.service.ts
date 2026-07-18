@@ -4,7 +4,6 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { MAX_SUITE_TIMEOUT_MS } from '../types/constants.js';
 import type {
-	LangRunner,
 	ParsedLeetCode,
 	TestCase,
 	TestResult,
@@ -59,19 +58,19 @@ function execAsync(cmd: string, opts: { cwd?: string; timeoutMs?: number } = {})
 }
 
 /**
- * Probe whether the language toolchain backing `runner` is installed.
+ * Probe whether a language toolchain is installed by running its detect command.
  *
- * Runs `runner.detectCmd` and returns true on exit 0, false on any failure.
+ * Runs `detectCmd` and returns true on exit 0, false on any failure.
  *
- * @param runner - Language runner config to probe.
+ * @param detectCmd - Version probe, e.g. `'node --version'` (from `LANGUAGES`).
  * @returns True if the runtime is callable, false otherwise.
  *
  * @example
- * await detectRuntime(jsRunner); // → true on machines with `node` on PATH.
+ * await detectRuntime('node --version'); // → true on machines with `node` on PATH.
  */
-export async function detectRuntime(runner: LangRunner): Promise<boolean> {
+export async function detectRuntime(detectCmd: string): Promise<boolean> {
 	try {
-		await execAsync(runner.detectCmd);
+		await execAsync(detectCmd);
 		return true;
 	} catch {
 		return false;

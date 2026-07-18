@@ -117,7 +117,7 @@ export interface TestResult {
  * latest passing one per language is typically marked with `solvedAt`.
  */
 export interface LeetCodeSolution {
-	/** Language id matching a `LangRunner.id` (e.g. `'typescript'`, `'python'`) */
+	/** Canonical `languageId` (e.g. `'typescript'`, `'python'`) */
 	language: string;
 	/** Optional short label distinguishing approaches (e.g. `'two-pointer'`) */
 	label?: string;
@@ -348,28 +348,4 @@ export interface LeetCodeSummary {
 	algorithm?: string;
 	/** Organisational tags from frontmatter; `[]` when absent */
 	tags: string[];
-}
-
-/**
- * Per-language runner configuration used by the LeetCode test executor.
- *
- * Each runner knows how to write a candidate solution to disk, optionally
- * compile it, and invoke the resulting program. `detectCmd` is run once to
- * confirm the language toolchain is installed on the host.
- */
-export interface LangRunner {
-	/** Stable identifier (e.g. `'typescript'`, `'python'`) */
-	id: string;
-	/** Human-readable name shown in pickers */
-	displayName: string;
-	/** Source-file extension including leading dot (e.g. `'.ts'`) */
-	fileExtension: string;
-	/** Optional override for the source file's base name (default: problem slug) */
-	fileName?: string;
-	/** Optional compile step — returns the shell command to compile `filePath` */
-	compile?: (filePath: string) => string;
-	/** Returns the shell command to run the (possibly compiled) program */
-	run: (filePath: string) => string;
-	/** Probe command used to verify the toolchain is available (e.g. `'node --version'`) */
-	detectCmd: string;
 }
