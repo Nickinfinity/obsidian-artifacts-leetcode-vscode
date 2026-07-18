@@ -119,3 +119,33 @@ refactor.
   decl fn" between it and codegen. The overlaps are one-line signature fragments with different
   indentation/marker/class-wrapping; a shared helper parameterised over all that reads worse than
   two small functions. Cross-file coupling for a one-liner is negative value.
+
+## T4 — Run-infra unify + makeFunctionEnv (two commits)
+
+**T4a (run infra):** deleted `src/services/lang-runners/` (4 files) + the `LangRunner` type. The
+candidate-splice execution model was replaced by `env.emit()` long ago, so `LangRunner`'s
+`compile`/`run`/`fileName`/`fileExtension`/`id` were **dead** — only `detectCmd`/`displayName` were
+still read, and both already live in the T2 registry. `resolveRunSetup` now gates via `isLangId` +
+reads `LANGUAGES[langId]`; `detectRuntime` takes a `detectCmd: string`; `runtimeReady` reads
+`lang.detectCmd`/`displayName`. The `RUNNERS`↔registry hand-sync is gone.
+
+**T4b (factory):** collapsed the 3 function envs onto `makeFunctionEnv(spec)` — it owns
+`type:'function'`, the two-file emit shape, and the shared `parseSentinelLines` (was copied 3×);
+each env passes its per-language `runnerSource`/`candidateContent`/`validate` as a spec. Envs
+549L/3 files → 516L/4 files.
+
+**Improved:** one run authority; adding a runnable language is now ~a registry row + a codegen
+row/module + a `makeFunctionEnv` spec — no `RUNNERS`/`SUPPORTED_LANGS`/`SupportedLang` hand-sync.
+
+**Test count — justified drop 504→485→491.** Deleting `lang-runners/` obsoleted
+`leetcode-runners.test.ts` (it only exercised the deleted `LangRunner` config fields, incl. the
+dead ones). Its **live** assertions (exact `detectCmd`/`displayName`, the `detectRuntime` probe)
+were relocated to `leetcode-languages.test.ts` + `leetcode-runner.test.ts`; T4b added a factory
+test. Net 491 ≥ 467 baseline. This is the sanctioned "delete tests for deleted code" case, done
+loudly (documented here + in the commit), not silently.
+
+**Rule learned (process):** `tsc` does **not** remove orphaned `dist/*.js` — after deleting a
+source/test file the stale compiled `.js` keeps running under the mocha glob and inflates the pass
+count (saw a phantom 507). **Always `rm -rf dist` before the gate whenever a file was deleted or
+renamed.** Byte-identical proof for T4b came from the unchanged per-language `function-env-*` tests
+passing against the factory-built envs.
