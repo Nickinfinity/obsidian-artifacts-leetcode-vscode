@@ -2,8 +2,8 @@ import { LEET_SENTINEL } from '../../../types/constants.js';
 import { escapeRe } from '../../../utils/regex.helpers.js';
 import { jsonToLiteral } from '../../leetcode-codegen.service.js';
 import { functionNameFor } from '../../leetcode-parser.service.js';
-import type { CaseOutcome, EmittedProgram, EnvContext, TestEnv } from '../env.types.js';
-import { parseSentinelLines } from '../sentinel.helpers.js';
+import type { EnvContext } from '../env.types.js';
+import { makeFunctionEnv } from './make-function-env.js';
 
 /**
  * `function × javascript` — the candidate runs in a `vm` sandbox.
@@ -19,9 +19,13 @@ import { parseSentinelLines } from '../sentinel.helpers.js';
  * canonical stringifier is inlined into the runner — the sandbox needs no
  * module resolution back into this extension.
  */
-export const javascriptFunctionEnv: TestEnv = {
-	type: 'function',
+export const javascriptFunctionEnv = makeFunctionEnv({
 	language: 'javascript',
+	candidateFile: 'sol.js',
+	runnerFile: 'runner.js',
+	run: 'node runner.js',
+	candidateContent: ctx => `${ctx.code}\n`,
+	buildRunner: runnerSource,
 
 	/**
 	 * Reject a candidate that never mentions the expected function name.
@@ -30,12 +34,6 @@ export const javascriptFunctionEnv: TestEnv = {
 	 * an export, and `vm` sorts out which at run time. This only catches the
 	 * gross case of the wrong name (or an empty buffer), with a clear message
 	 * instead of a runtime `fn is not a function`.
-	 *
-	 * @param ctx - Env context carrying the candidate source and function name.
-	 * @returns A user-facing message, or `null` when the candidate looks runnable.
-	 *
-	 * @example
-	 * javascriptFunctionEnv.validate({ code: '// empty', … }); // → 'must define twoSum'
 	 */
 	validate(ctx: EnvContext): string | null {
 		const fn = functionNameFor(ctx.parsed, ctx.langId);
@@ -44,39 +42,7 @@ export const javascriptFunctionEnv: TestEnv = {
 		}
 		return null;
 	},
-
-	/**
-	 * Emit `sol.js` (verbatim candidate) and the generated `runner.js`.
-	 *
-	 * @param ctx - Parsed artifact, candidate source, and the suite.
-	 * @returns The two files plus the run command (no compile step).
-	 *
-	 * @example
-	 * javascriptFunctionEnv.emit({ parsed, langId: 'javascript', code, cases });
-	 */
-	emit(ctx: EnvContext): EmittedProgram {
-		return {
-			files: [
-				{ name: 'sol.js', content: `${ctx.code}\n` },
-				{ name: 'runner.js', content: runnerSource(ctx) },
-			],
-			run: 'node runner.js',
-		};
-	},
-
-	/**
-	 * Recover per-case outcomes from stdout.
-	 *
-	 * @param stdout - Raw stdout, possibly truncated by a timeout-kill.
-	 * @returns One outcome per intact sentinel line.
-	 *
-	 * @example
-	 * javascriptFunctionEnv.parse('__LEET__{"index":0,"actual":"1","ms":2}\n');
-	 */
-	parse(stdout: string): CaseOutcome[] {
-		return parseSentinelLines(stdout);
-	},
-};
+});
 
 /**
  * Build the generated `runner.js` — evaluates `sol.js` in a `vm` context and
