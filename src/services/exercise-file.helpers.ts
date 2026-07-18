@@ -1,13 +1,10 @@
-import { EXERCISE_FILE_PREFIX, SOLUTION_MARKER } from '../types/constants.js';
+import { EXERCISE_FILE_PREFIX, SOLUTION_HINT, SOLUTION_MARKER } from '../types/constants.js';
 import type { ParsedLeetCode } from '../types/leetcode.types.js';
 import { generateBoilerplate } from './leetcode-codegen.service.js';
 import { extForLang, resolveLangId } from './language-map.service.js';
 
 /** Languages whose line comment is `#` rather than `//`. */
 const HASH_COMMENT_LANGS = new Set(['python', 'ruby', 'shellscript', 'perl', 'r', 'yaml']);
-
-/** Placeholder dropped where the solver is expected to write their answer. */
-const SOLUTION_HINT = 'solution here';
 
 /**
  * Resolve the starter source the solver begins from for `langId`.

@@ -222,3 +222,38 @@ export const EXERCISE_FILE_PREFIX = 'leetcode_';
 
 /** Marker the codegen wrapper places where the candidate's code should go. */
 export const SOLUTION_MARKER = '<<SOLUTION>>';
+
+/**
+ * Markdown fence delimiter. Kept as a constant (not a literal) so every
+ * `String.raw` regex that builds a fence pattern reads the same three
+ * characters from one place.
+ */
+export const FENCE = '```';
+
+/** Vault directory this extension reads LeetCode problems from. */
+export const LEETCODE_DIR = 'LeetCode';
+
+/** Status-bar refresh cadence for the challenge timer, in milliseconds. */
+export const TICK_MS = 1000;
+
+/** Settings namespace retained only for one-time migration of the legacy synced value. */
+export const CONFIG_NS = 'obsidianLeetcodeTrainer';
+
+/** `globalState` key holding the vault path. Machine-local — never registered for Settings Sync. */
+export const VAULT_PATH_KEY = 'vaultPath';
+
+/** Context key used by `package.json` `when` clauses to gate the open command. */
+export const VAULT_CONFIGURED_KEY = 'obsidian-leetcode.vaultConfigured';
+
+/** Command that tears the active challenge down and restores editor settings. */
+export const END_CHALLENGE_COMMAND = 'obsidian-leetcode.endChallenge';
+
+/** Placeholder dropped where the solver is expected to write their answer. */
+export const SOLUTION_HINT = 'solution here';
+
+/**
+ * Valid `difficulty` values, in display order — the single source of truth
+ * `LeetCodeDifficulty` is derived from and the parser's validation set is
+ * built from, so a new difficulty is added in exactly one place.
+ */
+export const DIFFICULTIES = ['easy', 'medium', 'hard'] as const;

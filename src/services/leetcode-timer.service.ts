@@ -1,3 +1,5 @@
+import { formatDuration } from '../utils/time.helpers.js';
+
 /**
  * Manual stopwatch used by the LeetCode flow to record solve duration.
  *
@@ -73,21 +75,4 @@ export class LeetCodeTimer {
 		this.startTime = null;
 		this.running   = false;
 	}
-}
-
-/**
- * Format an elapsed-millisecond count as the `XmYs` string used in solution
- * metadata comments.
- *
- * @param ms - Elapsed time in milliseconds.
- * @returns `XmYs` formatted string.
- *
- * @example
- * formatDuration(192_000); // → '3m12s'
- */
-function formatDuration(ms: number): string {
-	const totalSeconds = Math.floor(ms / 1000);
-	const minutes = Math.floor(totalSeconds / 60);
-	const seconds = totalSeconds % 60;
-	return `${minutes}m${seconds}s`;
 }

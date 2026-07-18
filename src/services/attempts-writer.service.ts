@@ -1,7 +1,5 @@
+import { FENCE } from '../types/constants.js';
 import { resolveLangId } from './language-map.service.js';
-
-/** Markdown fence delimiter, kept as a constant so literals stay simple. */
-const FENCE = '```';
 
 const ATTEMPTS_HEADING_RE  = /^# Attempts\s*$/m;
 const SOLUTIONS_HEADING_RE = /^# Solutions\s*$/m;

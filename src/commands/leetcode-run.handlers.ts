@@ -26,11 +26,9 @@ import {
 	renderLeetCodePreviewHtml,
 	renderTestResultsHtml,
 } from '../ui/panels/leetcodePreview.panel.js';
+import { FENCE } from '../types/constants.js';
 import type { ChallengePhase, LangRunner, LeetCodeStatus, TestResult } from '../types/leetcode.types.js';
 import type { PanelCtx } from '../ui/views/leetcodeView.provider.js';
-
-/** Markdown fence delimiter — kept as a constant so regexes can stay `String.raw`. */
-const FENCE = '```';
 
 /** Lookup table of language id → built-in runner config. */
 const RUNNERS: Record<string, LangRunner> = {

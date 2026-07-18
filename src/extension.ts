@@ -1,10 +1,10 @@
 import * as vscode from 'vscode';
 import { registerOpenSettingsCommand } from './commands/openSettings.command.js';
 import { registerCreateExerciseCommand } from './commands/createExercise.command.js';
-import { END_CHALLENGE_COMMAND, endChallenge } from './services/leetcode-challenge.service.js';
+import { endChallenge } from './services/leetcode-challenge.service.js';
 import { refreshVaultContext } from './services/context.service.js';
 import { getVaultPath, migrateLegacyVaultPath } from './services/vault-path.store.js';
-import { LEETCODE_DIR } from './services/vault.service.js';
+import { END_CHALLENGE_COMMAND, LEETCODE_DIR } from './types/constants.js';
 import { LeetCodeViewProvider } from './ui/views/leetcodeView.provider.js';
 
 /**

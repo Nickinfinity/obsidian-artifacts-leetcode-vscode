@@ -14,9 +14,10 @@ import type { TimerTick } from '../types/leetcode.types.js';
 /**
  * Format a remaining-millisecond count as `MM:SS`.
  *
- * Rounds up to the next whole second (`Math.ceil`) rather than truncating —
- * a countdown showing `00:00` a second before the clock actually expires
- * would read as a bug, not a rounding choice.
+ * Re-exported under this service's established name — the panel and the
+ * challenge service both already import `formatRemaining` from here. Rounds
+ * up to the next whole second rather than truncating, so a countdown never
+ * shows `00:00` a second before the clock actually expires.
  *
  * @param ms - Milliseconds left on the clock (zero or positive).
  * @returns Zero-padded `MM:SS` string.
@@ -24,12 +25,7 @@ import type { TimerTick } from '../types/leetcode.types.js';
  * @example
  * formatRemaining(65_000); // → '01:05'
  */
-export function formatRemaining(ms: number): string {
-	const totalSeconds = Math.ceil(ms / 1000);
-	const minutes = Math.floor(totalSeconds / 60);
-	const seconds = totalSeconds % 60;
-	return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
-}
+export { formatClock as formatRemaining } from '../utils/time.helpers.js';
 
 /**
  * Decide one clock tick for a challenge, bounded or unbounded (P7).

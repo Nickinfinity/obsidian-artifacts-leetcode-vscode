@@ -1,3 +1,4 @@
+import { SOLUTION_MARKER } from '../types/constants.js';
 import type { ParsedLeetCode } from '../types/leetcode.types.js';
 import { functionNameFor } from './leetcode-parser.service.js';
 
@@ -137,7 +138,7 @@ function javaBoilerplate(p: ParsedLeetCode): string {
 		'',
 		'class Main {',
 		`\tpublic static ${ret} ${fn}(${params}) {`,
-		'\t\t<<SOLUTION>>',
+		`\t\t${SOLUTION_MARKER}`,
 		'\t}',
 		'',
 		'\tpublic static void main(String[] args) {',
@@ -157,7 +158,7 @@ function pythonBoilerplate(p: ParsedLeetCode): string {
 	const reads  = p.params.map(pa => `\t${pa.name} = input()`).join('\n');
 	return [
 		`def ${fn}(${params}):`,
-		'\t<<SOLUTION>>',
+		`\t${SOLUTION_MARKER}`,
 		'',
 		'if __name__ == "__main__":',
 		reads || '\tpass',
@@ -175,7 +176,7 @@ function jsBoilerplate(p: ParsedLeetCode): string {
 		"const rl = readline.createInterface({ input: process.stdin });",
 		'',
 		`function ${fn}(${params}) {`,
-		'\t<<SOLUTION>>',
+		`\t${SOLUTION_MARKER}`,
 		'}',
 		'',
 		'const lines = [];',
@@ -335,8 +336,7 @@ function objectLiteral(obj: Record<string, unknown>, language: string): string {
  * injectSolution('    <<SOLUTION>>', 'return 0;');
  */
 export function injectSolution(boilerplate: string, solution: string): string {
-	const MARKER = '<<SOLUTION>>';
-	const idx = boilerplate.indexOf(MARKER);
+	const idx = boilerplate.indexOf(SOLUTION_MARKER);
 	if (idx === -1) { return boilerplate + solution; }
 
 	// Capture the marker line's leading whitespace so each solution line is
@@ -350,5 +350,5 @@ export function injectSolution(boilerplate: string, solution: string): string {
 		? ''
 		: solution.split('\n').map((l, i) => i === 0 ? l : indent + l).join('\n');
 
-	return boilerplate.slice(0, idx) + indented + boilerplate.slice(idx + MARKER.length);
+	return boilerplate.slice(0, idx) + indented + boilerplate.slice(idx + SOLUTION_MARKER.length);
 }

@@ -1,10 +1,5 @@
 import * as vscode from 'vscode';
-
-/** Settings namespace retained only for one-time migration of the legacy synced value. */
-export const CONFIG_NS = 'obsidianLeetcodeTrainer';
-
-/** `globalState` key holding the vault path. Machine-local — never registered for Settings Sync. */
-const VAULT_PATH_KEY = 'vaultPath';
+import { CONFIG_NS, VAULT_PATH_KEY } from '../types/constants.js';
 
 /**
  * Reads the configured Obsidian vault root path for *this* installation.

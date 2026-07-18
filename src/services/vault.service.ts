@@ -2,9 +2,6 @@ import * as vscode from 'vscode';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-/** Vault directory this extension reads LeetCode problems from. */
-export const LEETCODE_DIR = 'LeetCode';
-
 /**
  * Validates that a given path is a valid Obsidian vault.
  *

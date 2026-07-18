@@ -2,6 +2,7 @@ import {
 	DEFAULT_TEST_TIMEOUT_MS,
 	DEFAULT_TEST_TYPE,
 	DEFAULT_TIME_LIMIT_MINUTES,
+	DIFFICULTIES,
 	MAX_SUITE_TIMEOUT_MS,
 	MIN_TEST_TIMEOUT_MS,
 	PRACTICE_OPTIONS,
@@ -32,7 +33,7 @@ import { resolveLangId } from './language-map.service.js';
 const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/;
 const KV_RE          = /^(\w+):\s*(.*)$/;
 
-const VALID_DIFFICULTY = new Set<LeetCodeDifficulty>(['easy', 'medium', 'hard']);
+const VALID_DIFFICULTY = new Set<LeetCodeDifficulty>(DIFFICULTIES);
 const VALID_STATUS     = new Set<LeetCodeStatus>(['unsolved', 'attempted', 'solved']);
 const VALID_OPTION_IDS = new Set<string>(PRACTICE_OPTIONS.map(o => o.id));
 const VALID_TEST_TYPES = new Set<string>(TEST_TYPES.map(t => t.id));

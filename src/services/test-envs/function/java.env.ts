@@ -1,4 +1,5 @@
 import { LEET_SENTINEL } from '../../../types/constants.js';
+import { escapeRe } from '../../../utils/regex.helpers.js';
 import { jsonToLiteral } from '../../leetcode-codegen.service.js';
 import { functionNameFor } from '../../leetcode-parser.service.js';
 import type { CaseOutcome, EmittedProgram, EnvContext, TestEnv } from '../env.types.js';
@@ -185,11 +186,6 @@ export function stripImportsAndPackage(code: string): { imports: string[]; body:
 	}
 	while (bodyLines.length > 0 && bodyLines[0].trim() === '') { bodyLines.shift(); }
 	return { imports, body: bodyLines.join('\n') };
-}
-
-/** Escape a string for literal use inside a RegExp. */
-function escapeRe(literal: string): string {
-	return literal.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
 }
 
 /**

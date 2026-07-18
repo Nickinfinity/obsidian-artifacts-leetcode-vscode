@@ -8,6 +8,7 @@ import {
 	stripCLikeComments,
 	stripPythonComments,
 } from './leetcode-bigo.helpers.js';
+import { isLangId, type LangId } from '../types/languages.js';
 
 /** Confidence tier for a `BigOEstimate` — how much of the classification was inferred vs. counted. */
 export type BigOConfidence = 'high' | 'medium' | 'low';
@@ -30,7 +31,7 @@ export interface BigOEstimate {
 }
 
 /** Languages this heuristic understands. Anything else is reported, not guessed. */
-type SupportedLang = 'java' | 'python' | 'javascript';
+type SupportedLang = LangId;
 
 /**
  * Estimate the asymptotic complexity of a candidate solution by scanning its
@@ -139,8 +140,7 @@ function downgrade(confidence: BigOConfidence): BigOConfidence {
 
 /** Narrow an arbitrary `langId` to one this heuristic has a scanner for. */
 function toSupportedLang(langId: string): SupportedLang | null {
-	if (langId === 'java' || langId === 'python' || langId === 'javascript') { return langId; }
-	return null;
+	return isLangId(langId) ? langId : null;
 }
 
 // Re-exported so callers that only need the scan shape don't reach into helpers.

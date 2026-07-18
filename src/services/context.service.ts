@@ -1,9 +1,7 @@
 import * as vscode from 'vscode';
-import { createVaultDirectory, LEETCODE_DIR } from './vault.service.js';
+import { LEETCODE_DIR, VAULT_CONFIGURED_KEY } from '../types/constants.js';
+import { createVaultDirectory } from './vault.service.js';
 import { getVaultPath } from './vault-path.store.js';
-
-/** Context key used by `package.json` `when` clauses to gate the open command. */
-const VAULT_CONFIGURED_KEY = 'obsidian-leetcode.vaultConfigured';
 
 /**
  * Reads the stored vault path and refreshes the single `vaultConfigured`

@@ -1,7 +1,10 @@
 import { SOLUTION_MARKER } from '../types/constants.js';
 import type { ParsedLeetCode } from '../types/leetcode.types.js';
+import { escapeRe } from '../utils/regex.helpers.js';
 import { injectSolution, mapType } from './leetcode-codegen.service.js';
 import { functionNameFor } from './leetcode-parser.service.js';
+
+export { escapeRe };
 
 /**
  * Normalise a candidate's source into something a test environment can embed.
@@ -53,11 +56,6 @@ export function buildExecutable(parsed: ParsedLeetCode, langId: string, code: st
 export function declaresFunction(code: string, functionName: string): boolean {
 	if (!functionName) { return false; }
 	return new RegExp(String.raw`\b${escapeRe(functionName)}\s*\(`).test(code);
-}
-
-/** Escape a string for literal use inside a RegExp. */
-export function escapeRe(literal: string): string {
-	return literal.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
 }
 
 /**
