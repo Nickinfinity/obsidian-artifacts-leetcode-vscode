@@ -8,15 +8,17 @@ loop closes. Plan: [`services-refactor.md`](services-refactor.md). Branch: `refa
 pass count **≥ 467 and never below the previous gate's** (TDD adds tests — count grows, a drop
 means a deleted/skipped test), codegen emit byte-identical.
 
-> **RESUME HERE:** T1 not started — execution **paused by user** (no agents dispatched, no phase
-> edits). To resume: verify branch + `git log`, re-run the Gate (expect 467), dispatch T1.
+> **RESUME HERE:** T1 verified **already done + committed** in prior work (regex.helpers, time.helpers
+> + their tests, FENCE/SOLUTION_MARKER/config consts, DIFFICULTIES-derived VALID_DIFFICULTY; gate 467).
+> Next unchecked = **T2** (central `LANGUAGES` registry). Execution is **inline** (user declined subagent
+> spawns) — the Opus orchestrator does the edits directly, same per-phase gate+review+commit loop.
 
 Legend: `[ ]` pending · `[~]` in progress · `[x]` done + gated + committed.
 Sub-steps per task: edit → gate#1 → mastering-typescript → sonar-analyze → review → remediate →
 gate#2 → committed.
 
 - [x] **T0 Baseline** — 467 passing, compile+lint clean; branch + plan docs created. (orchestrator)
-- [ ] **T1** Shared utils + constants (escapeRe 4→1, time.helpers, FENCE, SOLUTION_MARKER, config consts) — **parallel-safe**
+- [x] **T1** Shared utils + constants (escapeRe 4→1, time.helpers, FENCE, SOLUTION_MARKER, config consts) — **done in prior work; verified gate 467**
 - [ ] **T2** Central `LANGUAGES` registry — needs T1
 - [ ] **T3** Codegen dispatch collapse — needs T2; golden emit byte-identical
 - [ ] **T4** Run-infra unify + `makeFunctionEnv` — needs T2/T3
@@ -31,5 +33,6 @@ Gate log (zero failures; pass-count ≥ previous row, baseline **467**):
 | Task | Result | Pass count | Commit |
 |---|---|---|---|
 | T0 | ✅ baseline | 467 | branch created, docs only |
+| T1 | ✅ verified (prior work) | 467 | already on branch |
 
 **Gotcha:** T1 & T7 both edit `leetcode-run.handlers.ts` → run serially, never concurrent.
