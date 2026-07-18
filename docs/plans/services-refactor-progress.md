@@ -12,10 +12,10 @@ drop is fine when documented loudly (commit + findings) and live coverage is rel
 drop still means a lost test. **Always `rm -rf dist` before gating after any file delete/rename** —
 `tsc` leaves orphaned `dist/*.js` that keep running and inflate the count.
 
-> **RESUME HERE:** T5 done + committed (T5a `67a8957` safe-json+section-bounds, T5b `02d7452`
-> parser split, gate **499**). Next unchecked = **T6** (narrow I/O extractions + type relocation).
-> Execution is **inline** (user declined subagent spawns) — the Opus orchestrator edits directly,
-> same per-phase gate+review+commit loop. (T7 CSS still pending, parallel-safe.)
+> **RESUME HERE:** T6 done + committed (`b8c2de9`, gate **509**). Next unchecked = **T7** (CSS:
+> delete dead blocks + split live LeetCode CSS into its own file). Execution is **inline** (user
+> declined subagent spawns) — the Opus orchestrator edits directly, same per-phase loop. T7 is
+> F5-verified (no unit tests for CSS); after T7 comes **Phase 8** (finalize + PR).
 
 Legend: `[ ]` pending · `[~]` in progress · `[x]` done + gated + committed.
 Sub-steps per task: edit → gate#1 → mastering-typescript → sonar-analyze → review → remediate →
@@ -27,7 +27,7 @@ gate#2 → committed.
 - [x] **T3** Codegen dispatch collapse (TYPE_SYNTAX + LANG_CODEGEN maps; golden byte-identical) — gate 504
 - [x] **T4** Run-infra unify + `makeFunctionEnv` (deleted lang-runners+LangRunner; envs→factory) — gate 491
 - [x] **T5** Section-slice/JSON dedupe + parser split (safeJsonParse, sectionBounds, parser 539→114L + helpers 431L) — gate 499
-- [ ] **T6** Narrow I/O extract + type relocation — needs T3/T4
+- [x] **T6** Narrow I/O extract + type relocation (runner.helpers, practice-mode.helpers, 3 types→types/; vault split skipped) — gate 509
 - [ ] **T7** CSS delete dead + split live — **parallel-safe**
 - [ ] **Phase 8** Finalize (orchestrator) — security sweep + open PR
 - [ ] **After merge:** separate plan [`claude-md-rewrite.md`](claude-md-rewrite.md)
@@ -44,5 +44,6 @@ Gate log (zero failures; pass-count ≥ previous row, baseline **467**):
 | T4b | ✅ makeFunctionEnv factory | 491 | 96a215e |
 | T5a | ✅ safeJsonParse + sectionBounds | 499 | 67a8957 |
 | T5b | ✅ parser split + scanIndentedBlock | 499 | 02d7452 |
+| T6 | ✅ pure-helper extract + type relocation | 509 | b8c2de9 |
 
 **Gotcha:** T1 & T7 both edit `leetcode-run.handlers.ts` → run serially, never concurrent.

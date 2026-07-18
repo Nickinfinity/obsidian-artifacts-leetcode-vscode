@@ -181,3 +181,26 @@ no longer drift); parser god-file broken up. Gate 491→**499** (+5 section-boun
   fence-match past it. My first boundary-helper test asserted the trimmed form and failed 3× — the
   function was right, the naive test was wrong. Real sections/parser tests staying green was the
   proof of byte-identity; I corrected the new test to the true bounds.
+
+## T6 — Narrow I/O extractions + type relocation (`b8c2de9`)
+
+**Changed:**
+- `collectResults`/`errorResult`/`RunFailure` → `leetcode-runner.helpers.ts`. Pure result-mapping
+  (timeout attribution, canonical compare, error mapping) that was buried in the subprocess-driving
+  runner service; now unit-tested directly (6 tests) instead of only via slow integration runs.
+- `collectSettings` → `practice-mode.helpers.ts`. The one pure, `vscode`-free function trapped in
+  the vscode-coupled `PracticeMode`; extracting it makes the option→settings flattening testable
+  without the editor (4 tests).
+- Types `BigOConfidence`/`BigOEstimate`/`AttemptEntry` → `src/types/leetcode.types.ts` (canonical
+  home). `bigo.service` + `attempts-writer` import them; `panel`/`handlers` import from types
+  (merged into existing type-imports to avoid S3863 duplicate-import).
+
+**Improved:** two pure units lifted out of I/O/vscode modules and covered by fast unit tests; domain
+types consolidated in `types/`. Gate 499→**509** (+6 runner-helpers, +4 practice-mode).
+
+**Deviation:** skipped the planned `vault.service` validate-vs-toast split. Both callers
+(`settings.panel`, `leetcode.command`) invoke it as `if (!validateObsidianVault(...))` and *want*
+the failure toast — no caller needs a toast-free predicate, so extracting the one-line
+`fs.existsSync` check into its own module + fs-test is speculative abstraction for zero current gain.
+`PanelCtx` (holds vscode types) and `ChallengeSession`/`ChallengeCallbacks`/`env.types.ts` left in
+place, per the plan (domain `types/` stays vscode-free).
