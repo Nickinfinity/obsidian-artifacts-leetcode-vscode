@@ -1,4 +1,5 @@
 import { LEET_SENTINEL } from '../../types/constants.js';
+import { safeJsonParse } from '../../utils/safe-json.js';
 import type { CaseOutcome } from './env.types.js';
 
 /**
@@ -28,12 +29,10 @@ export function parseSentinelLines(stdout: string): CaseOutcome[] {
 	for (const line of stdout.split('\n')) {
 		const trimmed = line.trim();
 		if (!trimmed.startsWith(LEET_SENTINEL)) { continue; }
-		try {
-			const parsed = JSON.parse(trimmed.slice(LEET_SENTINEL.length)) as CaseOutcome;
-			if (typeof parsed.index === 'number') { out.push(parsed); }
-		} catch {
-			// Truncated final line after a timeout-kill — drop it, keep the rest.
-		}
+		// A final line truncated by a timeout-kill fails to parse (→ null) and is
+		// dropped, keeping the intact lines before it.
+		const parsed = safeJsonParse<CaseOutcome>(trimmed.slice(LEET_SENTINEL.length));
+		if (parsed && typeof parsed.index === 'number') { out.push(parsed); }
 	}
 	return out;
 }
