@@ -12,10 +12,12 @@ drop is fine when documented loudly (commit + findings) and live coverage is rel
 drop still means a lost test. **Always `rm -rf dist` before gating after any file delete/rename** —
 `tsc` leaves orphaned `dist/*.js` that keep running and inflate the count.
 
-> **RESUME HERE:** T7 done + committed (`71303a4`, gate **509**). All refactor tasks T1–T7 complete.
-> Next = **Phase 8** (finalize): full gate, branch security sweep, open PR. **Outstanding manual
-> check:** F5 visual pass of settings/preview/sidebar/results after the CSS split (CSS is not
-> unit-tested; selector-diff proves loss-free but rendering wasn't visually confirmed this session).
+> **DONE:** T1–T7 + Phase 8 complete on `refactor/services-dry` (17 commits ahead of main, gate
+> 467→**509**, security sweep clean). **Held local per user — NOT pushed, NO PR opened.** Two
+> outstanding manual items before merge: (1) **F5 visual pass** of settings/preview/sidebar/results
+> after the CSS split (selector-diff proves loss-free but rendering wasn't visually confirmed);
+> (2) push + open PR when ready. Follow-up: separate [`claude-md-rewrite.md`](claude-md-rewrite.md)
+> after merge.
 
 Legend: `[ ]` pending · `[~]` in progress · `[x]` done + gated + committed.
 Sub-steps per task: edit → gate#1 → mastering-typescript → sonar-analyze → review → remediate →
@@ -29,7 +31,7 @@ gate#2 → committed.
 - [x] **T5** Section-slice/JSON dedupe + parser split (safeJsonParse, sectionBounds, parser 539→114L + helpers 431L) — gate 499
 - [x] **T6** Narrow I/O extract + type relocation (runner.helpers, practice-mode.helpers, 3 types→types/; vault split skipped) — gate 509
 - [x] **T7** CSS delete dead + split live (styles.css 925→442L + new leetcode-preview.css 302L; cssUris wiring) — gate 509 (F5 pending)
-- [ ] **Phase 8** Finalize (orchestrator) — security sweep + open PR
+- [x] **Phase 8** Finalize — full gate 509, security sweep clean, spec/manifest untouched. **PR held per user (kept local, not pushed).**
 - [ ] **After merge:** separate plan [`claude-md-rewrite.md`](claude-md-rewrite.md)
 
 Gate log (zero failures; pass-count ≥ previous row, baseline **467**):
