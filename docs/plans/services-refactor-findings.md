@@ -204,3 +204,31 @@ the failure toast — no caller needs a toast-free predicate, so extracting the 
 `fs.existsSync` check into its own module + fs-test is speculative abstraction for zero current gain.
 `PanelCtx` (holds vscode types) and `ChallengeSession`/`ChallengeCallbacks`/`env.types.ts` left in
 place, per the plan (domain `types/` stays vscode-free).
+
+## T7 — CSS: delete dead + split live (`71303a4`)
+
+**Changed:** deleted ~190 lines of verified-dead CSS (0 TS refs): highlight.js token classes,
+`.code-block-wrapper`/`.line-number`/`.vk-var`, and the var-set diff + `.var-source` badge — all
+leftovers of the core extension's markdown/varset pipeline this repo never ported. Split the live
+LeetCode blocks (sidebar empty-state, nav header, preview-panel badges/rows/summary/selector,
+practice settings) out of `styles.css` (925→**442L**) into `src/ui/leetcode-preview.css` (302L). The
+sidebar provider now returns both stylesheet URIs from `cssUris()`; the render functions take
+`cssUris: string[]` and emit one `<link>` each via a new `cssLinks()` helper. `PanelCtx.cssUri:
+string` → `cssUris: string[]`.
+
+**Corrected a plan error:** the plan marked `.popup-body pre` / `.popup-body pre code` (416–442) as
+dead hljs. They are **live** — the LeetCode panel body is `class="popup-body leetcode-preview"` and
+emits `<pre class="code">`, so `.popup-body pre` styles those blocks and *wins* `white-space: pre`
+over `.code` on specificity (0,1,1 > 0,1,0). Deleting them would have made code wrap instead of
+scroll. Kept them in `styles.css` (shared chrome).
+
+**Verification (no F5 available this session):** a selector-set diff of the original stylesheet vs
+`styles.css` + `leetcode-preview.css` shows the *only* removed selectors are the 11 dead classes and
+*nothing* live was lost. CSP is unchanged (`style-src ${cspSource}` already covers both files, both
+under the existing `localResourceRoots` = `extensionUri/src/ui`). Compile + lint + the preview HTML
+tests (now passing `cssUris` as an array) are green. **F5 visual pass remains the one manual check.**
+
+**Rule learned:** never trust a "dead CSS" label by comment/section — a descendant selector
+(`.popup-body pre`) can style live markup emitted under a *shared* body class. Verify by (a) grepping
+every class for TS refs AND (b) checking descendant/type selectors against what the live panels
+actually emit, then prove the split loss-free with a before/after selector diff.
