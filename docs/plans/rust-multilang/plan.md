@@ -577,16 +577,77 @@ interface ExerciseFile {
 | `discardChallenge` | delete one file | delete the run directory |
 | Test type | — | new `project` id in `TEST_TYPES` |
 
+### No language selector — an aggregate runtime preflight
+
+A `function` exercise picks one language; a **`project` exercise has no language to pick** — the
+file set fixes its languages. Every single-language assumption breaks here: the selector,
+`languagesForType`, `libs[selectedLanguage]`, `detectRuntime(one)`. Replacement: collect every
+required runtime from file langIds + declared services, probe each, render a ✓/✗ list with
+install hints in the panel. Solve It gates on all-green. The user configures nothing — they see
+what is missing and nothing else.
+
+**Multi-env per run:** FastAPI + React needs a venv **and** a node env in one exercise.
+`ensureLibEnv(langId, libs)` is already per-language — the run resolves N envs, not one. No new
+machinery.
+
+### Grading — the `checks:` model
+
+How a `project` exercise is graded is **declared in the artifact**, as a list of named checks,
+each binding existing machinery to one target:
+
+```yaml
+test:
+  type: project
+  checks:
+    - name: slugify unit        # reuses the five function envs, unchanged —
+      kind: function            # the check layer reads this one file's buffer
+      file: src/utils.ts        # as the candidate
+      function: slugify
+    - name: styles present
+      kind: css-assert          # RESERVED — parses and validates, does not run
+      file: src/styles.css
+    - name: api returns list
+      kind: http                # Phase 4 only — in-host fetch (see §6)
+      service: api
+```
+
+- Test cases bind to checks with a fence attribute (`check=<name>`) in `## Tests`; a
+  single-check exercise needs no attribute.
+- **Solved = every check green.** The results table groups rows by check.
+- **A file no check references is ungraded scaffolding, explicitly** — it exists for the solver
+  (the CSS tab), not the grader. Honest limit: without a browser, CSS cannot be truly graded;
+  `css-assert` (static selector/property presence) is **reserved**, not promised — a declared
+  limit beats a fake grade.
+- `kind: function` is the only kind implemented in Phase 3. Reserved kinds parse, validate, and
+  explain themselves — the same self-explaining failure as a reserved `test.type`.
+
+### Tab lifecycle — close one, end all (guarded)
+
+Closing **any** exercise tab triggers a modal: *"This exercise uses N files. End the exercise
+(discards this run) or reopen the tab?"* End → the full teardown: server process groups first,
+then editor tabs, then the run directory. The guard exists because an accidental `Cmd+W`
+mid-run must not silently destroy a 40-minute attempt and its booted servers.
+
+- Watcher: `window.tabGroups.onDidChangeTabs`, filtered by runDir URI prefix — the
+  generalisation of today's single-file `editorOpen` tracking.
+- **What dies with the exercise:** the run directory, its tabs, its server process groups.
+- **What survives, deliberately:** the shared lib envs — they are keyed by dependency set and
+  shared across exercises; deleting one on close would make the next exercise re-pay a full
+  install for nothing. They are reclaimed by the T19 sweep (age + size) or the explicit Clear
+  Exercise Cache command.
+
 **Security:** path traversal is the whole risk surface. Every `path` normalised and asserted
 inside `runDir` **before** any write; absolute paths, `..` segments, symlink targets rejected at
-parse time.
+parse time. `check.file` resolves against the parsed file set — a check naming a file outside it
+is a parse error.
 
 **Open questions to settle before task breakdown:** (1) does `buildExecutable`'s normalisation
 stay `function`-only — current read yes; (2) Run Tests reads dirty buffers vs save-then-grade —
 buffers truer, saving far simpler across N tabs; (3) per-file PracticeMode scope — current read
 no, already global; (4) **real `tsc` arrives here** — `.tsx` cannot be type-stripped into a
 working React app, so `project` exercises get a `typescript`-in-the-env compile step, the opt-in
-path T7 deferred.
+path T7 deferred; (5) does Run Tests run *all* checks or accept a check filter (a solver
+iterating on one file may not want the whole suite) — current read: all, filter later if slow.
 
 ---
 
@@ -643,15 +704,23 @@ services:
 - `dependsOn` orders the boot; a cycle is a parse error.
 
 **Lifecycle:** assign all ports → boot in dependency order → wait for `ready` or a per-service
-timeout → write each dependent's `envFile` **before it starts** → run the grading driver → tear
-everything down. Teardown fires on all six exit paths — successful Submit, failed Submit, End
-Challenge, panel dispose, `deactivate()`, extension-host crash-restart — and kills the **process
-group**, not the pid: a dev server forks children that survive a pid-level kill. This is the
-phase's real difficulty.
+timeout → write each dependent's `envFile` **before it starts** → run the `http` checks → tear
+everything down. Teardown fires on all **seven** exit paths — successful Submit, failed Submit,
+End Challenge, panel dispose, `deactivate()`, extension-host crash-restart, and **any exercise
+tab closed with "End" confirmed** (§5) — and kills the **process group**, not the pid: a dev
+server forks children that survive a pid-level kill. This is the phase's real difficulty.
 
-**Grading:** `fetch`-based assertions from a generated Node driver. **No headless browser** —
-Playwright is a ~300 MB install the extension has no path to provide. Real DOM assertions are a
-later phase with its own decision.
+**Grading:** `http` checks (§5 `checks:` model) run **in the extension host itself** via global
+`fetch` — the host is Node ≥ 18, so there is no spawned driver process, no extra runtime
+requirement, and one less thing to kill on teardown. **No headless browser** — Playwright is a
+~300 MB install the extension has no path to provide. Real DOM assertions are a later phase with
+its own decision.
+
+**Trust class, stated plainly for the format spec:** a service exercise executes `package.json`
+scripts and declared argv commands from the artifact — arbitrary code by design, the same trust
+class as running the solver's own candidate locally. The allowlist and argv rules bound the
+*shape* of what runs; they do not, and cannot, make artifact-authored code safe. The spec must
+say so rather than imply otherwise.
 
 **Open questions to settle before task breakdown:** (1) where the install budget lives — a cold
 `npm ci` on Next.js is minutes; likely a "preparing exercise" phase with its own progress and
@@ -659,7 +728,9 @@ cancellation; (2) do services share the T12 cache or get per-exercise `node_modu
 the timer does while servers boot — grading time is not solving time, and `LeetCodeTimer` cannot
 currently pause; (4) `ready`-miss fallback — poll the assigned URL (possible only because we know
 it) with a timeout, then fail loudly **with** captured stdout; (5) is `--host 127.0.0.1` forced
-on dev servers or left to the artifact.
+on dev servers or left to the artifact; (6) does the §5 runtime preflight probe service runtimes
+too (`uvicorn` present?) or only their `argv[0]` — current read: `argv[0]` per the `ENOENT` rule,
+surfaced in the same ✓/✗ list.
 
 ---
 

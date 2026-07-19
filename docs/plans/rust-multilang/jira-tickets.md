@@ -230,14 +230,29 @@ Contract in plan §5: `## Files` with `path=`/`role=` fence attributes; `Exercis
 `EnvContext.code` → `files` with `code` as a derived getter (five `function` envs unchanged);
 `ChallengeSession` → run directory.
 
+Already designed in the contract — validate, don't reinvent:
+
+- **No language selector.** A `project` exercise's languages are fixed by its file set; the
+  selector is replaced by an aggregate runtime preflight (✓/✗ per required runtime, install
+  hints, Solve It gates on all-green). Multi-env per run: `ensureLibEnv` is per-language; a
+  FastAPI + React exercise resolves a venv **and** a node env.
+- **Grading = the `checks:` model.** Named checks in the artifact bind machinery to targets;
+  `kind: function` reuses the five function envs against one file's buffer; cases bind via
+  `check=<name>` fence attribute; solved = every check green; unreferenced files are ungraded
+  scaffolding, explicitly; `css-assert` is **reserved** — a declared limit beats a fake grade.
+- **Tab lifecycle.** Closing any exercise tab → modal (end or reopen); End → full teardown:
+  processes, tabs, run dir. Shared lib envs survive by design — reclaimed by sweep or Clear
+  Cache, never by exercise close. Watcher: `window.tabGroups.onDidChangeTabs` filtered by
+  runDir prefix.
+
 **Answer against the real tree:** (1) `buildExecutable` normalisation stays `function`-only?
 (2) dirty buffers vs save-then-grade across N tabs; (3) per-file PracticeMode scope (current
 read: no); (4) real `tsc` arrives here — `.tsx` cannot be type-stripped into a working app; the
-opt-in compile path T7 deferred.
+opt-in compile path T7 deferred; (5) Run Tests: all checks or a check filter.
 
 **Output:** plan §5 amended, stories cut from it. **Carried into every story:** path traversal is
 the whole risk surface — normalise + assert containment before any write; absolute, `..`, and
-symlink targets rejected at parse.
+symlink targets rejected at parse; a `check.file` outside the parsed file set is a parse error.
 
 ---
 
@@ -252,13 +267,18 @@ the dependent boots (Next.js bakes `NEXT_PUBLIC_*` at build time), `dependsOn` o
 
 Already decided: **OS-assigned ports** (bind 0 on `127.0.0.1`, read back, retry `EADDRINUSE` for
 the TOCTOU window; never `0.0.0.0`) — we know the URL before boot, which is what makes injection
-work. **No headless browser** — grading is `fetch`-based from a generated Node driver.
+work. **`http` checks run in the extension host itself** via global `fetch` (host is Node ≥ 18) —
+no spawned driver, no extra runtime, one less thing to kill. **No headless browser.** Teardown
+has **seven** paths — the six lifecycle ones plus any-exercise-tab-closed-with-End-confirmed.
+**Trust class stated in the spec:** a service exercise executes artifact-authored scripts —
+arbitrary code by design, same trust class as running the solver's candidate; the allowlist
+bounds the shape of what runs, it does not make artifact code safe.
 
 **Answer:** (1) install budget / "preparing exercise" phase with progress + cancellation;
 (2) share the T12 cache or per-exercise `node_modules`; (3) timer pause during boot
 (`LeetCodeTimer` cannot currently pause); (4) `ready`-miss fallback — poll the known URL with
 timeout, then fail loudly **with** captured stdout; (5) force `--host 127.0.0.1` or leave to the
-artifact.
+artifact; (6) preflight service runtimes via `argv[0]` in the same ✓/✗ list.
 
 **Output:** plan §6 amended, stories cut from it.
 

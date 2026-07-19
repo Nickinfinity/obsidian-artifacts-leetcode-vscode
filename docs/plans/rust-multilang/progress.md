@@ -83,6 +83,10 @@ find later.
 | 2026-07-19 | — | `docs/` removed from `develop` (`85296fb`, pushed); `origin/main` cleared by next `develop → main` merge | develop carries the deletion; main is 22 behind regardless. Old plan files recoverable at `f19b365` |
 | 2026-07-19 | review | Plan restructured for orchestration: tasks renumbered T0–T21, waves rebuilt | Found: 3 same-wave file collisions (codegen service, `env.registry.ts`, golden/typemap test files), a compile hole between T1 and the codegen rows (fixed with `''` stubs), inverted T-allowlist/parser dependency, same-wave T17←T18 dep |
 | 2026-07-19 | review | Install step moved out of `EmittedProgram` into the cache service; `EnvContext.libDir` instead | Old T10 (install per run, temp dir) contradicted old T11 (cached env dirs) — both could not be true. Rust: per-run sources + `CARGO_TARGET_DIR` because copying sources into a shared cache mutates it per run |
+| 2026-07-19 | §5/§6 | `project` grading = declared `checks:` list; `kind: function` reuses the five function envs against one file; unreferenced files are ungraded scaffolding; `css-assert` reserved | §5 had no grading spec at all; per-file behaviour must live in the artifact. No browser → CSS cannot be truly graded; a declared limit beats a fake grade |
+| 2026-07-19 | §5 | `project` has no language selector — aggregate runtime preflight (✓/✗ + install hints) replaces it | Every single-language assumption (selector, `libs[lang]`, `detectRuntime`) breaks when the file set fixes the languages |
+| 2026-07-19 | §5/§6 | Closing any exercise tab → modal → End = full teardown (seventh teardown path). Shared lib envs survive exercise close | Accidental `Cmd+W` must not silently kill a 40-min run with booted servers; deleting shared envs on close would re-pay full installs for nothing — sweep/Clear Cache own env reclamation |
+| 2026-07-19 | §6 | `http` checks run in-host via global `fetch`, not a spawned Node driver | Host is Node ≥ 18: fewer processes, no extra runtime requirement, one less thing to kill |
 
 ---
 
