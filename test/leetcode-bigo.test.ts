@@ -451,9 +451,12 @@ suite('leetcode-bigo: estimateBigO', () => {
 
 	// ── unsupported language ──────────────────────────────────────────────────
 
+	// `rust` was this test's unsupported example until it became a runnable
+	// `LangId`; the heuristic's supported set is `isLangId`, so widening the
+	// registry enrolls a language here automatically. Ruby is genuinely absent.
 	test('an unsupported language reports low confidence rather than guessing', () => {
-		const code = 'fn f(n: i32) -> i32 { n }';
-		const r = estimateBigO(code, 'rust');
+		const code = 'def f(n) = n';
+		const r = estimateBigO(code, 'ruby');
 		assert.strictEqual(r.confidence, 'low');
 		assert.ok(r.reason.length > 0);
 	});

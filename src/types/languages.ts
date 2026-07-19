@@ -7,7 +7,7 @@
  * sensible `languageId` and file extension). A language is a `LangId` only when
  * a solver can Solve It → Run Tests → Submit in it end to end.
  */
-export type LangId = 'java' | 'python' | 'javascript';
+export type LangId = 'java' | 'python' | 'javascript' | 'rust' | 'typescript';
 
 /**
  * One executable language's configuration — the single source of truth the
@@ -61,6 +61,25 @@ export const LANGUAGES: Record<LangId, LanguageConfig> = {
 		commentPrefix: '//',
 		detectCmd: 'node --version',
 		aliases: ['js', 'node', 'mjs', 'cjs'],
+	},
+	rust: {
+		id: 'rust',
+		displayName: 'Rust',
+		fileExt: 'rs',
+		commentPrefix: '//',
+		detectCmd: 'rustc --version',
+		aliases: ['rs'],
+	},
+	typescript: {
+		id: 'typescript',
+		displayName: 'TypeScript',
+		fileExt: 'ts',
+		commentPrefix: '//',
+		// `node`, not `tsc`: the default path strips types in process (Node's
+		// own `stripTypeScriptTypes`) and never invokes a compiler, so gating on
+		// a TypeScript toolchain would reject a machine that can run the tests.
+		detectCmd: 'node --version',
+		aliases: ['ts'],
 	},
 };
 

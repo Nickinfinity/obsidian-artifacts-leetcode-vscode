@@ -4,13 +4,15 @@ import type { ParsedLeetCode } from '../types/leetcode.types.js';
 import { javaBoilerplate, javaHarness } from './codegen/java.codegen.js';
 import { jsBoilerplate, jsHarness } from './codegen/javascript.codegen.js';
 import { pythonBoilerplate, pythonHarness } from './codegen/python.codegen.js';
+import { rustBoilerplate, rustHarness } from './codegen/rust.codegen.js';
+import { tsBoilerplate, tsHarness } from './codegen/typescript.codegen.js';
 
 /** Primitive → language-native lookup. */
 const PRIMITIVES: Record<string, Record<string, string>> = {
-	int:    { java: 'int',     python: 'int',   javascript: 'number',  rust: 'i32'    },
-	float:  { java: 'double',  python: 'float', javascript: 'number',  rust: 'f64'    },
-	string: { java: 'String',  python: 'str',   javascript: 'string',  rust: 'String' },
-	bool:   { java: 'boolean', python: 'bool',  javascript: 'boolean', rust: 'bool'   },
+	int:    { java: 'int',     python: 'int',   javascript: 'number',  typescript: 'number',  rust: 'i32'    },
+	float:  { java: 'double',  python: 'float', javascript: 'number',  typescript: 'number',  rust: 'f64'    },
+	string: { java: 'String',  python: 'str',   javascript: 'string',  typescript: 'string',  rust: 'String' },
+	bool:   { java: 'boolean', python: 'bool',  javascript: 'boolean', typescript: 'boolean', rust: 'bool'   },
 };
 
 /** Java primitive → boxed type used inside generics (`Map<…>`). */
@@ -43,6 +45,7 @@ const TYPE_SYNTAX: Record<string, TypeSyntax> = {
 	java:       { array: i => `${i}[]`,     map: (k, v) => `Map<${k}, ${v}>`,    box: JAVA_BOX },
 	python:     { array: i => `List[${i}]`, map: (k, v) => `Dict[${k}, ${v}]` },
 	javascript: { array: i => `${i}[]`,     map: (k, v) => `Record<${k}, ${v}>` },
+	typescript: { array: i => `${i}[]`,     map: (k, v) => `Record<${k}, ${v}>` },
 	rust:       { array: i => `Vec<${i}>`,  map: (k, v) => `HashMap<${k}, ${v}>` },
 };
 
@@ -146,6 +149,8 @@ const LANG_CODEGEN: Record<LangId, LangCodegen> = {
 	java:       { boilerplate: javaBoilerplate,   harness: javaHarness },
 	python:     { boilerplate: pythonBoilerplate, harness: pythonHarness },
 	javascript: { boilerplate: jsBoilerplate,     harness: jsHarness },
+	rust:       { boilerplate: rustBoilerplate,   harness: rustHarness },
+	typescript: { boilerplate: tsBoilerplate,     harness: tsHarness },
 };
 
 /**
