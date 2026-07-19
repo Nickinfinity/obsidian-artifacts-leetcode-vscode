@@ -369,6 +369,14 @@ every setup/solution block whose `data-language` ≠ the selection; `data-langua
 
 **TDD, CUPID, DDD**, in that order.
 
+> **Planning a multi-agent feature? Read [CREATING_A_PLAN.md](CREATING_A_PLAN.md) first.** It
+> owns the process: where plan files live (`docs/plans/<feature>/`, branch-local, deleted
+> before the PR merges — `develop` and `main` never carry them), the orchestrator/worker
+> topology, the skills every agent loads (`caveman`, `ponytail`, `mastering-typescript`,
+> `sonar-analyze`), the six-field task format, and the ledger. This section stays the
+> authority on *how to write the code*; that file is the authority on *how a plan is
+> structured and executed*.
+
 - **TDD — test first, where it makes sense.** For any pure, `vscode`-free unit (parsers,
   codegen, env `emit`/`validate`, suite selection, helpers) write the failing test **before**
   the code. `test/*.test.ts` is the pattern: `node:assert`, Mocha **TDD** (`suite`/`test`),
