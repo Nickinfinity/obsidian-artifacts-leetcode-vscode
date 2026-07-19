@@ -80,6 +80,7 @@ find later.
 | 2026-07-19 | — | Java libraries out of scope through Phase 2 | No transitive resolver in a stock JDK. When asked for: generate a `pom.xml` and shell out to `mvn dependency:copy-dependencies`, never hand-roll a Maven Central fetch |
 | 2026-07-19 | — | Phases 3–4 contract-only | Task breakdown against unknowns produces tasks that get rewritten |
 | 2026-07-19 | — | Four epics collapsed into umbrella VSX-122 | One branch, one PR; phases become story groups |
+| 2026-07-19 | — | `docs/` removed from `develop` (`85296fb`, pushed); `origin/main` cleared by the next `develop → main` merge rather than a throwaway PR | develop already carries the deletion, so the release merge removes it automatically. main is 22 commits behind regardless — `docs/` is not what makes it stale. Old plan files recoverable at `f19b365` |
 
 ---
 
