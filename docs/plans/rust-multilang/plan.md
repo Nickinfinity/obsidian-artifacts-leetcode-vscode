@@ -54,27 +54,41 @@ them**, not after.
 
 ## 1. Orchestrator protocol — how to execute this plan
 
-You are the orchestrator (Opus). Workers are Sonnet subagents. Phases 1–2 execute; Phases 3–4 do
-**not** — see step 6.
+Three roles: you are the **orchestrator** (Opus — senior TS tech lead + PM). A **reviewer**
+(Opus — senior TS tech lead, review only) verdicts every worker task. **Workers** are Sonnet.
+The full role prompts live in [CREATING_A_PLAN.md](../../../CREATING_A_PLAN.md) §2 — copy them
+verbatim per dispatch and append the instance parameters below. Phases 1–2 execute; Phases 3–4
+do **not** — see step 6.
 
-1. **Read once:** [CREATING_A_PLAN.md](../../../CREATING_A_PLAN.md) (process),
-   [progress.md](progress.md) (ledger). `CLAUDE.md` is in your context already; its Code Style
-   section binds every worker too.
+1. **Read once:** [CREATING_A_PLAN.md](../../../CREATING_A_PLAN.md) (process + the three role
+   templates), [progress.md](progress.md) (ledger). `CLAUDE.md` is in your context already; its
+   Code Style and Security sections bind every role.
 2. **Verify claimed state before acting** (trust the tree): run the gate, confirm the count
    matches the ledger baseline, grep any "already done" claim. Tasks in this repo have turned out
    already done, or deliberately done differently, by the time their plan was read.
-3. **Per wave, in table order (§7):**
+3. **Per wave, in table order (§7) — the review loop:**
    a. **Orchestrator-only work first** — T0, T1, and every *integration hunk* a wave row lists
       (registry `register()` lines, shared-table one-liners). Workers never touch these files.
-   b. **Dispatch every worker task in the wave in parallel**, each prompt = the template below +
-      that task's block pasted verbatim. Do not paste this whole plan into a worker.
-   c. **Wait for all. Reject** any report that edited files outside its Owns list, touched a
-      golden assertion, or edited the ledger — revert that slice and re-dispatch with the
-      violation named.
-   d. **Integrate** the wave's orchestrator hunks, then **gate the integrated tree** (§7 command).
-      A red gate stops all dispatch — fix or revert the wave; never open the next wave on red.
-   e. **Commit once per wave** (workers never commit), update the ledger rows, gate log, and —
-      for anything decided that this plan did not specify — the Decisions table.
+   b. **Dispatch every worker task in the wave in parallel** (model `sonnet`), each prompt =
+      worker template + that task's block verbatim + the instance parameters. Do not paste this
+      whole plan into a worker. **Security-critical tasks are named as such in the dispatch**,
+      with their surface (see parameters below).
+   c. **Spawn one reviewer for the wave** (model `opus`). As each worker reports, pass the
+      reviewer: task block + worker report + diff of the Owns files. Continue the same reviewer
+      across the wave via SendMessage — its accumulated context is what catches two tasks
+      solving the same problem twice.
+   d. **Enforce verdicts.** `CHANGES` → findings back to the *same* worker (SendMessage, context
+      intact), worker fixes — `SEC:` findings first — reviewer re-checks. **Max 2 rounds per
+      task**, then `ESCALATE` resolves to you: fix it yourself or revert the slice and
+      re-dispatch fresh; record which in the Decisions table. An out-of-Owns edit or a touched
+      golden assertion is an automatic `CHANGES` regardless of anything else. An open `SEC:`
+      finding never expires on the round cap.
+   e. **Integrate** the wave's orchestrator hunks once every task is `APPROVE`, then **gate the
+      integrated tree** (§7 command). A red gate stops all dispatch — fix or revert the wave;
+      never open the next wave on red.
+   f. **Commit once per wave** (workers and reviewer never commit), update ledger rows — status,
+      test count, review rounds — and the Decisions table for anything decided that this plan
+      did not specify.
 4. **Human gates:** T9 and T21 are F5 manual passes. Stop, hand the user the click-path, record
    their reported result. Never mark them done yourself.
 5. **Jira:** as stories are created from [jira-tickets.md](jira-tickets.md), fill each `<KEY>`
@@ -82,24 +96,23 @@ You are the orchestrator (Opus). Workers are Sonnet subagents. Phases 1–2 exec
 6. **After Phase 2 closes:** amend the §5/§6 contracts against the real tree, then **stop and
    present** — their task breakdown is a human decision, not yours.
 
-### Worker prompt template
+### Instance parameters (append to every role template)
 
-> You are a worker agent on `<repo path>`, branch `feature/VSX-122_multilib-multilang-support`.
-> Project rules in `CLAUDE.md` bind you — TDD (failing test first), ESLint gotchas, `.js` import
-> suffixes, no new runtime dependencies. Work ladder: reuse before writing, stdlib before custom,
-> smallest diff that passes. Run `sonar-analyze` on your diff before reporting and fix what it
-> finds.
->
-> **Task (verbatim from plan):** `<task block: Owns / Reads / Depends on / Test first / Done
-> when / Gate>`
->
-> **Hard limits:** touch only the files in Owns. Never edit: golden test assertions,
-> `env.registry.ts`, `package.json` (unless in Owns), `docs/plans/**`. Do not commit — the
-> orchestrator commits per wave. Gate your slice with:
-> `rm -rf dist && pnpm compile && pnpm lint && node node_modules/.pnpm/mocha@*/node_modules/mocha/bin/mocha.js --ui tdd "dist/test/**/*.test.js"`
->
-> **Report (terse, ≤ 15 lines):** files touched · tests added (names) · count before → after ·
-> gate tail · sonar findings fixed · deviations or blockers. No prose beyond that.
+- **Repo:** this working directory, branch `feature/VSX-122_multilib-multilang-support`.
+- **Models:** orchestrator = you (Opus) · reviewer = `opus` subagent, one per wave, continued
+  via SendMessage · workers = `sonnet` subagents.
+- **Gate** (workers gate their slice; orchestrator gates the integrated tree; also run
+  `npx tsc --noEmit`):
+  `rm -rf dist && pnpm compile && pnpm lint && node node_modules/.pnpm/mocha@*/node_modules/mocha/bin/mocha.js --ui tdd "dist/test/**/*.test.js"`
+- **Forbidden to workers:** golden test assertions, `env.registry.ts`, `package.json` (unless
+  in Owns), `docs/plans/**`, git commits.
+- **Security-critical tasks and their surfaces:** T6/T7 (untrusted candidate code → emitted
+  programs), T10 (allowlist — the boundary itself), T11 (untrusted `.md` parse), T12 (argv
+  installs via `execFile`), T13 (env failure mapping), T15 (webview interpolation — `escHtml`),
+  T16 (`vm` sandbox widening — `require` only), T19 (path containment under `globalStorageUri`).
+  Their Test-first includes a hostile input; their review verdict names the attack surface.
+- **Review:** max 2 `CHANGES` rounds per task, then `ESCALATE`; verdicts and round counts go in
+  the ledger Notes column.
 
 ---
 
@@ -654,7 +667,9 @@ on dev servers or left to the artifact.
 
 Rules recap (full text in §1): orchestrator does its own rows and every integration hunk; worker
 tasks in a wave own **disjoint files — test files and `package.json` included**; no task depends
-on a task in its own wave; gate + commit + ledger at every wave close.
+on a task in its own wave; every worker task needs the wave's Opus reviewer to `APPROVE` before
+integration (max 2 `CHANGES` rounds, `SEC:` findings never expire); gate + commit + ledger at
+every wave close.
 
 | Wave | Tasks | Agents | Orchestrator integration at close |
 |---|---|---|---|
