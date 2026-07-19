@@ -59,6 +59,15 @@ Gate baseline at branch point: **509 passing** (`93219e0`, post-PR-#2).
 | T28 — docs Phase 2.5 | 12 | sonnet | `<KEY>` | todo | — | — | Case shapes + `mutates` + capability matrix |
 | T29 — F5 Phase 2.5 | 12 | **human** | `<KEY>` | todo | — | — | class + mutates + stdio, interpreted **and** compiled |
 
+### Example artifacts (E-tasks — [examples.md](examples.md))
+
+| Task | Wave | Agent | Jira | Status | Notes |
+|------|------|-------|------|--------|-------|
+| E1 → E0 — two-sum (5 langs) + fixtures test | 4 | sonnet | `<KEY>` | todo | Serial: artifact first, then the glob test that guards all of them |
+| E2–E5 — lodash · numpy · serde_json · java-negative | 8 | sonnet | `<KEY>` | todo | T21 clicks through these exact files |
+| E6–E8 — lru-cache · mutates · stdio | 12 | sonnet | `<KEY>` | todo | T29 material; interpreted + compiled each |
+| E9–E10 — project · service artifacts | spike | spike | — | deferred | Spike deliverables — a concrete artifact forces the contract to confess its gaps |
+
 ### Phases 3–4
 
 Contract-only (plan §6–§7, incl. the `CHECK_KINDS` second-level table). After Phase 2.5 closes,

@@ -8,6 +8,10 @@ disagrees with this plan, this plan wins and the companion is the bug:
 
 - [progress.md](progress.md) — the ledger. **Orchestrator is its only writer.**
 - [jira-tickets.md](jira-tickets.md) — paste-ready Jira story specs, one per task, same T-ids.
+- [examples.md](examples.md) — E-tasks producing runnable example artifacts under
+  `examples/leetcode/` (a **tracked repo directory that survives the PR** — unlike `docs/`).
+  They are the material the F5 gates click through and the format spec's living reference; wave
+  placement inside that file.
 
 **Depth (agreed):** Phases 1, 2, and 2.5 are task-level and agent-ready. Phases 3–4 are
 **contract-only** — task breakdown waits until the earlier phases land; planning them today would
@@ -355,8 +359,8 @@ vm.runInContext(js, ctx);   // pull the function off the sandbox, exactly as the
 
 ### T9 — F5 manual pass (Phase 1) — human
 
-- **Depends on:** T1–T8. Orchestrator: stop and hand the user this click-path, **run twice —
-  once Rust, once TypeScript**:
+- **Depends on:** T1–T8, E1. Orchestrator: stop and hand the user this click-path against
+  `examples/leetcode/two-sum.md` (E1), **run twice — once Rust, once TypeScript**:
 - Open Exercise → selector offers the language → Solve It → temp file opens with the right
   extension and a typed starter → passing solution → Run Tests green → break one case → Run Tests
   shows **one** red, others green (proves per-case isolation) → fix → Submit → `status: solved` +
@@ -532,10 +536,10 @@ sweep-vs-live-run race across windows is accepted (a 30-day threshold makes it p
 
 ### T21 — F5 manual pass (Phase 2) — human
 
-- **Depends on:** T10–T20. Click-path: a `libs:` exercise in JS (lodash), Python (numpy), Rust
-  (serde_json) — first run installs (progress visible), second run of the same set skips the
-  install; chips render and swap with language; `libs.java` shows the non-support message;
-  Clear Exercise Cache reports bytes and the next run rebuilds.
+- **Depends on:** T10–T20, E2–E5. Click-path against the wave-8 examples — E2 lodash (JS/TS),
+  E3 numpy, E4 serde_json, E5 the `libs.java` negative — first run installs (progress visible),
+  second run of the same set skips the install; chips render and swap with language; E5 shows
+  the non-support message; Clear Exercise Cache reports bytes and the next run rebuilds.
 
 ---
 
@@ -673,9 +677,9 @@ test: { type: function, mutates: nums }
 
 ### T29 — F5 manual pass (Phase 2.5) — human
 
-- **Depends on:** T22–T28. Click-path: an LRUCache `class` exercise (one failing op fails one
-  case), a `mutates` exercise (the mutated array is graded, the return ignored), a
-  `stdin-stdout` exercise (the solver's own `print` **is** the answer — stdout is the
+- **Depends on:** T22–T28, E6–E8. Click-path against the wave-12 examples: E6 LRUCache `class`
+  (one failing op fails one case), E7 `mutates` (the mutated array is graded, the return
+  ignored), E8 `stdin-stdout` (the solver's own `print` **is** the answer — stdout is the
   comparison, not a sentinel corruption). Each in at least one interpreted and one compiled
   language.
 
@@ -908,15 +912,18 @@ every wave close.
 | 1 | T1 | orchestrator | — (`tsc` green gates all fan-out) |
 | 2 | T2 · T3 · T5 | 3 × sonnet | — |
 | 3 | T4 · T6 · T7 | 3 × sonnet | `register()` lines + imports for both envs in `env.registry.ts` |
-| 4 | T8 · T10 | 2 × sonnet **+ human T9** | — |
+| 4 | T8 · T10 · E1→E0 | 3 × sonnet **+ human T9** | — |
 | 5 | T11 · T12 | 2 × sonnet | — |
 | 6 | T13 · T14 · T15 | 3 × sonnet | — |
 | 7 | T16 · T17 · T18 · T19 | 4 × sonnet | — |
-| 8 | T20 | 1 × sonnet **+ human T21** | — |
+| 8 | T20 · E2–E5 | 2 × sonnet **+ human T21** | — |
 | 9 | T22 | 1 × sonnet | retire `in-place` entry in `TEST_TYPES` (constants) |
 | 10 | T23 · T26 · T27 | 3 × sonnet | — |
 | 11 | T24 · T25 | 2 × sonnet | `register()` lines for all class + stdio envs; flip `class` / `stdin-stdout` to `implemented` in `TEST_TYPES` |
-| 12 | T28 | 1 × sonnet **+ human T29** | — |
+| 12 | T28 · E6–E8 | 2 × sonnet **+ human T29** | — |
+
+E-tasks (example artifacts) are specified in [examples.md](examples.md); the F5 gates consume
+their exact artifacts — an F5 pass needing an exercise no E-task produced is a planning bug.
 
 ### Gate
 
