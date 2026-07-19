@@ -1,7 +1,9 @@
 import { SOLUTION_MARKER } from '../types/constants.js';
 import { isLangId, type LangId } from '../types/languages.js';
 import type { ParsedLeetCode } from '../types/leetcode.types.js';
-import { functionNameFor } from './leetcode-parser.service.js';
+import { javaBoilerplate, javaHarness } from './codegen/java.codegen.js';
+import { jsBoilerplate, jsHarness } from './codegen/javascript.codegen.js';
+import { pythonBoilerplate, pythonHarness } from './codegen/python.codegen.js';
 
 /** Primitive → language-native lookup. */
 const PRIMITIVES: Record<string, Record<string, string>> = {
@@ -110,68 +112,6 @@ export function generateBoilerplate(parsed: ParsedLeetCode, language: string): s
 	return isLangId(language) ? LANG_CODEGEN[language].boilerplate(parsed) : '';
 }
 
-/** Java wrapper: imports + `class Main` + signature + Scanner stdin + System.out.print. */
-function javaBoilerplate(p: ParsedLeetCode): string {
-	const fn     = functionNameFor(p, 'java');
-	const ret    = mapType(p.returns, 'java');
-	const params = p.params.map(pa => `${mapType(pa.type, 'java')} ${pa.name}`).join(', ');
-	const readers = p.params.map(pa => `\t\t// read ${pa.name} from sc`).join('\n');
-	return [
-		'import java.util.*;',
-		'',
-		'class Main {',
-		`\tpublic static ${ret} ${fn}(${params}) {`,
-		`\t\t${SOLUTION_MARKER}`,
-		'\t}',
-		'',
-		'\tpublic static void main(String[] args) {',
-		'\t\tScanner sc = new Scanner(System.in);',
-		readers,
-		'\t\tSystem.out.print("");',
-		'\t}',
-		'}',
-		'',
-	].join('\n');
-}
-
-/** Python wrapper: `def` + `if __name__ == "__main__":` + `input()`. */
-function pythonBoilerplate(p: ParsedLeetCode): string {
-	const fn     = functionNameFor(p, 'python');
-	const params = p.params.map(pa => pa.name).join(', ');
-	const reads  = p.params.map(pa => `\t${pa.name} = input()`).join('\n');
-	return [
-		`def ${fn}(${params}):`,
-		`\t${SOLUTION_MARKER}`,
-		'',
-		'if __name__ == "__main__":',
-		reads || '\tpass',
-		`\tprint(${fn}(${params}))`,
-		'',
-	].join('\n');
-}
-
-/** JavaScript wrapper: `function` + `readline` + `process.stdin`. */
-function jsBoilerplate(p: ParsedLeetCode): string {
-	const fn     = functionNameFor(p, 'javascript');
-	const params = p.params.map(pa => pa.name).join(', ');
-	return [
-		"const readline = require('readline');",
-		"const rl = readline.createInterface({ input: process.stdin });",
-		'',
-		`function ${fn}(${params}) {`,
-		`\t${SOLUTION_MARKER}`,
-		'}',
-		'',
-		'const lines = [];',
-		"rl.on('line', (l) => lines.push(l));",
-		"rl.on('close', () => {",
-		`\tconst result = ${fn}(${params});`,
-		'\tprocess.stdout.write(String(result));',
-		'});',
-		'',
-	].join('\n');
-}
-
 /**
  * Generates a per-language assert-based test harness from the parsed test
  * cases.
@@ -187,43 +127,6 @@ function jsBoilerplate(p: ParsedLeetCode): string {
  */
 export function generateTestHarness(parsed: ParsedLeetCode, language: string): string {
 	return isLangId(language) ? LANG_CODEGEN[language].harness(parsed) : '';
-}
-
-/** Java assert harness with a `class Main { public static void main … }` wrapper. */
-function javaHarness(p: ParsedLeetCode): string {
-	const calls = p.tests.map(t => {
-		const args = p.params.map(pa => jsonToLiteral(t.input[pa.name], 'java')).join(', ');
-		return `\t\t${p.functionName}(${args});`;
-	});
-	return [
-		'class Main {',
-		'\tpublic static void main(String[] args) {',
-		...calls,
-		'\t}',
-		'}',
-		'',
-	].join('\n');
-}
-
-/** Python `assert fn(args) == expected` harness, one assert per case. */
-function pythonHarness(p: ParsedLeetCode): string {
-	const lines = p.tests.map(t => {
-		const args = p.params.map(pa => jsonToLiteral(t.input[pa.name], 'python')).join(', ');
-		const exp  = jsonToLiteral(t.expected, 'python');
-		return `assert ${p.functionName}(${args}) == ${exp}`;
-	});
-	return lines.length === 0 ? '# no test cases\n' : `${lines.join('\n')}\n`;
-}
-
-/** JS `assert.deepStrictEqual(fn(args), expected)` harness, one per case. */
-function jsHarness(p: ParsedLeetCode): string {
-	const head = "const assert = require('assert');";
-	const lines = p.tests.map(t => {
-		const args = p.params.map(pa => jsonToLiteral(t.input[pa.name], 'javascript')).join(', ');
-		const exp  = jsonToLiteral(t.expected, 'javascript');
-		return `assert.deepStrictEqual(${p.functionName}(${args}), ${exp});`;
-	});
-	return [head, ...lines, ''].join('\n');
 }
 
 /**
