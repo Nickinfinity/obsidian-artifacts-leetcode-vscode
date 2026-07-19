@@ -26,8 +26,9 @@ Gate baseline at branch point: **509 passing** (`93219e0`, post-PR-#2).
 | T4 — Rust codegen row | 3 | sonnet | `<KEY>` | todo | — | — | Trails T2: harness renders args via rust literals |
 | T6 — `function × rust` env | 3 | sonnet | `<KEY>` | todo | — | — | Registration = orchestrator at wave close |
 | T7 — `function × typescript` env | 3 | sonnet | `<KEY>` | todo | — | — | JS env + strip call; `detect()` gates Node ≥ 22.18 |
+| T30 — recursive exercise discovery | 2 | sonnet | `<KEY>` | todo | — | — | **Security-critical** (symlink containment); flat vault byte-identical |
 | T8 — docs Phase 1 | 4 | sonnet | `<KEY>` | todo | — | — | Format spec + `CLAUDE.md` |
-| T9 — F5 Phase 1 | 4 | **human** | `<KEY>` | todo | — | — | Twice: Rust, TypeScript. Orchestrator stops and asks |
+| T9 — F5 Phase 1 | 4 | **human** | `<KEY>` | todo | — | — | Deploy examples to vault first; folder path proves T30. Twice: Rust, TypeScript |
 
 ### Phase 2 — Libraries per exercise
 
@@ -63,10 +64,14 @@ Gate baseline at branch point: **509 passing** (`93219e0`, post-PR-#2).
 
 | Task | Wave | Agent | Jira | Status | Notes |
 |------|------|-------|------|--------|-------|
-| E1 → E0 — two-sum (5 langs) + fixtures test | 4 | sonnet | `<KEY>` | todo | Serial: artifact first, then the glob test that guards all of them |
-| E2–E5 — lodash · numpy · serde_json · java-negative | 8 | sonnet | `<KEY>` | todo | T21 clicks through these exact files |
+| E1 · E11 → E0 — two-sum + is-anagram (5 langs) + fixtures test + README + ab-check migration | 4 | sonnet | `<KEY>` | todo | Serial: artifacts first, then the recursive glob test guarding all of them |
+| E2–E5 — lodash · numpy · serde_json · java-negative | 8 | sonnet | `<KEY>` | todo | Under `function/libs/`; T21 clicks through these exact files |
 | E6–E8 — lru-cache · mutates · stdio | 12 | sonnet | `<KEY>` | todo | T29 material; interpreted + compiled each |
-| E9–E10 — project · service artifacts | spike | spike | — | deferred | Spike deliverables — a concrete artifact forces the contract to confess its gaps |
+| E9 · E10 · E12 — react project · fastapi+react · node+react (TS) | spike | spike | — | deferred | Spike deliverables — a concrete artifact forces the contract to confess its gaps |
+
+Vault deployment: repo `examples/leetcode/` is the source of truth; the F5 gates copy it to
+`/Users/nick/N0t3s/C0d3-Sn1pp3ts/LeetCode/` (taxonomy in [examples.md](examples.md); requires
+T30's recursive picker).
 
 ### Phases 3–4
 

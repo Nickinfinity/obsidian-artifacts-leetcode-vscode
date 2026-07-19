@@ -116,7 +116,8 @@ Phases 3–4 do **not** — see step 6.
   programs), T10 (allowlist — the boundary itself), T11 (untrusted `.md` parse), T12 (argv
   installs via `execFile`), T13 (env failure mapping), T15 (webview interpolation — `escHtml`),
   T16 (`vm` sandbox widening — `require` only), T19 (path containment under `globalStorageUri`),
-  T22 (untrusted `.md` parse — new case schemas), T27 (per-case stdin fed to child processes).
+  T22 (untrusted `.md` parse — new case schemas), T27 (per-case stdin fed to child processes),
+  T30 (recursive vault walk — symlink containment under the `LeetCode/` root).
   Their Test-first includes a hostile input; their review verdict names the attack surface.
 - **Review:** max 2 `CHANGES` rounds per task, then `ESCALATE`; verdicts and round counts go in
   the ledger Notes column.
@@ -357,10 +358,32 @@ vm.runInContext(js, ctx);   // pull the function off the sandbox, exactly as the
   TypeScript's Node-version gate. Where doc and parser disagree, the parser wins.
 - **Gate:** `pnpm lint`.
 
+### T30 — Recursive exercise discovery (vault folders)
+
+The example taxonomy ([examples.md](examples.md)) organises the vault's `LeetCode/` into
+type/topic folders — and the picker is **flat** today:
+[leetcode.command.ts:64-71](../../../src/commands/leetcode.command.ts#L64-L71) filters
+`FileType.File` in one `readDirectory` call, so a subfolder is invisible. This task must land
+before the first E-task deploys.
+
+- **Owns:** `src/commands/leetcode.command.ts` (`pickLeetCodeFile`),
+  `src/commands/quickpick-item.helpers.ts`, `test/leetcode-quickpick.test.ts`
+- **Depends on:** none — pure discovery change, independent of languages
+- **Test first:** the pure helper, given a nested entry tree, returns every `.md` at any depth
+  with its vault-relative path; the QuickPick item's `description` carries the folder path as
+  the category label (`function/arrays`).
+- **Done when:** nested `.md` files are discovered and labelled; a **flat vault behaves
+  byte-identically to today** (the existing single-file vault is the regression case);
+  symlinked directories are **not** followed — recursion must stay under the validated
+  `LeetCode/` root (path-containment rule, security-critical).
+- **Gate:** full gate.
+
 ### T9 — F5 manual pass (Phase 1) — human
 
-- **Depends on:** T1–T8, E1. Orchestrator: stop and hand the user this click-path against
-  `examples/leetcode/two-sum.md` (E1), **run twice — once Rust, once TypeScript**:
+- **Depends on:** T1–T8, T30, E1. Orchestrator: stop, have the user deploy `examples/leetcode/`
+  to the vault (`/Users/nick/N0t3s/C0d3-Sn1pp3ts/LeetCode/`), then hand them this click-path
+  against `function/arrays/two-sum.md` (E1) — the folder path also proves T30's recursive
+  picker — **run twice — once Rust, once TypeScript**:
 - Open Exercise → selector offers the language → Solve It → temp file opens with the right
   extension and a typed starter → passing solution → Run Tests green → break one case → Run Tests
   shows **one** red, others green (proves per-case isolation) → fix → Submit → `status: solved` +
@@ -910,7 +933,7 @@ every wave close.
 |---|---|---|---|
 | 0 | T0 | orchestrator | — (golden must pass untouched) |
 | 1 | T1 | orchestrator | — (`tsc` green gates all fan-out) |
-| 2 | T2 · T3 · T5 | 3 × sonnet | — |
+| 2 | T2 · T3 · T5 · T30 | 4 × sonnet | — |
 | 3 | T4 · T6 · T7 | 3 × sonnet | `register()` lines + imports for both envs in `env.registry.ts` |
 | 4 | T8 · T10 · E1→E0 | 3 × sonnet **+ human T9** | — |
 | 5 | T11 · T12 | 2 × sonnet | — |
