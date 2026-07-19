@@ -20,13 +20,13 @@ Gate baseline at branch point: **509 passing** (`93219e0`, post-PR-#2).
 |------|------|-------|------|--------|-------|------|-------|
 | T0 — extract per-language codegen | 0 | orchestrator | `<KEY>` | **done** | 509 → 509 | pass | Golden net passed **untouched**. Import cycle service↔codegen verified safe from both entry directions (`9165306`) |
 | T1 — widen registry, stubs wired | 1 | orchestrator | `<KEY>` | **done** | 509 → 511 | pass | Stubs return `''`; `tsc --noEmit` clean. Only `Record<LangId,…>` site was `LANG_CODEGEN` — no hidden fan-out (`5721f1e`) |
-| T2 — `jsonToLiteral` Rust branch | 2 | sonnet | `<KEY>` | wip | — | — | TS needs none — falls through to JS path |
-| T3 — TypeScript codegen row | 2 | sonnet | `<KEY>` | wip | — | — | Own test file; typed signature is the point |
-| T5 — big-O Rust patterns | 2 | sonnet | `<KEY>` | wip | — | — | Orchestrator pre-verified: heuristic **is** language-agnostic (`toSupportedLang` = `isLangId`). Dispatched verify-first |
+| T2 — `jsonToLiteral` Rust branch | 2 | sonnet | `<KEY>` | **done** | → 551 | pass | **2 review rounds.** `CHANGES`: JSON escaping emits `\b`/`\f`/unbraced `\uXXXX` — all rustc errors (reviewer proved with real `rustc`); `undefined` left non-rust while `null` was fixed. Both closed via char-by-char `rustEscape` |
+| T3 — TypeScript codegen row | 2 | sonnet | `<KEY>` | **done** | → 551 | pass | 1 round. Out-of-Owns edit to `leetcode-exercise-file.test.ts` — accepted, then **replaced** by orchestrator (see Decisions: it was a wave-3 landmine) |
+| T5 — big-O Rust patterns | 2 | sonnet | `<KEY>` | **done** | → 551 | pass | **NOT dropped** — premise was wrong. Orchestrator found 3 further defects post-report (`loop {}`, labels, and `'` stripping) and resolved them inline |
 | T4 — Rust codegen row | 3 | sonnet | `<KEY>` | todo | — | — | Trails T2: harness renders args via rust literals |
 | T6 — `function × rust` env | 3 | sonnet | `<KEY>` | todo | — | — | Registration = orchestrator at wave close |
 | T7 — `function × typescript` env | 3 | sonnet | `<KEY>` | todo | — | — | JS env + strip call; `detect()` gates Node ≥ 22.18 |
-| T30 — recursive exercise discovery | 2 | sonnet | `<KEY>` | wip | — | — | **Security-critical** (symlink containment); flat vault byte-identical |
+| T30 — recursive exercise discovery | 2 | sonnet | `<KEY>` | **done** | → 551 | pass | **Security-critical — APPROVE, 0 rounds.** Symlinked dirs never descended (`readDir` never invoked); hostile test spy-counts non-invocation and would surface a planted `secrets.md`. Logic in the pure `vscode`-free helper, command layer a thin closure |
 | T8 — docs Phase 1 | 4 | sonnet | `<KEY>` | todo | — | — | Format spec + `CLAUDE.md` |
 | T9 — F5 Phase 1 | 4 | **human** | `<KEY>` | todo | — | — | Deploy examples to vault first; folder path proves T30. Twice: Rust, TypeScript |
 
@@ -92,6 +92,7 @@ deleting a test is allowed only loudly, with the relocated assertion named in th
 | 2026-07-19 | pre-flight verify | 509 | pass | clean | Ledger baseline confirmed against the tree before any dispatch |
 | 2026-07-19 | 0 (T0) | 509 | pass | clean | green — golden byte-identical, count unchanged as specified |
 | 2026-07-19 | 1 (T1) | 511 | pass | clean | green — +2 (rust/typescript registry assertions) |
+| 2026-07-19 | 2 (T2·T3·T5·T30) | 551 | pass | clean | green — +40. Golden byte-identical throughout (`eb7c36e`) |
 
 ---
 
@@ -127,6 +128,11 @@ find later.
 | 2026-07-19 | T0 | Service↔codegen import cycle accepted rather than designed away | Plan pins `jsonToLiteral`/`mapType` in the service and assigns that family to T2, so relocating them would break T2's Owns. Cycle verified safe empirically from **both** entry directions (a worker's own test file may import a codegen module first) |
 | 2026-07-19 | T1 | Big-O heuristic's supported set is `isLangId` — widening `LangId` auto-enrolled rust+typescript | Found by the compiler-free path: `tsc` was clean, the **test suite** caught it. Its hardcoded "only java, python, and javascript" message was drift; now derived from `LANG_IDS` per the no-inline-language-lists rule |
 | 2026-07-19 | T1 | T1 edited `test/leetcode-bigo.test.ts` (T5's Owns) — minimal fixture fix only | The file used `rust` as its *unsupported-language* example, so T1 could not leave the tree green without touching it. T5 was dispatched with this stated; ownership otherwise intact |
+| 2026-07-19 | **wave 2** | **Reviewer agent was stopped by the user mid-wave; orchestrator completed T3/T5/T30 review inline** | Killed agent was not respawned. T2 got a full independent two-round review before the stop; T3/T5/T30 did not. **This is the wave's weakest link — the independent-review leg is missing for three tasks, on top of the missing sonar leg** |
+| 2026-07-19 | T5 | Three defects found by the orchestrator **after** the worker reported done, all fixed inline rather than re-dispatched | Worker's fix was correct but incomplete. Probing it (not trusting it) found: bare `loop { }` unrecognised; labelled loops unrecognised; and `stripCLikeComments` treating Rust's `'` as a string quote. Fixed inline because the diff was ~20 lines and an agent had just been stopped — recorded because it bypassed the review loop |
+| 2026-07-19 | T5 | **`stripCLikeComments` blanked Rust source after any loop label** | Root cause, and the most damaging find of the wave: a label is an *odd* `'`, so everything to end-of-source was blanked and real work graded `O(1)`. Lifetimes (`&'a str`) escaped only because they pair up. Now resolved per language by `SingleQuoteRole`; a JS single-quoted-string test guards the regression |
+| 2026-07-19 | T3 | Out-of-Owns edit accepted, then **replaced** by the orchestrator | T3 swapped the "no setup, no template" fixture from `typescript` to `rust` — correct today, but rust gets a template in **T4, next wave**, so it was a guaranteed wave-3 breakage. Now names `ruby` (a non-`LangId`), which is what the test's intent actually requires and is stable permanently |
+| 2026-07-19 | T30 | Symlinked **files** named `.md` are still listed; only symlinked *directories* are gated | Matches the plan's stated rule, which names directories. Accepted ceiling: the vault is the user's own, content is already treated as untrusted, and webview output goes through `escHtml`. Revisit if vaults ever become shared |
 | 2026-07-19 | T1 | Pre-existing `typescript:S8786` (super-linear regex backtracking) on `MAP_RE` in `leetcode-codegen.service.ts` left unfixed | Predates this branch and sits outside T1's Owns; `MAP_RE` parses artifact-frontmatter type strings, which **are** untrusted input, so this wants its own task rather than a drive-by fix |
 
 ---
