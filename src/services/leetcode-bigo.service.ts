@@ -5,6 +5,7 @@ import {
 	isSelfRecursive,
 	scanBraceLoops,
 	scanPythonLoops,
+	type SingleQuoteRole,
 	stripCLikeComments,
 	stripPythonComments,
 } from './leetcode-bigo.helpers.js';
@@ -50,7 +51,12 @@ export function estimateBigO(code: string, langId: string, functionName?: string
 		};
 	}
 
-	const cleaned = lang === 'python' ? stripPythonComments(code) : stripCLikeComments(code);
+	// Rust's `'` is a lifetime/label sigil far more often than a char quote;
+	// stripping it as a quote blanks the rest of the function.
+	const singleQuote: SingleQuoteRole = lang === 'rust' ? 'char-or-lifetime' : 'string';
+	const cleaned = lang === 'python'
+		? stripPythonComments(code)
+		: stripCLikeComments(code, singleQuote);
 
 	const recursive = !!functionName && isSelfRecursive(cleaned, functionName);
 	const memoized = recursive && hasMemoIndicator(cleaned);

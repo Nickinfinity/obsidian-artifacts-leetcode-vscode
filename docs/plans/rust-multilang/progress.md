@@ -18,15 +18,15 @@ Gate baseline at branch point: **509 passing** (`93219e0`, post-PR-#2).
 
 | Task | Wave | Agent | Jira | Status | Tests | Gate | Notes |
 |------|------|-------|------|--------|-------|------|-------|
-| T0 — extract per-language codegen | 0 | orchestrator | `<KEY>` | todo | 509 → — | — | Golden net passes **untouched** |
-| T1 — widen registry, stubs wired | 1 | orchestrator | `<KEY>` | todo | — | — | Stubs return `''` (pre-widening fallback); `tsc` green gates fan-out |
-| T2 — `jsonToLiteral` Rust branch | 2 | sonnet | `<KEY>` | todo | — | — | TS needs none — falls through to JS path |
-| T3 — TypeScript codegen row | 2 | sonnet | `<KEY>` | todo | — | — | Own test file; typed signature is the point |
-| T5 — big-O Rust patterns | 2 | sonnet | `<KEY>` | todo | — | — | May close `dropped` if heuristic already language-agnostic — verify first |
+| T0 — extract per-language codegen | 0 | orchestrator | `<KEY>` | **done** | 509 → 509 | pass | Golden net passed **untouched**. Import cycle service↔codegen verified safe from both entry directions (`9165306`) |
+| T1 — widen registry, stubs wired | 1 | orchestrator | `<KEY>` | **done** | 509 → 511 | pass | Stubs return `''`; `tsc --noEmit` clean. Only `Record<LangId,…>` site was `LANG_CODEGEN` — no hidden fan-out (`5721f1e`) |
+| T2 — `jsonToLiteral` Rust branch | 2 | sonnet | `<KEY>` | wip | — | — | TS needs none — falls through to JS path |
+| T3 — TypeScript codegen row | 2 | sonnet | `<KEY>` | wip | — | — | Own test file; typed signature is the point |
+| T5 — big-O Rust patterns | 2 | sonnet | `<KEY>` | wip | — | — | Orchestrator pre-verified: heuristic **is** language-agnostic (`toSupportedLang` = `isLangId`). Dispatched verify-first |
 | T4 — Rust codegen row | 3 | sonnet | `<KEY>` | todo | — | — | Trails T2: harness renders args via rust literals |
 | T6 — `function × rust` env | 3 | sonnet | `<KEY>` | todo | — | — | Registration = orchestrator at wave close |
 | T7 — `function × typescript` env | 3 | sonnet | `<KEY>` | todo | — | — | JS env + strip call; `detect()` gates Node ≥ 22.18 |
-| T30 — recursive exercise discovery | 2 | sonnet | `<KEY>` | todo | — | — | **Security-critical** (symlink containment); flat vault byte-identical |
+| T30 — recursive exercise discovery | 2 | sonnet | `<KEY>` | wip | — | — | **Security-critical** (symlink containment); flat vault byte-identical |
 | T8 — docs Phase 1 | 4 | sonnet | `<KEY>` | todo | — | — | Format spec + `CLAUDE.md` |
 | T9 — F5 Phase 1 | 4 | **human** | `<KEY>` | todo | — | — | Deploy examples to vault first; folder path proves T30. Twice: Rust, TypeScript |
 
@@ -89,6 +89,9 @@ deleting a test is allowed only loudly, with the relocated assertion named in th
 | Date | Wave | Tests | Lint | tsc | Result |
 |------|------|-------|------|-----|--------|
 | — | baseline `93219e0` | 509 | pass | clean | baseline |
+| 2026-07-19 | pre-flight verify | 509 | pass | clean | Ledger baseline confirmed against the tree before any dispatch |
+| 2026-07-19 | 0 (T0) | 509 | pass | clean | green — golden byte-identical, count unchanged as specified |
+| 2026-07-19 | 1 (T1) | 511 | pass | clean | green — +2 (rust/typescript registry assertions) |
 
 ---
 
@@ -120,6 +123,11 @@ find later.
 | 2026-07-19 | §5 | `class` emits one sentinel line per case, `actual` = canonical array of op results | `parseSentinelLines` and `canonicalJson` comparison reused with zero changes |
 | 2026-07-19 | §5 | `stdin-stdout` runs one process per case | stdin is consumed once per process; compile still once per suite. The never-read-stdin rule is function-env-local, not global |
 | 2026-07-19 | §6 | `build` check kind added (Phase 3) | A compiling React/TS project catches most real errors with no browser; reuses T10/T12 argv rules wholesale |
+| 2026-07-19 | **execution** | **`sonar-analyze` is UNAVAILABLE in this environment** — no `mcp__sonarqube__*` tools registered and no `sonar` CLI on PATH. Every task's sonar gate degrades to `pnpm lint` + VS Code IDE Sonar diagnostics (which *are* live and rule-tagged, e.g. `typescript:S8786`) | Plan mandates sonar on T10/T16/T22/T27 and on every non-trivial diff. Recorded rather than silently skipped: the security-critical Phase 2/2.5 tasks lose one of their two independent checks, so the reviewer's §5 pass carries that weight alone. **Human decision needed before wave 4** (first security-critical task, T10) |
+| 2026-07-19 | T0 | Service↔codegen import cycle accepted rather than designed away | Plan pins `jsonToLiteral`/`mapType` in the service and assigns that family to T2, so relocating them would break T2's Owns. Cycle verified safe empirically from **both** entry directions (a worker's own test file may import a codegen module first) |
+| 2026-07-19 | T1 | Big-O heuristic's supported set is `isLangId` — widening `LangId` auto-enrolled rust+typescript | Found by the compiler-free path: `tsc` was clean, the **test suite** caught it. Its hardcoded "only java, python, and javascript" message was drift; now derived from `LANG_IDS` per the no-inline-language-lists rule |
+| 2026-07-19 | T1 | T1 edited `test/leetcode-bigo.test.ts` (T5's Owns) — minimal fixture fix only | The file used `rust` as its *unsupported-language* example, so T1 could not leave the tree green without touching it. T5 was dispatched with this stated; ownership otherwise intact |
+| 2026-07-19 | T1 | Pre-existing `typescript:S8786` (super-linear regex backtracking) on `MAP_RE` in `leetcode-codegen.service.ts` left unfixed | Predates this branch and sits outside T1's Owns; `MAP_RE` parses artifact-frontmatter type strings, which **are** untrusted input, so this wants its own task rather than a drive-by fix |
 
 ---
 

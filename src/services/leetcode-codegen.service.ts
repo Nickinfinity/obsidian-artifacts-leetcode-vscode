@@ -166,13 +166,13 @@ const LANG_CODEGEN: Record<LangId, LangCodegen> = {
  * jsonToLiteral([1, 2, 3], 'java');
  */
 export function jsonToLiteral(value: unknown, language: string): string {
-	if (value === null) { return language === 'python' ? 'None' : 'null'; }
+	if (value === null) { return language === 'python' || language === 'rust' ? 'None' : 'null'; }
 	if (typeof value === 'boolean') { return boolLiteral(value, language); }
 	if (typeof value === 'number')  { return String(value); }
-	if (typeof value === 'string')  { return JSON.stringify(value); }
+	if (typeof value === 'string')  { return stringLiteral(value, language); }
 	if (Array.isArray(value))       { return arrayLiteral(value, language); }
 	if (typeof value === 'object')  { return objectLiteral(value as Record<string, unknown>, language); }
-	if (value === undefined)        { return language === 'python' ? 'None' : 'undefined'; }
+	if (value === undefined)        { return language === 'python' || language === 'rust' ? 'None' : 'undefined'; }
 	return JSON.stringify(value);
 }
 
@@ -182,11 +182,73 @@ function boolLiteral(value: boolean, language: string): string {
 	return String(value);
 }
 
+/**
+ * String → a quoted literal, `String::from("…")` for Rust.
+ *
+ * A `&str`-typed param still fails — at compile time, not at `validate` —
+ * because `String::from(…)` always yields an owned `String`; the compiler
+ * error names the mismatch clearly enough to skip a dedicated check here.
+ */
+function stringLiteral(value: string, language: string): string {
+	if (language === 'rust') { return `String::from("${rustEscape(value)}")`; }
+	return JSON.stringify(value);
+}
+
+/** Single-character escapes `rustc` requires literally — not derivable from JSON's. */
+const RUST_CHAR_ESCAPES: Record<string, string> = {
+	'\\': String.raw`\\`,
+	'"': String.raw`\"`,
+	'\n': String.raw`\n`,
+	'\r': String.raw`\r`,
+	'\t': String.raw`\t`,
+	'\0': String.raw`\0`,
+};
+
+/** Prefix for Rust's `\u{…}` code-point escape — pulled out so the interpolated build below stays a single, non-nested template. */
+const RUST_UNICODE_ESCAPE_PREFIX = String.raw`\u{`;
+
+/**
+ * Escape a raw string into the body of a Rust `"…"` literal, one character
+ * at a time.
+ *
+ * Never chain a regex over `JSON.stringify`'s output to get here: JSON
+ * escapes `\b`/`\f` the way Rust doesn't recognise them, but the bigger trap
+ * is `a\b` (a literal backslash followed by the letter b) — its JSON form
+ * `"a\\b"` ends in a `\b` substring that *looks* like the backspace escape
+ * and isn't, so a `.replace(/\\b/g, …)` would silently corrupt it. Building
+ * from the source string's actual characters sidesteps that entirely.
+ *
+ * @param value - Raw string to escape.
+ * @returns Rust literal body, unquoted.
+ *
+ * @example
+ * rustEscape('a\tb'); // → 'a\\tb'
+ */
+function rustEscape(value: string): string {
+	let out = '';
+	for (const ch of value) {
+		const known = RUST_CHAR_ESCAPES[ch];
+		if (known !== undefined) {
+			out += known;
+			continue;
+		}
+		const code = ch.codePointAt(0) ?? 0;
+		out += code < 0x20 || code === 0x7f ? `${RUST_UNICODE_ESCAPE_PREFIX}${code.toString(16)}}` : ch;
+	}
+	return out;
+}
+
 /** Format an array as a language-specific list literal. */
 function arrayLiteral(arr: unknown[], language: string): string {
 	const items = arr.map(x => jsonToLiteral(x, language)).join(', ');
 	if (language === 'java') {
 		return `new ${javaElementType(arr)}[]{${items}}`;
+	}
+	if (language === 'rust') {
+		// ponytail: `vec![]` can't type-infer standalone for an empty array;
+		// upgrade would thread the declared param type through — touches
+		// five languages, not now.
+		return `vec![${items}]`;
 	}
 	return `[${items}]`;
 }
@@ -223,6 +285,12 @@ function javaElementType(arr: unknown[]): string {
 
 /** Format an object as a language-specific dict/object literal. */
 function objectLiteral(obj: Record<string, unknown>, language: string): string {
+	if (language === 'rust') {
+		const entries = Object.entries(obj).map(([k, v]) =>
+			`(${stringLiteral(k, 'rust')}, ${jsonToLiteral(v, language)})`,
+		);
+		return `HashMap::from([${entries.join(', ')}])`;
+	}
 	const pairs = Object.entries(obj).map(([k, v]) =>
 		`${JSON.stringify(k)}: ${jsonToLiteral(v, language)}`,
 	);

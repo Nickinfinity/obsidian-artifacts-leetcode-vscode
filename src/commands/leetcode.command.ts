@@ -3,8 +3,8 @@ import { parseFrontmatterOnly, parseLeetCode } from '../services/leetcode-parser
 import { validateObsidianVault } from '../services/vault.service.js';
 import { getVaultPath } from '../services/vault-path.store.js';
 import type { ParsedLeetCode } from '../types/leetcode.types.js';
-import { buildQuickPickItems } from './quickpick-item.helpers.js';
-import type { QuickPickEntry } from './quickpick-item.helpers.js';
+import { buildQuickPickItems, collectMdFilePaths } from './quickpick-item.helpers.js';
+import type { DirReader, QuickPickEntry } from './quickpick-item.helpers.js';
 
 /** Result of a successful pick — the file that was chosen plus its parsed contents. */
 export interface PickedExercise {
@@ -46,30 +46,36 @@ export async function pickLeetCodeExercise(
 }
 
 /**
- * Walks `rootUri` (one level deep) and lets the user pick a `.md` file.
+ * Recursively walks `rootUri` and lets the user pick a `.md` file at any depth.
  *
  * Each candidate's frontmatter is parsed (via `parseFrontmatterOnly` — the
  * body is never touched, so a large `# Solutions` tree costs nothing here)
  * to enrich the picker with difficulty, solve status, algorithm, and tags.
  *
- * @param rootUri - Folder URI to enumerate.
+ * A symlinked subdirectory is never descended into — `readDirectory` is never
+ * called for one — so recursion stays contained under the validated vault root
+ * (path-containment, security-critical). See `collectMdFilePaths`, the pure,
+ * unit-tested helper that owns this rule.
+ *
+ * @param rootUri - Folder URI to walk.
  * @returns Selected file URI, or `null` when the picker is dismissed.
  *
  * @example
  * await pickLeetCodeFile(vscode.Uri.file('/vault/LeetCode'));
  */
 async function pickLeetCodeFile(rootUri: vscode.Uri): Promise<vscode.Uri | null> {
-	let dirEntries: [string, vscode.FileType][];
+	const readDir: DirReader = relPath => {
+		const dirUri = relPath ? vscode.Uri.joinPath(rootUri, relPath) : rootUri;
+		return vscode.workspace.fs.readDirectory(dirUri);
+	};
+
+	let fileNames: string[];
 	try {
-		dirEntries = await vscode.workspace.fs.readDirectory(rootUri);
+		fileNames = await collectMdFilePaths(readDir);
 	} catch {
 		void vscode.window.showErrorMessage('LeetCode directory is missing from the vault.');
 		return null;
 	}
-
-	const fileNames = dirEntries
-		.filter(([name, type]) => type === vscode.FileType.File && name.endsWith('.md'))
-		.map(([name]) => name);
 	if (fileNames.length === 0) {
 		void vscode.window.showInformationMessage('No LeetCode artifacts found.');
 		return null;
@@ -92,7 +98,8 @@ async function pickLeetCodeFile(rootUri: vscode.Uri): Promise<vscode.Uri | null>
  * Reads and frontmatter-parses one candidate file for the picker.
  *
  * @param rootUri  - LeetCode directory URI.
- * @param fileName - Basename of the `.md` file within it.
+ * @param fileName - Path of the `.md` file relative to it, e.g. `'two-sum.md'` or
+ *   `'function/arrays/two-sum.md'`.
  * @returns A `QuickPickEntry` ready for `buildQuickPickItems`.
  *
  * @example

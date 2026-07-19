@@ -1,8 +1,66 @@
 import type { LeetCodeDifficulty, LeetCodeStatus, LeetCodeSummary } from '../types/leetcode.types.js';
 
+/**
+ * Numeric bits from `vscode.FileType` (`Directory = 2`, `SymbolicLink = 64`), duplicated
+ * here so this module stays `vscode`-free and unit-testable — `vscode` stays at the edges
+ * per CLAUDE.md. `FileType` is a bitmask: a symlinked directory reports as
+ * `Directory | SymbolicLink` (`66`), never a bare `Directory` — callers must test with `&`,
+ * never `===`.
+ */
+export const FILE_TYPE_DIRECTORY = 2;
+export const FILE_TYPE_SYMBOLIC_LINK = 64;
+
+/** One `[name, type]` pair as returned by `vscode.workspace.fs.readDirectory`. */
+export type DirEntry = readonly [name: string, type: number];
+
+/**
+ * Lists one directory's entries by its path relative to the walk root (`''` for the root
+ * itself). The only I/O seam `collectMdFilePaths` uses — production wraps
+ * `vscode.workspace.fs.readDirectory`, tests supply a fixed in-memory table.
+ */
+export type DirReader = (relPath: string) => PromiseLike<readonly DirEntry[]>;
+
+/**
+ * Recursively walks a directory tree via `readDir`, collecting every `.md` file's path
+ * relative to the walk root.
+ *
+ * Symlinked directories are never descended into — `readDir` is simply never called for
+ * one — so a symlink planted under `LeetCode/` cannot walk the recursion outside the
+ * validated vault root (path-containment, security-critical). A flat, single-level vault
+ * (no subfolders) walks exactly as it did before this function existed.
+ *
+ * @param readDir  - Lists one directory's entries by relative path.
+ * @param basePath - Path already descended, relative to the walk root (`''` at the top).
+ * @returns Vault-relative `.md` paths, e.g. `['two-sum.md', 'function/arrays/three-sum.md']`.
+ *
+ * @example
+ * await collectMdFilePaths(readDir); // flat vault → ['two-sum.md']
+ */
+export async function collectMdFilePaths(readDir: DirReader, basePath = ''): Promise<string[]> {
+	const entries = await readDir(basePath);
+	const mdFiles: string[] = [];
+	const subdirs: string[] = [];
+
+	for (const [name, type] of entries) {
+		const relPath = basePath ? `${basePath}/${name}` : name;
+		if ((type & FILE_TYPE_DIRECTORY) !== 0) {
+			if ((type & FILE_TYPE_SYMBOLIC_LINK) === 0) { subdirs.push(relPath); }
+		} else if (name.endsWith('.md')) {
+			mdFiles.push(relPath);
+		}
+	}
+
+	const nested = await Promise.all(subdirs.map(sub => collectMdFilePaths(readDir, sub)));
+	return [...mdFiles, ...nested.flat()];
+}
+
 /** One `{ fileName, parsed }` pair the picker maps into a `QuickPickItemData`. */
 export interface QuickPickEntry {
-	/** `.md` file name (basename, e.g. `'two-sum.md'`) relative to the LeetCode dir */
+	/**
+	 * Vault-relative path to the `.md` file, e.g. `'two-sum.md'` or
+	 * `'function/arrays/two-sum.md'`. The segment before the last `/` (if any) becomes the
+	 * description's category label.
+	 */
 	fileName: string;
 	/** Frontmatter summary — from either the full parse or `parseFrontmatterOnly` */
 	parsed: LeetCodeSummary;
@@ -75,12 +133,20 @@ export function buildQuickPickItems(entries: QuickPickEntry[]): QuickPickItemDat
 /** Build a single `QuickPickItemData` from one `{ fileName, parsed }` pair. */
 function buildQuickPickItem(entry: QuickPickEntry): QuickPickItemData {
 	const { parsed } = entry;
+	const status = `${DIFFICULTY_LABEL[parsed.difficulty]} · ${STATUS_LABEL[parsed.status]}`;
+	const category = categoryOf(entry.fileName);
 	return {
 		label: `$(${STATUS_ICON[parsed.status]}) ${parsed.title}`,
-		description: `${DIFFICULTY_LABEL[parsed.difficulty]} · ${STATUS_LABEL[parsed.status]}`,
+		description: category ? `${category} · ${status}` : status,
 		detail: buildDetail(parsed),
 		fileName: entry.fileName,
 	};
+}
+
+/** Folder path of a vault-relative `.md` path — `''` for a root-level file (flat vault). */
+function categoryOf(fileName: string): string {
+	const slashIndex = fileName.lastIndexOf('/');
+	return slashIndex === -1 ? '' : fileName.slice(0, slashIndex);
 }
 
 /** Build the detail line — `"algorithm · #tag #tag"`, omitting whichever half is absent. */
