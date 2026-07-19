@@ -1,7 +1,7 @@
-# Progress — Rust, TypeScript, Multi-Library, Multi-File, Running Servers
+# Progress — VSX-122
 
 Epic: **[VSX-122](https://dexsys.atlassian.net/browse/VSX-122)** ·
-Branch: `feature/VSX-122_multilib-multilang-support` · Plan: [plan.md](plan.md)
+Branch: `feature/VSX-122_multilib-multilang-support` · Authority: [plan.md](plan.md)
 
 **Owner of this file: the orchestrator only.** Workers report; they never edit the ledger, or two
 of them race on the same table.
@@ -18,48 +18,49 @@ Gate baseline at branch point: **509 passing** (`93219e0`, post-PR-#2).
 
 | Task | Wave | Agent | Jira | Status | Tests | Gate | Notes |
 |------|------|-------|------|--------|-------|------|-------|
-| T0 — extract per-language codegen | 0 | orchestrator | `<KEY>` | todo | 509 → — | — | Golden net must pass **untouched** |
-| T1 — `LangId` += `rust`, `typescript` | 1 | orchestrator | `<KEY>` | todo | — | — | Both in one step; `tsc --noEmit` green gates all fan-out |
-| T2 — `jsonToLiteral` Rust branch | 2 | sonnet | `<KEY>` | todo | — | — | TS needs none — falls through to the JS path |
-| T3 — `LANG_CODEGEN.rust` | 2 | sonnet | `<KEY>` | todo | — | — | Golden cases **added**, never edited |
-| T3b — TS type mapping + codegen row | 2 | sonnet | `<KEY>` | todo | — | — | Orchestrator lands the `PRIMITIVES`/`TYPE_SYNTAX` hunk |
-| T4 — `function × rust` env | 3 | sonnet | `<KEY>` | todo | — | — | `mod solution;`, `{:?}` serialization |
-| T4b — `function × typescript` env | 3 | sonnet | `<KEY>` | todo | — | — | JS env + `stripTypeScriptTypes`; `detect()` gates Node ≥ 22.18 |
-| T5 — big-O Rust patterns | 2 | sonnet | `<KEY>` | todo | — | — | May close `dropped` if the heuristic is already language-agnostic — verify first |
-| T6 — docs | 4 | sonnet | `<KEY>` | todo | — | — | Format spec + `CLAUDE.md` |
-| T7 — F5 manual pass | 4 | human | `<KEY>` | todo | — | — | Run twice: Rust, then TypeScript |
+| T0 — extract per-language codegen | 0 | orchestrator | `<KEY>` | todo | 509 → — | — | Golden net passes **untouched** |
+| T1 — widen registry, stubs wired | 1 | orchestrator | `<KEY>` | todo | — | — | Stubs return `''` (pre-widening fallback); `tsc` green gates fan-out |
+| T2 — `jsonToLiteral` Rust branch | 2 | sonnet | `<KEY>` | todo | — | — | TS needs none — falls through to JS path |
+| T3 — TypeScript codegen row | 2 | sonnet | `<KEY>` | todo | — | — | Own test file; typed signature is the point |
+| T5 — big-O Rust patterns | 2 | sonnet | `<KEY>` | todo | — | — | May close `dropped` if heuristic already language-agnostic — verify first |
+| T4 — Rust codegen row | 3 | sonnet | `<KEY>` | todo | — | — | Trails T2: harness renders args via rust literals |
+| T6 — `function × rust` env | 3 | sonnet | `<KEY>` | todo | — | — | Registration = orchestrator at wave close |
+| T7 — `function × typescript` env | 3 | sonnet | `<KEY>` | todo | — | — | JS env + strip call; `detect()` gates Node ≥ 22.18 |
+| T8 — docs Phase 1 | 4 | sonnet | `<KEY>` | todo | — | — | Format spec + `CLAUDE.md` |
+| T9 — F5 Phase 1 | 4 | **human** | `<KEY>` | todo | — | — | Twice: Rust, TypeScript. Orchestrator stops and asks |
 
 ### Phase 2 — Libraries per exercise
 
 | Task | Wave | Agent | Jira | Status | Tests | Gate | Notes |
 |------|------|-------|------|--------|-------|------|-------|
-| T8 — parse `libs:` (+ reserve `test.runtime`) | 5 | sonnet | `<KEY>` | todo | — | — | Defaults `{}`; malformed never throws |
-| T9 — library-name allowlist | 5 | sonnet | `<KEY>` | todo | — | — | **Security-critical.** Sonar must come back clean |
-| T10 — `install` in emit contract + runner | 6 | sonnet | `<KEY>` | todo | — | — | `execFile` + argv, own 120 s budget, `ENOENT` → named message |
-| T11 — environment cache | 6 | sonnet | `<KEY>` | todo | — | — | SHA-256 of langId + **sorted** list; hands back a dir, nothing more |
-| T12 — JS + TS libraries | 7 | sonnet | `<KEY>` | todo | — | — | Widens the `vm` sandbox — `require` **only** |
-| T13 — Python libraries (venv) | 7 | sonnet | `<KEY>` | todo | — | — | `python3 -m venv`; never `source activate` |
-| T14 — Rust libraries (Cargo) | 7 | sonnet | `<KEY>` | todo | — | — | Bare `rustc` path stays byte-identical; `~/.cargo` untouched |
-| T15 — Java libs unsupported | 7 | sonnet | `<KEY>` | todo | — | — | Explicit message via contract-violation path |
-| T16 — panel lib chips | 8 | sonnet | `<KEY>` | todo | — | — | `vscode`-coupled; F5 verified |
-| T17 — docs | 8 | sonnet | `<KEY>` | todo | — | — | Rewrites the "no runtime dependencies" invariant |
-| T18 — storage sweep + Clear Cache | 8 | sonnet | `<KEY>` | todo | — | — | Absorbs the existing `attempts/` cleanup debt |
+| T10 — library-name allowlist | 4 | sonnet | `<KEY>` | todo | — | — | Pure, no deps — runs alongside T8/T9. **Security-critical** |
+| T11 — parse `libs:`, reserve `test.runtime` | 5 | sonnet | `<KEY>` | todo | — | — | Wires T10 into the parser; format doc same-change |
+| T12 — lib-env cache service | 5 | sonnet | `<KEY>` | todo | — | — | Installs happen **here**, at env build; `ENOENT` → named message; atomic rename |
+| T13 — runner wiring `EnvContext.libDir` | 6 | sonnet | `<KEY>` | todo | — | — | No `EmittedProgram.install`; no-libs path byte-identical |
+| T14 — Java libs non-support | 6 | sonnet | `<KEY>` | todo | — | — | Contract-violation path, honest message |
+| T15 — panel lib chips | 6 | sonnet | `<KEY>` | todo | — | — | `vscode`-coupled; F5 in T21 |
+| T16 — JS + TS libraries | 7 | sonnet | `<KEY>` | todo | — | — | Sandbox gains `require` **only** |
+| T17 — Python libraries (venv) | 7 | sonnet | `<KEY>` | todo | — | — | Invoke `<env>/bin/python3`; never `source activate` |
+| T18 — Rust libraries (Cargo) | 7 | sonnet | `<KEY>` | todo | — | — | Per-run sources + shared `CARGO_TARGET_DIR`; bare path untouched |
+| T19 — storage sweep + Clear Cache | 7 | sonnet | `<KEY>` | todo | — | — | Absorbs `attempts/` cleanup debt; owns `package.json` this wave |
+| T20 — docs Phase 2 | 8 | sonnet | `<KEY>` | todo | — | — | Rewrites the no-runtime-deps invariant |
+| T21 — F5 Phase 2 | 8 | **human** | `<KEY>` | todo | — | — | Install → cache-hit → chips → java message → clear cache |
 
 ### Phases 3–4
 
-Contract-only. No tasks until Phases 1–2 land and the open questions in plan §4 and §5 are
-answered against the real tree.
+Contract-only (plan §5–§6). After Phase 2 closes, the orchestrator amends the contracts against
+the tree, then **stops and presents** — breakdown is a human decision.
 
 ---
 
 ## Gate log
 
-One row per gate run. A test-count drop is a **blocker** until explained — per `CLAUDE.md`,
-deleting a test for deleted code is allowed only loudly, with the relocated assertion named.
+One row per orchestrator gate run (wave close). A count drop is a **blocker** until explained —
+deleting a test is allowed only loudly, with the relocated assertion named in the commit.
 
-| Date | After | Command | Tests | Lint | tsc | Result |
-|------|-------|---------|-------|------|-----|--------|
-| — | branch point `93219e0` | full gate | 509 | pass | clean | baseline |
+| Date | Wave | Tests | Lint | tsc | Result |
+|------|------|-------|------|-----|--------|
+| — | baseline `93219e0` | 509 | pass | clean | baseline |
 
 ---
 
@@ -70,45 +71,48 @@ find later.
 
 | Date | Task | Decision | Why |
 |------|------|----------|-----|
-| 2026-07-19 | — | Local toolchain shell-out over zero-install or Docker | Real Next.js/FastAPI exercises are the point; Docker needs Desktop running, GB images, and seconds of cold start on a suite that grades in ms |
-| 2026-07-19 | — | Cache keyed by **dependency set**, not by exercise | 30 exercises using numpy share one env; conflicting pins hash apart, so version conflict is structurally impossible |
-| 2026-07-19 | — | No uniform "venv abstraction" — each env owns its own primitive | Only Python needs one built; JS, Rust and Java already have or don't need isolation. A 4-field union where one field is ever set is a union pretending to be a struct |
-| 2026-07-19 | — | Toolchain detection = `ENOENT` from the install call | A hand-maintained probe table drifts; `ENOENT` does not |
-| 2026-07-19 | T13 | venv over `pip install --target` | `--target` doesn't isolate from system site-packages and breaks on entry points; venv costs ~2 s, paid once per dep set |
-| 2026-07-19 | T4b | TypeScript via `stripTypeScriptTypes`, not `tsc` | Zero install, no compile step, and it blanks types **with spaces** so error line/column still point at the solver's `.ts`. Verified on Node v26.5.0 before being planned |
-| 2026-07-19 | T4b | No type checking on the default TS path | Grading is behavioural; the solver already gets live errors from tsserver because the temp file has a real `.ts` extension. Opt-in `tsc` arrives in Phase 3, which needs a compiler for `.tsx` anyway |
-| 2026-07-19 | — | Java libraries out of scope through Phase 2 | No transitive resolver in a stock JDK. When asked for: generate a `pom.xml` and shell out to `mvn dependency:copy-dependencies`, never hand-roll a Maven Central fetch |
-| 2026-07-19 | — | Phases 3–4 contract-only | Task breakdown against unknowns produces tasks that get rewritten |
+| 2026-07-19 | — | Local toolchain shell-out over zero-install or Docker | Real Next.js/FastAPI exercises are the point; Docker needs Desktop running, GB images, cold-start seconds on a ms-grade suite |
+| 2026-07-19 | — | Cache keyed by **dependency set**, not exercise | Shared envs; conflicting pins hash apart — version conflict structurally impossible |
+| 2026-07-19 | — | No uniform "venv abstraction" | Only Python needs one built; a 4-field union with one field ever set is a union pretending to be a struct |
+| 2026-07-19 | — | Toolchain detection = `ENOENT` from the install call | A probe table drifts; `ENOENT` does not |
+| 2026-07-19 | T17 | venv over `pip install --target` | `--target` doesn't isolate from system site-packages, breaks entry points |
+| 2026-07-19 | T7 | TS via `stripTypeScriptTypes`, not `tsc` | Zero install; blanks types **with spaces** so error offsets survive. Verified on Node v26.5.0 |
+| 2026-07-19 | T7 | No type checking on default TS path | Grading is behavioural; tsserver gives live errors via the real `.ts` extension; opt-in `tsc` in Phase 3 |
+| 2026-07-19 | — | Java libs out of scope | No transitive resolver in a stock JDK; someday `mvn dependency:copy-dependencies`, never hand-rolled |
 | 2026-07-19 | — | Four epics collapsed into umbrella VSX-122 | One branch, one PR; phases become story groups |
-| 2026-07-19 | — | `docs/` removed from `develop` (`85296fb`, pushed); `origin/main` cleared by the next `develop → main` merge rather than a throwaway PR | develop already carries the deletion, so the release merge removes it automatically. main is 22 commits behind regardless — `docs/` is not what makes it stale. Old plan files recoverable at `f19b365` |
+| 2026-07-19 | — | `docs/` removed from `develop` (`85296fb`, pushed); `origin/main` cleared by next `develop → main` merge | develop carries the deletion; main is 22 behind regardless. Old plan files recoverable at `f19b365` |
+| 2026-07-19 | review | Plan restructured for orchestration: tasks renumbered T0–T21, waves rebuilt | Found: 3 same-wave file collisions (codegen service, `env.registry.ts`, golden/typemap test files), a compile hole between T1 and the codegen rows (fixed with `''` stubs), inverted T-allowlist/parser dependency, same-wave T17←T18 dep |
+| 2026-07-19 | review | Install step moved out of `EmittedProgram` into the cache service; `EnvContext.libDir` instead | Old T10 (install per run, temp dir) contradicted old T11 (cached env dirs) — both could not be true. Rust: per-run sources + `CARGO_TARGET_DIR` because copying sources into a shared cache mutates it per run |
 
 ---
 
 ## `ponytail:` ceilings taken
 
-Deliberate shortcuts with a known limit. Harvest with `/ponytail-debt`; each needs a `ponytail:`
-comment at the code site naming the ceiling and the upgrade path.
+Harvest with `/ponytail-debt`; each needs a `ponytail:` comment at the code site naming ceiling
+and upgrade path.
 
 | Task | Ceiling | Upgrade path |
 |------|---------|--------------|
-| T2 | `[]` → `vec![]` cannot type-infer standalone | Thread the declared param type into the literal emitter |
-| T2 | Strings emit `String::from(…)`; a `&str` param fails at compile, not at `validate` | Type-aware literal emission |
-| T4 | `{:?}` Debug serialization — no structs, no enums | `serde_json`, once T14 gives Rust a dependency path |
-| T4b | Erasable syntax only — no `enum`, `namespace`, parameter properties, decorators | `tsc` from an env, arriving in Phase 3 |
-| T4b | No type checking on the default path | Opt-in `libs.typescript: ["typescript"]` + a `tsc` pass |
-| T18 | Size budget is a constant (2 GB), not a setting | A configuration contribution, when someone wants a different number |
+| T2 | `[]` → `vec![]` cannot type-infer standalone | Thread the declared param type into the emitter |
+| T2 | `String::from(…)`; a `&str` param fails at compile, not `validate` | Type-aware literal emission |
+| T6 | `{:?}` Debug — no structs, no enums | `serde_json` via T18's Cargo path |
+| T7 | Erasable syntax only — no `enum`/`namespace`/param props/decorators | `tsc` from an env, Phase 3 |
+| T7 | No type checking on default path | Opt-in `tsc` pass, Phase 3 |
+| T19 | Size budget a constant (2 GB), not a setting | Configuration contribution when someone wants a different number |
+| T19 | Sweep can theoretically race a live run in another window | Accepted — 30-day threshold makes it practically nil |
 
 ---
 
 ## PR checklist
 
+Mirrors plan §9. The last item is not optional.
+
 - [ ] Gate green, test count recorded and up
 - [ ] `npx tsc --noEmit` clean
 - [ ] `sonar-analyze` clean on every non-trivial diff
-- [ ] F5 manual pass done for every `vscode`-coupled task
+- [ ] F5 passes recorded for T9 and T21
 - [ ] `ARTIFACT_LEETCODE_FILE_FORMAT.md` updated in the same change as any format change
 - [ ] `CLAUDE.md` invariants rewritten (no-runtime-deps, one-temp-file)
-- [ ] Jira stories created under VSX-122, keys filled into this table and
-      [jira-tickets.md](jira-tickets.md)
-- [ ] Anything worth keeping promoted out of `docs/` into `CLAUDE.md` / the format spec / JSDoc
+- [ ] Jira stories created under VSX-122, keys filled here and in jira-tickets.md
+- [ ] Anything worth keeping promoted out of `docs/`
 - [ ] **`git rm -r docs` committed — the PR diff contains no `docs/` path**

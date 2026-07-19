@@ -1,238 +1,224 @@
 # Jira tickets — VSX-122
 
 Epic: **[VSX-122 — Runnable languages & multi-environment LeetCode exercises](https://dexsys.atlassian.net/browse/VSX-122)** ✅ created
-Plan: [plan.md](plan.md) · Ledger: [progress.md](progress.md)
+Authority: [plan.md](plan.md) — **this file is a paste-ready view of its tasks; on any
+disagreement the plan wins and this file is the bug.** Same T-ids as the plan and ledger.
 
-The four phases are **story groups under one epic**, not four epics — one branch,
-`feature/VSX-122_multilib-multilang-support`, one PR.
+Stories are **not yet created**. Create in listed order (= dependency order), all parented to
+VSX-122; fill each `<KEY>` here and in the ledger row. **Never fabricate a key.**
 
-Stories below are **not yet created**. They are ready to create in the listed order, which is also
-dependency order. Fill each `<KEY>` here and in the ledger as it lands. **Never fabricate a key** —
-a placeholder is correct until the ticket exists.
-
-Points are Fibonacci, sized against this repo's history: the services DRY refactor (467 → 509
-tests) was roughly a 13.
+Points are Fibonacci, sized against repo history (the services DRY refactor, 467 → 509 tests,
+was roughly a 13).
 
 ---
 
 ## Phase 1 — Rust and TypeScript as runnable languages
 
-### `<KEY>` · Extract per-language codegen into sibling modules · 3
+### `<KEY>` · T0 Extract per-language codegen into sibling modules · 3
 
-`leetcode-codegen.service.ts` is 355 lines holding two dispatch tables *and* six per-language
-template functions. Rust plus TypeScript push it past the 500-line split threshold in `CLAUDE.md`,
-and force three otherwise-parallel stories to contend for one file. Extract `java` / `python` /
-`javascript` templates into `src/services/codegen/*.codegen.ts`.
+`leetcode-codegen.service.ts` (355 L) holds two dispatch tables and six per-language template
+functions; two new languages push it past the 500-line split threshold and make every Phase 1
+task contend for one file. Extract `java`/`python`/`javascript` templates into
+`src/services/codegen/*.codegen.ts`.
 
-**AC** — Behaviour-preserving: `test/leetcode-codegen-golden.test.ts` passes **byte-identical and
-unmodified**; editing a golden assertion invalidates the story. Test count unchanged. Gate green.
+**AC** — Behaviour-preserving: golden test passes **byte-identical and unmodified**. Test count
+unchanged. Gate green.
 
-### `<KEY>` · Register `rust` and `typescript` in the language registry · 2
+### `<KEY>` · T1 Widen the language registry with stubs · 3
 
-Add both to `LangId` and `LANGUAGES`. Rust: `detectCmd: 'rustc --version'`, ext `rs`. TypeScript:
-`detectCmd: 'node --version'` — **not `tsc`**, because the default path never invokes a compiler.
-Both land in one step; they widen the same union and splitting them pays the same breakage twice.
+Add `rust` + `typescript` to `LangId`/`LANGUAGES` (rust: `rustc --version`/`rs`; typescript:
+`node --version`/`ts` — **node, not tsc**: the default path never invokes a compiler). Add the
+TypeScript `PRIMITIVES`/`TYPE_SYNTAX` columns. Land **stub** `rust.codegen.ts` /
+`typescript.codegen.ts` returning `''` — the exact pre-widening fallback — with their
+`LANG_CODEGEN` rows, so the tree compiles and behaves identically until the real templates land
+and later tasks own only their sibling file.
 
-**AC** — `npx tsc --noEmit` clean. The existing consistency test covers both automatically
-(`fileExt === LANG_EXT[id]`, every alias in `LANG_ALIAS`); if it does not, that is a bug in the
-consistency test and is fixed here. Do not work from a predicted list of break sites — `tsc`
-enumerates them.
+**AC** — `npx tsc --noEmit` clean; consistency test covers both languages (fixed here if it does
+not). Neither language user-visible yet — the selector is driven by the env registry, which has
+no envs until T6/T7.
 
-### `<KEY>` · Rust literals in `jsonToLiteral` · 3
+### `<KEY>` · T2 Rust literals in `jsonToLiteral` · 3
 
-No Rust branch exists, so an array argument emits `[1, 2]` — a fixed-size `[i32; 2]`, not the
-`Vec<i32>` the type mapping promises. TypeScript needs no branch; it falls through to the
-JavaScript path, which is already correct.
+No Rust branch exists: arrays emit `[1, 2]` — a fixed-size `[i32; 2]`, not the `Vec<i32>` the
+type mapping promises. TypeScript needs no branch (falls through to the JS path).
 
-**AC** — Arrays → `vec![…]`, nested → `vec![vec![1, 2]]`; strings → `String::from("…")`; objects →
-`HashMap::from([…])`. Two ceilings carry `ponytail:` comments: empty `vec![]` cannot type-infer
-standalone, and a `&str` parameter fails at compile rather than at `validate`.
+**AC** — Arrays → `vec![…]` (nested `vec![vec![1, 2]]`); strings → `String::from("…")`; objects →
+`HashMap::from([…])`; `null` → `None`. Two `ponytail:` ceilings at the emit site: empty `vec![]`
+cannot type-infer; `&str` params fail at compile, not `validate`.
 
-### `<KEY>` · Rust codegen row · 3
+### `<KEY>` · T3 TypeScript codegen row · 3
 
-`src/services/codegen/rust.codegen.ts` + the `LANG_CODEGEN.rust` row: a stdin wrapper carrying
-`<<SOLUTION>>`, and an `assert_eq!`-based harness.
+Replace the T1 stub in `typescript.codegen.ts`. Boilerplate emits a **typed** signature from
+`mapType` — the entire reason to offer TypeScript over JavaScript.
 
-**AC** — `generateBoilerplate(parsed, 'rust')` contains `fn <name>(`, the `mapType`-derived
-signature, exactly one `SOLUTION_MARKER`. Golden cases **added**, existing ones untouched.
+**AC** — `generateBoilerplate(parsed, 'typescript')` contains the mapped signature and exactly one
+`SOLUTION_MARKER`. Golden-style asserts live in `test/leetcode-codegen-typescript.test.ts` — its
+**own** file, never appended to the shared golden file.
 
-### `<KEY>` · TypeScript type mapping and codegen row · 3
+### `<KEY>` · T4 Rust codegen row · 3
 
-`PRIMITIVES` and `TYPE_SYNTAX` TypeScript columns (mirroring JavaScript's `number`/`string`/
-`boolean`, `T[]`, `Record<K, V>`) plus `LANG_CODEGEN.typescript`.
+Replace the T1 stub in `rust.codegen.ts`: stdin wrapper (`std::io::stdin().read_line`) carrying
+`<<SOLUTION>>`; `assert_eq!` harness. Depends on T2 — the harness renders case args through
+`jsonToLiteral(…, 'rust')`.
 
-**AC** — `mapType('map<string,int>', 'typescript') === 'Record<string, number>'`; boilerplate emits
-a **typed** signature, which is the entire reason to offer TypeScript over JavaScript. The shared
-`PRIMITIVES`/`TYPE_SYNTAX` hunk is landed by the orchestrator, not this story's agent.
+**AC** — Boilerplate contains `fn <name>(`, mapped signature, one marker. Asserts in
+`test/leetcode-codegen-rust.test.ts`, own file.
 
-### `<KEY>` · `function × rust` test environment · 5
+### `<KEY>` · T5 Big-O heuristic: Rust patterns · 2
 
-Built via `makeFunctionEnv`. Candidate written **verbatim** as `solution.rs`; a generated
-`runner.rs` declares `mod solution;` so `rustc` links it as a second compilation unit — the same
-non-splicing model Java uses.
+**AC** — Nested `for i in 0..n { for j in 0..n { … } }` classifies `O(n²)` — **or** the story
+closes *Won't Do* with the finding that the heuristic is already language-agnostic, recorded in
+the ledger. Verify against the tree before writing a branch a matcher never needed. TypeScript
+needs nothing.
 
-Settled, do not re-litigate: `rustc -O runner.rs -o runner` / `./runner`; `candidateContent`
-rewrites a leading `fn <name>` → `pub fn <name>` with one anchored regex (module items need `pub`,
-and demanding it from the solver is a hostile contract for a detail the driver invented);
-`validate` rejects a candidate with no top-level `fn <name>(`; serialization is `{:?}` Debug with
-**no serde**, since `Vec`, `String`, numbers, `bool` and `HashMap<String, _>` all Debug-print as
-valid JSON and `canonicalJson` sorts key order extension-side; per-case isolation via
-`panic::catch_unwind(AssertUnwindSafe(…))` with a no-op `panic::set_hook`; `flush()` per sentinel
-line because Rust block-buffers a piped stdout.
+### `<KEY>` · T6 `function × rust` test environment · 5
 
-**AC** — `emit` returns `['solution.rs', 'runner.rs']` with those commands. A panicking case
-reports `error` for itself only. `languagesForType('function')` includes `rust`. The `{:?}` ceiling
-carries a `ponytail:` comment naming serde as the upgrade path. Gate green **plus** an end-to-end
-two-case Rust run via F5.
+Via `makeFunctionEnv`. Candidate **verbatim** as `solution.rs`; generated `runner.rs` declares
+`mod solution;` — `rustc` links two units, the Java model, never splicing.
 
-### `<KEY>` · `function × typescript` test environment · 3
+Settled, do not re-litigate: `rustc -O runner.rs -o runner` / `./runner`; leading `fn <name>` →
+`pub fn <name>` by one anchored regex (module items need `pub`; demanding it from the solver is a
+hostile contract for a driver-invented detail); `validate` rejects no-top-level-`fn` with the
+Python env's message shape; `{:?}` Debug serialization, **no serde** (all supported shapes
+Debug-print valid JSON; `canonicalJson` sorts HashMap order extension-side; `ponytail:` ceiling —
+no structs/enums, upgrade serde via T18); `panic::catch_unwind` per case with a no-op
+`panic::set_hook`; `flush()` per sentinel line (Rust block-buffers piped stdout).
 
-This env is the JavaScript env plus one call:
+**AC** — `emit` returns `['solution.rs', 'runner.rs']` with those commands; a panicking case
+fails alone. **Registration is the orchestrator's** (`env.registry.ts` is single-writer);
+afterwards `languagesForType('function')` = `['java','javascript','python','rust','typescript']`.
+End-to-end two-case run verified in T9.
+
+### `<KEY>` · T7 `function × typescript` test environment · 3
+
+The JavaScript env plus one call — **verified on Node v26.5.0 before planning**:
 
 ```js
 const js = require('node:module').stripTypeScriptTypes(fs.readFileSync('sol.ts', 'utf8'));
 vm.runInContext(js, ctx);
 ```
 
-**Verified working on Node v26.5.0 before being planned.** `stripTypeScriptTypes` blanks types
-**with spaces**, preserving line and column offsets — so a runtime error still points at the
-solver's real `.ts` line, which is why stripping beats transpiling here. No compiler, no install,
-no compile step.
+`stripTypeScriptTypes` blanks types **with spaces** — line/column offsets survive, so runtime
+errors point at the solver's real `.ts` line. No compiler, no install, no compile step.
 
-**AC** — Candidate written verbatim as `sol.ts`. `detect()` gates Node ≥ 22.18 / 23.10 with
-*"TypeScript exercises need Node 22.18 or newer"*. `validate` rejects non-erasable syntax (`enum`,
-`namespace`, parameter properties, decorators) with an honest message rather than a parse dump.
-No type checking on this path, deliberately — grading is behavioural and the solver already gets
-live errors from tsserver, because the temp file has a real `.ts` extension. Gate green + F5.
+**AC** — Candidate verbatim as `sol.ts`. `detect()` gates Node ≥ 22.18/23.10 (*"TypeScript
+exercises need Node 22.18 or newer"*). `validate` rejects non-erasable syntax (`enum`,
+`namespace`, parameter properties, decorators) with an honest message. No type checking,
+deliberately — tsserver gives live errors via the real `.ts` extension; opt-in `tsc` is Phase 3.
+Registration = orchestrator.
 
-### `<KEY>` · Big-O heuristic: Rust loop and recursion patterns · 2
+### `<KEY>` · T8 Document Rust and TypeScript support · 1
 
-**AC** — A nested `for i in 0..n { for j in 0..n { … } }` classifies as `O(n²)` — **or** the story
-closes as *Won't Do* with the finding that the heuristic is already language-agnostic, recorded in
-the ledger. TypeScript needs nothing; its loop syntax is JavaScript's. Verify against the tree
-before writing a branch to a matcher that never needed one.
+**AC** — Format spec lists both languages + both `function` pairs; `CLAUDE.md`'s "four rows"
+section names `src/services/codegen/` and the Node-version gate. Parser wins over doc.
 
-### `<KEY>` · Document Rust and TypeScript support · 1
+### `<KEY>` · T9 F5 manual pass, Phase 1 · 1 · **human**
 
-**AC** — Format spec lists both languages and both `function` pairs; `CLAUDE.md`'s "four rows"
-section names the new `src/services/codegen/` layout and TypeScript's Node-version gate. Where doc
-and parser disagree, the parser wins and the doc is corrected.
+**AC** — Plan §3 T9 click-path, run twice (Rust, TypeScript): solve → run → one broken case fails
+alone → submit → solved + meta, settings restored. Missing `rustc` and old Node produce their
+named messages, never a compiler dump.
 
 ---
 
 ## Phase 2 — Libraries per exercise
 
-### `<KEY>` · Parse the `libs:` block, reserve `test.runtime` · 3
+### `<KEY>` · T10 Library-name allowlist · 3 · **Security**
 
-**AC** — `ParsedLeetCode.libs` defaults to `{}`; a block parses to
-`{ javascript: ['lodash@4.17.21'] }`; malformed input degrades to `{}` and never throws. Unknown
-language keys dropped with a warning. `test.runtime` parses and validates with only `'local'`
-implemented — `'docker'` reserved, self-explaining, exactly like a reserved `test.type`. Format
-spec updated in the same change.
+First user data in this codebase to reach a subprocess as anything but file contents. Pure
+validator: `^@?[a-zA-Z0-9][a-zA-Z0-9._/-]*(@[a-zA-Z0-9.^~*+-]+)?$`.
 
-### `<KEY>` · Library-name allowlist · 3 · **Security**
+**AC** — Pure, `vscode`-free; rejections name the entry. Hostile inputs covered: `;rm -rf /`,
+`../../etc/passwd`, `-rf`, `--target=/etc`, empty string. `sonar-analyze` clean. Wiring into the
+parser belongs to T11, not here.
 
-Library names come from an untrusted `.md` and are the first user data in this codebase to reach a
-subprocess as anything other than file contents. Validate against
-`^@?[a-zA-Z0-9][a-zA-Z0-9._/-]*(@[a-zA-Z0-9.^~*+-]+)?$` at parse time.
+### `<KEY>` · T11 Parse `libs:`, reserve `test.runtime` · 3
 
-**AC** — Pure, `vscode`-free, unit-tested; rejections name the offending entry. Hostile inputs
-covered at minimum: `;rm -rf /`, `../../etc/passwd`, `-rf`, `--target=/etc`, empty string.
-`sonar-analyze` clean.
+**AC** — `ParsedLeetCode.libs` defaults `{}`; malformed degrades to `{}` and never throws;
+allowlist failures surface as parse warnings naming the entry; unknown language keys dropped with
+a warning. `test.runtime` parses with only `'local'` implemented — `'docker'` reserved and
+self-explaining, like a reserved `test.type`. Format spec updated in the same change.
 
-### `<KEY>` · Install step in the emit contract and runner · 5
+### `<KEY>` · T12 Library-environment cache service · 5
 
-`EmittedProgram.install?: { cmd: string; args: string[] }`, run before `compile` with `execFile` —
-**never `exec`**. `CLAUDE.md`'s rule that user data entering a command switches the call to an
-argument array is now mandatory rather than hypothetical.
+`ensureLibEnv(langId, libs)` → env dir at
+`globalStorageUri/libenvs/<langId>-<sha256(langId + sorted pkgs)>/`. **Installs happen here, at
+env build** — `execFile`, cwd = env dir, own ~120 s budget — not per run. Keyed by dependency
+set: shared envs, conflicting pins hash apart, version conflict structurally impossible.
 
-**AC** — Install runs before compile; failure fills every case with `install error: …`, exactly as
-a compile error does. Own ~120 s budget, separate from `cases × timeoutMs`. **`ENOENT` maps to a
-named message** (*"npm not found — install Node.js to run library-backed exercises"*) — that is the
-entire toolchain-detection story, with no second probe table to drift.
+**AC** — Sorted list in the key. Hit skips install and touches `lastUsed`. **`ENOENT` → named
+message** (*"npm not found — install Node.js to run library-backed exercises"*) — the whole
+toolchain-detection story, no probe table. Build into `<key>.tmp-<pid>`, atomic rename, loser
+deletes its tmp (two windows share `globalStorage`). Re-validates names via T10 on entry.
 
-### `<KEY>` · Environment cache keyed by dependency set · 3
+### `<KEY>` · T13 Runner wiring: `EnvContext.libDir` · 3
 
-`globalStorageUri/libenvs/<langId>-<sha256(langId + sorted pkgs)>/`. Keyed by **dependency set, not
-by exercise**: thirty exercises using numpy share one environment, and conflicting version pins
-hash apart automatically, so version conflict is structurally impossible rather than handled.
+**AC** — Runner resolves the env **before** `emit`; `libs` empty → `libDir` undefined and
+behaviour byte-identical to today. Failed build fills every case with `install error: …`, as a
+compile error does. **No `EmittedProgram.install`** — a run gets a ready directory or a mapped
+error.
 
-**AC** — Sorted package list in the key, so `.md` ordering cannot mint a duplicate entry. A hit
-skips the install entirely. The service's only job is *build and hand back a directory* — what to
-do with it belongs to each env.
+### `<KEY>` · T14 Java libraries: explicit non-support · 1
 
-### `<KEY>` · JavaScript and TypeScript libraries · 5 · **Security-sensitive**
+Java has no isolation problem (classpath is per-invocation); it has a resolution problem, and a
+stock JDK resolves nothing transitive.
 
-Generated `package.json` + `npm install --prefix <env>`; the `vm` sandbox gets a `require` from
-`module.createRequire()` rooted at the env. TypeScript inherits this unchanged — same env plus the
-strip call.
+**AC** — `validate` on `libs.java`: *"Library-backed Java exercises are not supported yet —
+remove `libs.java` or solve this in another language."* via the contract-violation path — nothing
+written, nothing run. Someday: `mvn dependency:copy-dependencies` gated on `mvn`; **never** a
+hand-rolled Maven Central fetch (it works until the first transitive dependency, then you are
+writing a POM resolver).
 
-**AC** — `require('lodash')` resolves inside the sandbox. The sandbox gains `require` **only** — no
-`process`, no `fs`, no `child_process`. This is the sharp edge of the phase: the current env
-deliberately runs the candidate in a bare `vm` context with no `require` at all. `sonar-analyze`
-run specifically on this diff, clean. F5 verified.
+### `<KEY>` · T15 Panel: declared libraries · 2
 
-### `<KEY>` · Python libraries via venv · 3
+**AC** — Selected language's libs render as chips near the test-count line; switch swaps; no libs
+→ no empty row; every value through `escHtml`. Pure helpers extracted here are unit-tested; the
+`vscode` layer stays a thin wire. Verified in T21.
 
-`python3 -m venv <env>` then `<env>/bin/pip install …`; the runner is invoked with the venv
-interpreter. Supersedes the earlier `pip install --target` sketch — `--target` does not isolate
-from system site-packages and breaks on entry points.
+### `<KEY>` · T16 JavaScript and TypeScript libraries · 5 · **Security-sensitive**
 
-**AC** — The run command invokes `<env>/bin/python3`, not bare `python3`. **Never `source
-activate` from a subprocess** — choosing the interpreter path *is* activation. F5 with a numpy
-exercise.
+**AC** — With `libDir`, `require('lodash')` resolves via `module.createRequire()` rooted at the
+env; without, emit is byte-identical to Phase 1. Sandbox gains `require` **only** — no `process`,
+`fs`, `child_process`. The sharp edge of the phase: today's env deliberately has no `require` at
+all. `sonar-analyze` on this diff specifically, clean. TypeScript inherits unchanged.
 
-### `<KEY>` · Rust libraries via a Cargo path · 5
+### `<KEY>` · T17 Python libraries via venv · 3
 
-With no `libs.rust`, the bare `rustc` shape is unchanged. With libs, a `Cargo.toml` + `src/`
-layout built with cargo, `--offline` after first fetch.
+**AC** — Run command invokes `<libDir>/bin/python3`, not bare `python3`; unset → byte-identical.
+**Never `source activate` from a subprocess** — the interpreter path *is* activation. (Supersedes
+`pip --target`: no isolation from system site-packages, breaks entry points.)
 
-**AC** — The bare path's emit output is **byte-identical** and its golden assertions untouched. A
-`serde_json` exercise builds and runs. `~/.cargo/registry` is cargo's to manage — never touched by
-our sweep. Library-backed exercises may retire the `{:?}` ceiling; the bare path keeps Debug
-formatting because it still has no dependency to spend.
+### `<KEY>` · T18 Rust libraries via Cargo · 5
 
-### `<KEY>` · Java libraries: explicit non-support · 1
+**AC** — No `libs.rust` → bare `rustc` shape from T6 **unchanged**, asserts untouched. With libs:
+per-run temp Cargo project (sources never copied into the shared cache — that would mutate it per
+run), `CARGO_TARGET_DIR=<libDir>/target` shares incremental builds (cargo does its own locking),
+`--offline` after first fetch. `~/.cargo` is cargo's — never touched. Serde may retire the `{:?}`
+ceiling on this path only.
 
-Java has no *isolation* problem — the classpath is already per-invocation — it has a *resolution*
-problem, and nothing in a stock JDK resolves transitive dependencies.
+### `<KEY>` · T19 Storage sweep + Clear Cache command · 3
 
-**AC** — `validate` on an artifact declaring `libs.java` returns *"Library-backed Java exercises
-are not supported yet — remove `libs.java` or solve this in another language."*, reaching the panel
-through the existing contract-violation path so nothing is written and nothing runs. When this is
-eventually built: generate a `pom.xml` and shell out to `mvn dependency:copy-dependencies`, gated
-on `mvn` being present. **Never hand-roll a Maven Central fetch** — it works until the first
-library with transitive dependencies, at which point you are writing a POM resolver.
+numpy ~60 MB, Next.js `node_modules` ~300 MB — ten sets is gigabytes; unbounded caching is not an
+option at this size class. **Retires existing debt:** `attempts/` cleanup, which `CLAUDE.md`
+deferred to "a future feature" — this is that feature; one sweep service owning everything under
+`globalStorage` is one authority instead of two.
 
-### `<KEY>` · Panel: show declared libraries · 2
+**AC** — `lastUsed` touched on every hit; sweep on `activate()`: unused > 30 days, then
+oldest-first under the size budget; **never** a path outside `globalStorageUri`. `Obsidian
+Artifacts: Clear Exercise Cache` reports bytes reclaimed. `ponytail:` — budget is a 2 GB
+constant; upgrade is a configuration contribution.
 
-**AC** — The selected language's libraries render as chips near the test-count line; switching
-language swaps them; a language with no libs renders no empty row. Every value through `escHtml`.
-Any pure rendering helper extracted here is unit-tested; the `vscode` layer stays a thin wire.
+### `<KEY>` · T20 Document library support · 2
 
-### `<KEY>` · Storage sweep and Clear Cache command · 3
+**AC** — Format spec: `libs:` + allowlist rule + reserved `test.runtime`. `CLAUDE.md`
+no-runtime-deps paragraph rewritten (*extension ships zero; exercises declare their own,
+installed into a cached environment via the user's toolchain*). Runner section documents env
+resolution, build budget, sweep.
 
-numpy is ~60 MB and a Next.js `node_modules` ~300 MB; ten dependency sets is gigabytes, so
-unbounded caching is not an option at this size class.
+### `<KEY>` · T21 F5 manual pass, Phase 2 · 1 · **human**
 
-**This story also retires existing debt.** `attempts/` files already accumulate — `CLAUDE.md` calls
-abandoned files *"an accepted trade-off; cleanup belongs to a future feature."* This is that
-feature, and one sweep service owning everything under `globalStorage` is one authority instead of
-two.
-
-**AC** — A `lastUsed` marker is touched on every cache hit. The sweep runs on `activate()`,
-selecting entries unused > 30 days, then oldest-first until under the size budget, and **never**
-selects a path outside `globalStorageUri` (`~/.cargo` is not ours). `Obsidian Artifacts: Clear
-Exercise Cache` reports bytes reclaimed. The constant budget carries a `ponytail:` comment naming
-a configuration contribution as the upgrade path.
-
-### `<KEY>` · Document library support · 2
-
-**AC** — Format spec covers `libs:` with the allowlist rule and reserved `test.runtime`.
-`CLAUDE.md`'s "No runtime dependencies" paragraph rewritten: *the extension ships zero
-dependencies; an exercise may declare its own, installed into a cached environment using the
-user's local toolchain.* Runner section documents the install step, its separate budget, and the
-sweep.
+**AC** — Plan §4 T21 click-path: lodash/numpy/serde_json exercises run green; first run installs
+visibly, second hits cache; chips swap with language; `libs.java` shows its message; Clear Cache
+reports bytes and next run rebuilds.
 
 ---
 
@@ -240,26 +226,18 @@ sweep.
 
 ### `<KEY>` · Spike: settle the multi-file contract · 5
 
-Contract designed in plan §4: a `## Files` section with `path=` / `role=` fence attributes, an
-`ExerciseFile` type, `EnvContext.code` widened to `files` (with `code` kept as a derived getter so
-the five `function` environments need no change), and `ChallengeSession` moving from one temp file
-to a run directory.
+Contract in plan §5: `## Files` with `path=`/`role=` fence attributes; `ExerciseFile`;
+`EnvContext.code` → `files` with `code` as a derived getter (five `function` envs unchanged);
+`ChallengeSession` → run directory.
 
-**Questions to answer against the real tree**
+**Answer against the real tree:** (1) `buildExecutable` normalisation stays `function`-only?
+(2) dirty buffers vs save-then-grade across N tabs; (3) per-file PracticeMode scope (current
+read: no); (4) real `tsc` arrives here — `.tsx` cannot be type-stripped into a working app; the
+opt-in compile path T7 deferred.
 
-1. Does `buildExecutable`'s candidate normalisation stay `function`-only? (Current read: yes.)
-2. Does Run Tests read every dirty buffer, or save-then-grade-from-disk? Reading buffers is truer
-   to today's model; saving is far simpler across N tabs.
-3. Does PracticeMode need per-file scope? (Current read: no — already global.)
-4. This is where real `tsc` arrives: `.tsx` cannot be type-stripped into a working React app, so
-   `project` exercises get a `typescript`-in-the-env compile step — the opt-in path the Phase 1
-   TypeScript env deferred.
-
-**Output** — plan §4 amended, then stories cut from it.
-
-**Carried into every story that follows:** path traversal is the whole risk surface. Every declared
-`path` is normalised and asserted to stay inside the run directory **before** any write; absolute
-paths, `..` segments and symlink targets rejected at parse time.
+**Output:** plan §5 amended, stories cut from it. **Carried into every story:** path traversal is
+the whole risk surface — normalise + assert containment before any write; absolute, `..`, and
+symlink targets rejected at parse.
 
 ---
 
@@ -267,47 +245,36 @@ paths, `..` segments and symlink targets rejected at parse time.
 
 ### `<KEY>` · Spike: settle the service-lifecycle contract · 8
 
-Contract designed in plan §5: a `services:` block with argv-array `install` / `start`, `${PORT}`
-templating, a `ready` substring, an `exposeAs` variable map, an `envFile` target, and `dependsOn`
-ordering.
+Contract in plan §6: `services:` with argv-array `install`/`start`, `${PORT}` templating (argv
+**and** env var — frameworks disagree), `ready` substring, `exposeAs` variable→template map (the
+extension encodes no framework knowledge), `envFile` written as a Phase-3 `hidden` file **before**
+the dependent boots (Next.js bakes `NEXT_PUBLIC_*` at build time), `dependsOn` ordering.
 
-**Two decisions already taken**
+Already decided: **OS-assigned ports** (bind 0 on `127.0.0.1`, read back, retry `EADDRINUSE` for
+the TOCTOU window; never `0.0.0.0`) — we know the URL before boot, which is what makes injection
+work. **No headless browser** — grading is `fetch`-based from a generated Node driver.
 
-- **Ports are assigned by the OS, not chosen.** Bind port 0 on `127.0.0.1`, read back what the
-  kernel gave, close, then template it into the child's argv and inject it as `PORT`. An
-  "uncommon port" is still a guess; this makes collision structurally impossible. Retry on
-  `EADDRINUSE` covers the small TOCTOU window honestly rather than pretending it isn't there.
-  Never bind `0.0.0.0` — an exercise server has no business being reachable from the network.
-- **No headless browser.** Grading is `fetch`-based assertions from a generated Node driver.
-  Playwright is a ~300 MB install the extension has no path to provide.
+**Answer:** (1) install budget / "preparing exercise" phase with progress + cancellation;
+(2) share the T12 cache or per-exercise `node_modules`; (3) timer pause during boot
+(`LeetCodeTimer` cannot currently pause); (4) `ready`-miss fallback — poll the known URL with
+timeout, then fail loudly **with** captured stdout; (5) force `--host 127.0.0.1` or leave to the
+artifact.
 
-**Questions to answer**
-
-1. Where does the install budget live? A cold `npm ci` on Next.js is minutes, far beyond any
-   grading timeout — likely a separate "preparing exercise" phase with its own progress and
-   cancellation.
-2. Do services share the environment cache, or does `node_modules` per exercise get its own?
-3. What does the timer do while a server boots? Grading time is not solving time, so the clock
-   almost certainly must pause — which `LeetCodeTimer` cannot currently do.
-4. Fallback when `ready` never matches: poll the assigned URL, or fail with captured stdout?
-   Polling is *possible* only because we already know the URL, which we would not if the URL came
-   from stdout.
-
-**Output** — plan §5 amended, then stories cut from it.
+**Output:** plan §6 amended, stories cut from it.
 
 ### `<KEY>` · Service teardown guarantee · 5
 
-The hardest part of this phase is not booting a server — it is making sure one never survives the
-window that spawned it.
+The hard part is not booting a server — it is making sure one never survives the window that
+spawned it.
 
 **AC** — Teardown fires on **all six** exit paths: successful Submit, failed Submit, End
-Challenge, panel dispose, `deactivate()`, and extension-host crash-restart. The **process group**
-is killed, not the pid — a Node dev server forks children that survive a pid-level kill. Verified
-manually: no orphaned process holds a port after each of the six paths.
+Challenge, panel dispose, `deactivate()`, extension-host crash-restart. **Process group** killed,
+not the pid — dev servers fork children that survive a pid-level kill. Verified manually: no
+orphaned process holds a port after each path.
 
 ---
 
 ## Creation order
 
-Phase 1 stories → Phase 2 stories → Phase 3 spike → Phase 4 spike + teardown. All parented to
-VSX-122. Fill each `<KEY>` here and in the matching [progress.md](progress.md) row as it is created.
+Phase 1 (T0–T9) → Phase 2 (T10–T21) → Phase 3 spike → Phase 4 spike + teardown. All parented to
+VSX-122. Fill each `<KEY>` here and in the matching [progress.md](progress.md) row as created.

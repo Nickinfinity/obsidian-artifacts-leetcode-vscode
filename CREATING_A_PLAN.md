@@ -50,6 +50,14 @@ One **orchestrator** (Opus), N **workers** (Sonnet) running in parallel.
   parallelism saved. The orchestrator lands those rows itself, then fans out.
 - The gate run after each wave, and `progress.md`.
 - Merging worker output and resolving contradictions between workers.
+- **Integration hunks.** A worker's feature usually ends in a one-line wire-up inside a shared
+  file (a `register()` call, a table row, an import). Workers deliver their sibling files; the
+  orchestrator lands the wire-up at wave close. Two workers "each adding one line" to the same
+  file is still a collision.
+- **Stub-widening.** When a serial task widens a shared union (`LangId` and every
+  `Record<LangId, …>` behind it), that task also lands compiling stubs that preserve the old
+  fallback behaviour. Otherwise the tree is red between the widening and the real
+  implementations — and parallel successors are forced back into the shared file.
 
 ### Worker — owns
 
@@ -122,6 +130,19 @@ largest cause of a worker producing the wrong thing.
 **Sizing:** one task ≈ one file plus its test. A task that lists four owned files is two
 tasks. A task nobody can verify from `Done when` alone is under-specified.
 
+**Disjointness counts every file** — test files and `package.json` included. Two same-wave
+tasks appending cases to one shared test file collide exactly like two tasks editing one
+service; give each concern its own test file (the repo's `function-env-<lang>.test.ts`
+pattern). And **no task may depend on a task in its own wave** — a same-wave dependency is a
+sequencing bug, not a scheduling detail.
+
+**The plan is the single entry point.** It must open by naming its companion files
+(`progress.md`, `jira-tickets.md`) and declaring itself the authority they derive from, and it
+must contain an **orchestrator protocol section** — read order, per-wave loop, commit policy
+(orchestrator commits per wave; workers never commit), red-gate stop rule, human-gate
+stop-and-ask points — plus a **worker prompt template** the orchestrator copies per dispatch. An
+orchestrator handed the plan alone must need nothing else to start.
+
 ---
 
 ## 6. The gate
@@ -181,7 +202,12 @@ Before any agent is dispatched, the plan must satisfy:
 
 - [ ] Every phase names the **existing** authority it extends, not a new parallel one.
 - [ ] Every task has all six fields from §5.
-- [ ] Every wave's tasks own disjoint file sets.
+- [ ] Every wave's tasks own disjoint file sets — **test files and `package.json` included**.
+- [ ] No task depends on a task in its own wave.
+- [ ] The plan names its companion files, declares itself their authority, and contains the
+      orchestrator protocol + worker prompt template (§5).
+- [ ] Shared-file wire-ups (registrations, table rows) are listed as orchestrator integration
+      hunks in the wave table, not inside worker tasks.
 - [ ] Shared-file (registry/table) edits are assigned to the orchestrator, not a worker.
 - [ ] Every `vscode`-free task names a test file and a first failing assertion.
 - [ ] Every `vscode`-coupled task names its F5 click-path.
