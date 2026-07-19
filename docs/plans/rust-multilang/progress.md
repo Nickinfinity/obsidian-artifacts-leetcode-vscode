@@ -46,10 +46,24 @@ Gate baseline at branch point: **509 passing** (`93219e0`, post-PR-#2).
 | T20 — docs Phase 2 | 8 | sonnet | `<KEY>` | todo | — | — | Rewrites the no-runtime-deps invariant |
 | T21 — F5 Phase 2 | 8 | **human** | `<KEY>` | todo | — | — | Install → cache-hit → chips → java message → clear cache |
 
+### Phase 2.5 — Classic test types
+
+| Task | Wave | Agent | Jira | Status | Tests | Gate | Notes |
+|------|------|-------|------|--------|-------|------|-------|
+| T22 — parse new case schemas | 9 | sonnet | `<KEY>` | todo | — | — | **Security-critical** (untrusted `.md`); `in-place` → pointer message |
+| T23 — `makeClassEnv` factory | 10 | sonnet | `<KEY>` | todo | — | — | Sentinel protocol reused untouched |
+| T26 — `mutates` in function envs | 10 | sonnet | `<KEY>` | todo | — | — | No-modifier path byte-identical |
+| T27 — stdio envs + per-case runner loop | 10 | sonnet | `<KEY>` | todo | — | — | **Security-critical** (per-case stdin); one process per case |
+| T24 — class × py/js/ts | 11 | sonnet | `<KEY>` | todo | — | — | Sizing exception noted in plan |
+| T25 — class × java/rust | 11 | sonnet | `<KEY>` | todo | — | — | Compile once per suite |
+| T28 — docs Phase 2.5 | 12 | sonnet | `<KEY>` | todo | — | — | Case shapes + `mutates` + capability matrix |
+| T29 — F5 Phase 2.5 | 12 | **human** | `<KEY>` | todo | — | — | class + mutates + stdio, interpreted **and** compiled |
+
 ### Phases 3–4
 
-Contract-only (plan §5–§6). After Phase 2 closes, the orchestrator amends the contracts against
-the tree, then **stops and presents** — breakdown is a human decision.
+Contract-only (plan §6–§7, incl. the `CHECK_KINDS` second-level table). After Phase 2.5 closes,
+the orchestrator amends the contracts against the tree, then **stops and presents** — breakdown
+is a human decision.
 
 ---
 
@@ -87,6 +101,11 @@ find later.
 | 2026-07-19 | §5 | `project` has no language selector — aggregate runtime preflight (✓/✗ + install hints) replaces it | Every single-language assumption (selector, `libs[lang]`, `detectRuntime`) breaks when the file set fixes the languages |
 | 2026-07-19 | §5/§6 | Closing any exercise tab → modal → End = full teardown (seventh teardown path). Shared lib envs survive exercise close | Accidental `Cmd+W` must not silently kill a 40-min run with booted servers; deleting shared envs on close would re-pay full installs for nothing — sweep/Clear Cache own env reclamation |
 | 2026-07-19 | §6 | `http` checks run in-host via global `fetch`, not a spawned Node driver | Host is Node ≥ 18: fewer processes, no extra runtime requirement, one less thing to kill |
+| 2026-07-19 | §5 | Test taxonomy is two-level: `test.type` (execution strategy) × `check.kind` (gradeable unit, `project`/`service` only) | One flat list would conflate how an exercise *runs* with what a check *grades* — the split is what prevents a matrix explosion |
+| 2026-07-19 | §5 | `in-place` retired as a type → `test.mutates: <param>` modifier on `function` | Identical execution, different emitted value; kills five duplicate envs. A type is an execution strategy — in-place never was one |
+| 2026-07-19 | §5 | `class` emits one sentinel line per case, `actual` = canonical array of op results | `parseSentinelLines` and `canonicalJson` comparison reused with zero changes |
+| 2026-07-19 | §5 | `stdin-stdout` runs one process per case | stdin is consumed once per process; compile still once per suite. The never-read-stdin rule is function-env-local, not global |
+| 2026-07-19 | §6 | `build` check kind added (Phase 3) | A compiling React/TS project catches most real errors with no browser; reuses T10/T12 argv rules wholesale |
 
 ---
 

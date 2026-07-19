@@ -222,6 +222,65 @@ reports bytes and next run rebuilds.
 
 ---
 
+## Phase 2.5 — Classic test types
+
+### `<KEY>` · T22 Parse the new case schemas · 3 · **Security**
+
+Three schemas: `class` ops-sequence (`{"ops": [...], "args": [...], "expected": [...]}`),
+`test.mutates: <param>` (modifier on `function` — must name a declared param), `stdin-stdout`
+string pairs. The reserved `in-place` type is retired: it parses to a pointer message (*"use
+`test.mutates` on type `function`"*) — it executed identically to `function` and a type is an
+execution strategy, which in-place never was.
+
+**AC** — LRUCache case parses into a typed `ClassCase`; ops/args/expected length mismatch is a
+validation error naming the counts; malformed input degrades and never throws; hostile input
+covered. Format spec updated in the same change.
+
+### `<KEY>` · T23 `makeClassEnv` factory · 3
+
+**AC** — Factory returns `type: 'class'`, two-file emit shape, `parse === parseSentinelLines` —
+the sentinel protocol reused untouched: one line per case, `actual` = canonical JSON **array** of
+op results. Language specs supply only driver source + validate, the `makeFunctionEnv` split.
+
+### `<KEY>` · T24 `class ×` python, javascript, typescript · 3
+
+**AC** — LRUCache case drives instantiation + method calls in order; a throwing op fails its case
+alone; TypeScript = JS spec + strip call. Deliberate sizing exception: three ~80-line cohesive
+specs, one agent.
+
+### `<KEY>` · T25 `class ×` java, rust · 3
+
+**AC** — As T24, compiled once per suite; Rust op results under the same `{:?}` ceiling as T6.
+Registration of all class envs = orchestrator at wave close.
+
+### `<KEY>` · T26 `mutates` in the function envs · 3
+
+**AC** — With `mutates: nums` every driver emits `canonicalJson` of the mutated argument instead
+of the return; without the modifier, emit is **byte-identical** to today (golden-style asserts in
+the new test file).
+
+### `<KEY>` · T27 `stdin-stdout` environments + per-case runner loop · 5 · **Security**
+
+The candidate **is** the program and reads stdin — the never-read-stdin rule is
+function-env-local. One process per case (stdin is consumed once); compile once per suite.
+
+**AC** — Two-case suite spawns two processes, each fed its case's stdin; outputs compared
+trimmed; a hanging case times out alone without killing the suite; candidate written verbatim,
+`buildExecutable` normalisation bypassed for this type; hostile stdin covered.
+
+### `<KEY>` · T28 Document Phase 2.5 · 1
+
+**AC** — Format spec: three case shapes + `mutates` + capability matrix rows for `class` and
+`stdin-stdout`; the in-place retirement recorded.
+
+### `<KEY>` · T29 F5 manual pass, Phase 2.5 · 1 · **human**
+
+**AC** — LRUCache class exercise (one failing op fails one case), a `mutates` exercise (mutated
+array graded, return ignored), a stdio exercise (the solver's `print` **is** the answer), each in
+an interpreted and a compiled language.
+
+---
+
 ## Phase 3 — Multi-file / multi-language exercises
 
 ### `<KEY>` · Spike: settle the multi-file contract · 5
@@ -240,6 +299,11 @@ Already designed in the contract — validate, don't reinvent:
   `kind: function` reuses the five function envs against one file's buffer; cases bind via
   `check=<name>` fence attribute; solved = every check green; unreferenced files are ungraded
   scaffolding, explicitly; `css-assert` is **reserved** — a declared limit beats a fake grade.
+  Kinds live in a `CHECK_KINDS` constants table (`function` + `build` in Phase 3, `http` in
+  Phase 4, `css-assert`/`dom-assert` reserved) with a `checkRunnerFor(kind)` registry mirroring
+  the env registry — absence is the matrix. `build` (declared argv exits 0 — `tsc`, `vite
+  build`) is the React/TS workhorse: a compiling project catches most real errors with no
+  browser, reusing the T10/T12 argv rules wholesale.
 - **Tab lifecycle.** Closing any exercise tab → modal (end or reopen); End → full teardown:
   processes, tabs, run dir. Shared lib envs survive by design — reclaimed by sweep or Clear
   Cache, never by exercise close. Watcher: `window.tabGroups.onDidChangeTabs` filtered by
@@ -296,5 +360,6 @@ orphaned process holds a port after each path.
 
 ## Creation order
 
-Phase 1 (T0–T9) → Phase 2 (T10–T21) → Phase 3 spike → Phase 4 spike + teardown. All parented to
-VSX-122. Fill each `<KEY>` here and in the matching [progress.md](progress.md) row as created.
+Phase 1 (T0–T9) → Phase 2 (T10–T21) → Phase 2.5 (T22–T29) → Phase 3 spike → Phase 4 spike +
+teardown. All parented to VSX-122. Fill each `<KEY>` here and in the matching
+[progress.md](progress.md) row as created.

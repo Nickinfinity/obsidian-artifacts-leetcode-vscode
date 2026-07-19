@@ -9,8 +9,9 @@ disagrees with this plan, this plan wins and the companion is the bug:
 - [progress.md](progress.md) — the ledger. **Orchestrator is its only writer.**
 - [jira-tickets.md](jira-tickets.md) — paste-ready Jira story specs, one per task, same T-ids.
 
-**Depth (agreed):** Phases 1–2 are task-level and agent-ready. Phases 3–4 are **contract-only** —
-task breakdown waits until 1–2 land; planning them today would be planning against unknowns.
+**Depth (agreed):** Phases 1, 2, and 2.5 are task-level and agent-ready. Phases 3–4 are
+**contract-only** — task breakdown waits until the earlier phases land; planning them today would
+be planning against unknowns.
 
 ---
 
@@ -20,6 +21,7 @@ task breakdown waits until 1–2 land; planning them today would be planning aga
 |---|---|---|
 | 1 | **Rust** and **TypeScript** as runnable languages for `test.type: function` | None — the registry was built for this |
 | 2 | **Libraries** per exercise, per language (lodash, numpy, serde_json) | Adds cached library environments; first user data reaching a subprocess argv |
+| 2.5 | **Classic test types** — `class` (method sequences), mutation grading, `stdin-stdout` | None structural — extends `TEST_TYPES` and the env-factory pattern already in place |
 | 3 | **Multi-file / multi-language** exercises (`.tsx` + `.css` + `.py`) | Breaks the one-temp-file challenge model and `EnvContext.code` |
 | 4 | **Running servers** — boot a backend, inject its URL into the frontend invisibly | Breaks the zero-runtime-dependency invariant; adds process lifecycle |
 
@@ -57,8 +59,8 @@ them**, not after.
 Three roles: you are the **orchestrator** (Opus — senior TS tech lead + PM). A **reviewer**
 (Opus — senior TS tech lead, review only) verdicts every worker task. **Workers** are Sonnet.
 The full role prompts live in [CREATING_A_PLAN.md](../../../CREATING_A_PLAN.md) §2 — copy them
-verbatim per dispatch and append the instance parameters below. Phases 1–2 execute; Phases 3–4
-do **not** — see step 6.
+verbatim per dispatch and append the instance parameters below. Phases 1, 2, and 2.5 execute;
+Phases 3–4 do **not** — see step 6.
 
 1. **Read once:** [CREATING_A_PLAN.md](../../../CREATING_A_PLAN.md) (process + the three role
    templates), [progress.md](progress.md) (ledger). `CLAUDE.md` is in your context already; its
@@ -66,7 +68,7 @@ do **not** — see step 6.
 2. **Verify claimed state before acting** (trust the tree): run the gate, confirm the count
    matches the ledger baseline, grep any "already done" claim. Tasks in this repo have turned out
    already done, or deliberately done differently, by the time their plan was read.
-3. **Per wave, in table order (§7) — the review loop:**
+3. **Per wave, in table order (§8) — the review loop:**
    a. **Orchestrator-only work first** — T0, T1, and every *integration hunk* a wave row lists
       (registry `register()` lines, shared-table one-liners). Workers never touch these files.
    b. **Dispatch every worker task in the wave in parallel** (model `sonnet`), each prompt =
@@ -84,16 +86,16 @@ do **not** — see step 6.
       golden assertion is an automatic `CHANGES` regardless of anything else. An open `SEC:`
       finding never expires on the round cap.
    e. **Integrate** the wave's orchestrator hunks once every task is `APPROVE`, then **gate the
-      integrated tree** (§7 command). A red gate stops all dispatch — fix or revert the wave;
+      integrated tree** (§8 command). A red gate stops all dispatch — fix or revert the wave;
       never open the next wave on red.
    f. **Commit once per wave** (workers and reviewer never commit), update ledger rows — status,
       test count, review rounds — and the Decisions table for anything decided that this plan
       did not specify.
-4. **Human gates:** T9 and T21 are F5 manual passes. Stop, hand the user the click-path, record
-   their reported result. Never mark them done yourself.
+4. **Human gates:** T9, T21 and T29 are F5 manual passes. Stop, hand the user the click-path,
+   record their reported result. Never mark them done yourself.
 5. **Jira:** as stories are created from [jira-tickets.md](jira-tickets.md), fill each `<KEY>`
    there and in the ledger row.
-6. **After Phase 2 closes:** amend the §5/§6 contracts against the real tree, then **stop and
+6. **After Phase 2.5 closes:** amend the §6/§7 contracts against the real tree, then **stop and
    present** — their task breakdown is a human decision, not yours.
 
 ### Instance parameters (append to every role template)
@@ -109,7 +111,8 @@ do **not** — see step 6.
 - **Security-critical tasks and their surfaces:** T6/T7 (untrusted candidate code → emitted
   programs), T10 (allowlist — the boundary itself), T11 (untrusted `.md` parse), T12 (argv
   installs via `execFile`), T13 (env failure mapping), T15 (webview interpolation — `escHtml`),
-  T16 (`vm` sandbox widening — `require` only), T19 (path containment under `globalStorageUri`).
+  T16 (`vm` sandbox widening — `require` only), T19 (path containment under `globalStorageUri`),
+  T22 (untrusted `.md` parse — new case schemas), T27 (per-case stdin fed to child processes).
   Their Test-first includes a hostile input; their review verdict names the attack surface.
 - **Review:** max 2 `CHANGES` rounds per task, then `ESCALATE`; verdicts and round counts go in
   the ledger Notes column.
@@ -536,7 +539,149 @@ sweep-vs-live-run race across windows is accepted (a 30-day threshold makes it p
 
 ---
 
-## 5. Phase 3 — Multi-file / multi-language exercises (contract only)
+## 5. Phase 2.5 — Classic test types
+
+The taxonomy has **two levels**, and keeping them separate is what prevents a matrix explosion:
+
+- **`test.type`** (frontmatter) — the *execution strategy* for the whole exercise. Extends the
+  existing `TEST_TYPES` table and its `implemented | reserved` status field; nothing structural
+  changes.
+- **`check.kind`** (Phase 3, inside `project`/`service` only) — one *gradeable unit*. Its
+  `CHECK_KINDS` table and registry are contract-level in §6.
+
+| `test.type` | Class | Compares | Status after this phase |
+|---|---|---|---|
+| `function` | value | return value | implemented (5 languages) |
+| `class` | value | the sequence of method-call results (LRUCache, MinStack) | **implemented** |
+| `function` + `mutates` | value | the mutated argument, not the return | **implemented** |
+| `stdin-stdout` | protocol | trimmed stdout for fed stdin | **implemented** |
+| `project` / `service` | composite | all declared checks green | reserved until Phase 3/4 |
+
+Three design decisions, settled here:
+
+1. **`in-place` is retired as a type — it becomes the `mutates` modifier.** It executes
+   *identically* to `function`; only the emitted value differs. `test.mutates: <paramName>` makes
+   every function-env driver emit `canonicalJson(args[target])` instead of the return. This kills
+   five would-be duplicate envs and keeps the registry honest: a type is an execution strategy,
+   and in-place never was one. The reserved `in-place` id now parses to a pointer message
+   (*"use `test.mutates` on type `function`"*).
+2. **`class` reuses the sentinel protocol untouched.** One line per case; `actual` is the
+   canonical JSON **array** of the op results (`[null,null,1]`). `parseSentinelLines` and the
+   `canonicalJson` comparison need zero changes.
+3. **`stdin-stdout` inverts one rule, locally.** The candidate **is** the program and *does* read
+   stdin — the never-read-stdin rule is function-env-specific, not global. Consequence: one
+   process **per case** (stdin is consumed once); compile still runs once per suite.
+
+### Case shapes in the `.md`
+
+````markdown
+# class — ops sequence, one JSON object per case
+```json
+{"ops": ["LRUCache","put","put","get"], "args": [[2],[1,1],[2,2],[1]], "expected": [null,null,null,1]}
+```
+
+# mutation — frontmatter modifier, cases unchanged
+test: { type: function, mutates: nums }
+
+# stdin-stdout — raw text pairs
+```json
+{"stdin": "3\n1 2 3\n", "stdout": "6"}
+```
+````
+
+### T22 — Parse the new case schemas
+
+- **Owns:** `src/types/leetcode.types.ts`, `src/services/leetcode-parser.helpers.ts`,
+  `test/leetcode-parser.test.ts`, `ARTIFACT_LEETCODE_FILE_FORMAT.md` (same-change rule)
+- **Depends on:** T11 (last parser-file owner)
+- **Test first:** the LRUCache ops case above parses into a typed `ClassCase`; an
+  `ops`/`args`/`expected` length mismatch is a validation error naming the counts; malformed
+  input degrades and never throws. Hostile input covered (security-critical: untrusted `.md`).
+- **Done when:** three schemas parse and validate — class ops-sequence, `test.mutates: <param>`
+  (must name a declared param), stdin/stdout string pairs. `type: in-place` yields the pointer
+  message.
+- **Gate:** full gate + `sonar-analyze`.
+
+### T23 — `makeClassEnv` factory
+
+- **Owns:** `src/services/test-envs/class/make-class-env.ts`,
+  `test/leetcode-class-env-factory.test.ts`
+- **Reads:** `function/make-function-env.ts`, `sentinel.helpers.ts`
+- **Depends on:** T22
+- **Test first:** the factory returns `type: 'class'`, the two-file emit shape, and
+  `parse === parseSentinelLines`.
+- **Done when:** the factory owns type/emit-shape/parse; a language spec supplies only its driver
+  source and validate — the exact `makeFunctionEnv` split.
+- **Gate:** full gate.
+
+### T24 — `class ×` python, javascript, typescript
+
+- **Owns:** `src/services/test-envs/class/{python,javascript,typescript}.env.ts`,
+  `test/class-env-{python,javascript,typescript}.test.ts`
+- **Depends on:** T23
+- **Test first:** the LRUCache case drives instantiation + method calls in order; a throwing op
+  fails its case alone.
+- **Done when:** three specs pass; TypeScript is the JS spec + the strip call, as in T7. (Sizing
+  exception, deliberate: three ~80-line sibling specs are one cohesive concern; splitting buys
+  three dispatches for no isolation gain.)
+- **Gate:** full gate.
+
+### T25 — `class ×` java, rust
+
+- **Owns:** `src/services/test-envs/class/{java,rust}.env.ts`,
+  `test/class-env-{java,rust}.test.ts`
+- **Depends on:** T23
+- **Test first:** as T24, compiled: `javac` / `rustc` once per suite.
+- **Done when:** both specs pass; Rust's op results serialize under the same `{:?}` ceiling as
+  T6.
+- **Gate:** full gate.
+
+### T26 — `mutates` in the function envs
+
+- **Owns:** `src/services/test-envs/function/make-function-env.ts`, the five
+  `function/*.env.ts` runner sources, `test/leetcode-inplace.test.ts`
+- **Depends on:** T22
+- **Test first:** with `mutates: nums`, the python driver emits the mutated `nums`, not the
+  return; without the modifier, emit is byte-identical to today.
+- **Done when:** all five drivers honour the modifier; the no-modifier path is untouched
+  (golden-style asserts in the new test file).
+- **Gate:** full gate.
+
+### T27 — `stdin-stdout` environments + per-case runner loop
+
+- **Owns:** `src/services/test-envs/stdio/make-stdio-env.ts`, `stdio/*.env.ts` (5 one-screen
+  specs — run command only), `src/services/leetcode-runner.service.ts` (the per-case spawn
+  loop), `test/function-env-stdio.test.ts`
+- **Depends on:** T22
+- **Test first:** a two-case suite spawns two processes, each fed its case's `stdin`, outputs
+  compared **trimmed**; a hanging case times out alone (per-case budget) without killing the
+  suite. Hostile stdin covered (security-critical).
+- **Done when:** interpreted languages run the candidate file directly; compiled languages
+  compile once, run per case; the candidate is written verbatim — `buildExecutable`
+  normalisation explicitly bypassed for this type.
+- **Gate:** full gate + `sonar-analyze`.
+
+### T28 — Documentation (Phase 2.5)
+
+- **Owns:** `ARTIFACT_LEETCODE_FILE_FORMAT.md`, `CLAUDE.md`
+- **Depends on:** T22–T27
+- **Test first:** n/a.
+- **Done when:** the format spec documents all three case shapes and the `mutates` modifier; the
+  capability matrix gains `class` and `stdin-stdout` rows per language; the in-place retirement
+  is recorded.
+- **Gate:** `pnpm lint`.
+
+### T29 — F5 manual pass (Phase 2.5) — human
+
+- **Depends on:** T22–T28. Click-path: an LRUCache `class` exercise (one failing op fails one
+  case), a `mutates` exercise (the mutated array is graded, the return ignored), a
+  `stdin-stdout` exercise (the solver's own `print` **is** the answer — stdout is the
+  comparison, not a sentinel corruption). Each in at least one interpreted and one compiled
+  language.
+
+---
+
+## 6. Phase 3 — Multi-file / multi-language exercises (contract only)
 
 **Goal:** an exercise opens N editor tabs — `App.tsx` + `styles.css`, or `main.py` + `schema.sql`
 — and grades the whole directory.
@@ -607,7 +752,7 @@ test:
       kind: css-assert          # RESERVED — parses and validates, does not run
       file: src/styles.css
     - name: api returns list
-      kind: http                # Phase 4 only — in-host fetch (see §6)
+      kind: http                # Phase 4 only — in-host fetch (see §7)
       service: api
 ```
 
@@ -618,8 +763,23 @@ test:
   (the CSS tab), not the grader. Honest limit: without a browser, CSS cannot be truly graded;
   `css-assert` (static selector/property presence) is **reserved**, not promised — a declared
   limit beats a fake grade.
-- `kind: function` is the only kind implemented in Phase 3. Reserved kinds parse, validate, and
-  explain themselves — the same self-explaining failure as a reserved `test.type`.
+
+**`CHECK_KINDS` — the second-level table** (`src/types/constants.ts`, same
+`implemented | reserved` status pattern as `TEST_TYPES`; a `checkRunnerFor(kind)` registry
+mirrors the env registry — absence **is** the capability matrix, no second table):
+
+| kind | Class | Compares | Status |
+|---|---|---|---|
+| `function` | value | one file's export, via the existing five function envs | Phase 3 |
+| `build` | structural | a declared build argv exits 0 (`["npx","tsc","--noEmit"]`, `vite build`); stderr tail on failure | Phase 3 |
+| `http` | protocol | in-host `fetch` responses against a booted service | Phase 4 |
+| `css-assert` | structural | static selector/property presence | reserved |
+| `dom-assert` | behavioural | needs a browser — a separate decision, not a footnote | reserved |
+
+`build` is the workhorse for React/TS exercises: a project that compiles catches most real
+errors with no browser and no new machinery — the argv rules (allowlist on `argv[0]`,
+`execFile`, cwd = runDir) are T10/T12's, reused. Reserved kinds parse, validate, and explain
+themselves — the same self-explaining failure as a reserved `test.type`.
 
 ### Tab lifecycle — close one, end all (guarded)
 
@@ -651,7 +811,7 @@ iterating on one file may not want the whole suite) — current read: all, filte
 
 ---
 
-## 6. Phase 4 — Running servers (contract only)
+## 7. Phase 4 — Running servers (contract only)
 
 **Goal:** the exercise is a frontend consuming an API. The extension boots the backend, learns its
 URL, and injects it into the frontend's config as a `hidden` file. The solver sees the endpoint
@@ -707,10 +867,10 @@ services:
 timeout → write each dependent's `envFile` **before it starts** → run the `http` checks → tear
 everything down. Teardown fires on all **seven** exit paths — successful Submit, failed Submit,
 End Challenge, panel dispose, `deactivate()`, extension-host crash-restart, and **any exercise
-tab closed with "End" confirmed** (§5) — and kills the **process group**, not the pid: a dev
+tab closed with "End" confirmed** (§6) — and kills the **process group**, not the pid: a dev
 server forks children that survive a pid-level kill. This is the phase's real difficulty.
 
-**Grading:** `http` checks (§5 `checks:` model) run **in the extension host itself** via global
+**Grading:** `http` checks (§6 `checks:` model) run **in the extension host itself** via global
 `fetch` — the host is Node ≥ 18, so there is no spawned driver process, no extra runtime
 requirement, and one less thing to kill on teardown. **No headless browser** — Playwright is a
 ~300 MB install the extension has no path to provide. Real DOM assertions are a later phase with
@@ -728,13 +888,13 @@ cancellation; (2) do services share the T12 cache or get per-exercise `node_modu
 the timer does while servers boot — grading time is not solving time, and `LeetCodeTimer` cannot
 currently pause; (4) `ready`-miss fallback — poll the assigned URL (possible only because we know
 it) with a timeout, then fail loudly **with** captured stdout; (5) is `--host 127.0.0.1` forced
-on dev servers or left to the artifact; (6) does the §5 runtime preflight probe service runtimes
+on dev servers or left to the artifact; (6) does the §6 runtime preflight probe service runtimes
 too (`uvicorn` present?) or only their `argv[0]` — current read: `argv[0]` per the `ENOENT` rule,
 surfaced in the same ✓/✗ list.
 
 ---
 
-## 7. Waves
+## 8. Waves
 
 Rules recap (full text in §1): orchestrator does its own rows and every integration hunk; worker
 tasks in a wave own **disjoint files — test files and `package.json` included**; no task depends
@@ -753,6 +913,10 @@ every wave close.
 | 6 | T13 · T14 · T15 | 3 × sonnet | — |
 | 7 | T16 · T17 · T18 · T19 | 4 × sonnet | — |
 | 8 | T20 | 1 × sonnet **+ human T21** | — |
+| 9 | T22 | 1 × sonnet | retire `in-place` entry in `TEST_TYPES` (constants) |
+| 10 | T23 · T26 · T27 | 3 × sonnet | — |
+| 11 | T24 · T25 | 2 × sonnet | `register()` lines for all class + stdio envs; flip `class` / `stdin-stdout` to `implemented` in `TEST_TYPES` |
+| 12 | T28 | 1 × sonnet **+ human T29** | — |
 
 ### Gate
 
@@ -767,7 +931,7 @@ every run; a drop is a blocker until explained.
 
 ---
 
-## 8. Risks
+## 9. Risks
 
 | Risk | Mitigation |
 |---|---|
@@ -786,7 +950,7 @@ every run; a drop is a blocker until explained.
 
 ---
 
-## 9. PR checklist
+## 10. PR checklist
 
 - [ ] Gate green, test count recorded and up
 - [ ] `npx tsc --noEmit` clean
