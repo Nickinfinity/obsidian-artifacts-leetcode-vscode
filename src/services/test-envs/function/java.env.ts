@@ -1,8 +1,9 @@
 import { LEET_SENTINEL } from '../../../types/constants.js';
+import { escapeRe } from '../../../utils/regex.helpers.js';
 import { jsonToLiteral } from '../../leetcode-codegen.service.js';
 import { functionNameFor } from '../../leetcode-parser.service.js';
-import type { CaseOutcome, EmittedProgram, EnvContext, TestEnv } from '../env.types.js';
-import { parseSentinelLines } from '../sentinel.helpers.js';
+import type { EnvContext } from '../env.types.js';
+import { makeFunctionEnv } from './make-function-env.js';
 
 /** `import java.util.*;` / `import static java.lang.Math.max;` — line-level detection. */
 const IMPORT_RE = /^\s*import\s[\w.* ]+;\s*$/;
@@ -30,9 +31,14 @@ const MAIN_RE = /\bstatic\s+void\s+main\s*\(/;
  * `Arrays.toString`'s `[0, 1]`. Whole-number doubles print as integers so a
  * `double`-returning solution can match an integer `expected`.
  */
-export const javaFunctionEnv: TestEnv = {
-	type: 'function',
+export const javaFunctionEnv = makeFunctionEnv({
 	language: 'java',
+	candidateFile: 'Solution.java',
+	runnerFile: 'Runner.java',
+	compile: 'javac Solution.java Runner.java',
+	run: 'java -cp . Runner',
+	candidateContent: javaSolutionFile,
+	buildRunner: runnerSource,
 
 	/**
 	 * Reject a candidate that cannot be a plain method member of `class Solution`.
@@ -41,12 +47,6 @@ export const javaFunctionEnv: TestEnv = {
 	 * `package`, or a `main` would either collide with the driver or hide the
 	 * method from it — so we say so, rather than letting `javac` emit
 	 * `illegal start of type` or `class Main is already defined`.
-	 *
-	 * @param ctx - Env context carrying the candidate source and function name.
-	 * @returns A user-facing message, or `null` when the candidate is runnable.
-	 *
-	 * @example
-	 * javaFunctionEnv.validate({ code: 'class Main { … }', … }); // → 'Write only the method…'
 	 */
 	validate(ctx: EnvContext): string | null {
 		const { code, parsed, langId } = ctx;
@@ -64,51 +64,29 @@ export const javaFunctionEnv: TestEnv = {
 		}
 		return null;
 	},
+});
 
-	/**
-	 * Emit `Solution.java` (verbatim candidate) and the generated `Runner.java`.
-	 *
-	 * @param ctx - Parsed artifact, candidate source, and the suite.
-	 * @returns The two files plus the javac/java commands.
-	 *
-	 * @example
-	 * javaFunctionEnv.emit({ parsed, langId: 'java', code, cases });
-	 */
-	emit(ctx: EnvContext): EmittedProgram {
-		const { imports, body } = stripImportsAndPackage(ctx.code);
-
-		const solution = [
-			...imports,
-			imports.length > 0 ? '' : null,
-			'class Solution {',
-			body,
-			'}',
-			'',
-		].filter(l => l !== null).join('\n');
-
-		return {
-			files: [
-				{ name: 'Solution.java', content: solution },
-				{ name: 'Runner.java', content: runnerSource(ctx) },
-			],
-			compile: 'javac Solution.java Runner.java',
-			run: 'java -cp . Runner',
-		};
-	},
-
-	/**
-	 * Recover per-case outcomes from stdout.
-	 *
-	 * @param stdout - Raw stdout, possibly truncated by a timeout-kill.
-	 * @returns One outcome per intact sentinel line.
-	 *
-	 * @example
-	 * javaFunctionEnv.parse('__LEET__{"index":0,"actual":"[0,1]","ms":4}\n');
-	 */
-	parse(stdout: string): CaseOutcome[] {
-		return parseSentinelLines(stdout);
-	},
-};
+/**
+ * Build `Solution.java` — the candidate's method wrapped in `class Solution`,
+ * with its `import`s hoisted to file scope and any `package` dropped.
+ *
+ * @param ctx - Env context carrying the candidate source.
+ * @returns Complete Java source for the candidate compilation unit.
+ *
+ * @example
+ * javaSolutionFile({ code: 'static int f(){return 1;}', … });
+ */
+function javaSolutionFile(ctx: EnvContext): string {
+	const { imports, body } = stripImportsAndPackage(ctx.code);
+	return [
+		...imports,
+		imports.length > 0 ? '' : null,
+		'class Solution {',
+		body,
+		'}',
+		'',
+	].filter(l => l !== null).join('\n');
+}
 
 /**
  * Build the generated `Runner.java` — the driver that calls into `Solution`.
@@ -185,11 +163,6 @@ export function stripImportsAndPackage(code: string): { imports: string[]; body:
 	}
 	while (bodyLines.length > 0 && bodyLines[0].trim() === '') { bodyLines.shift(); }
 	return { imports, body: bodyLines.join('\n') };
-}
-
-/** Escape a string for literal use inside a RegExp. */
-function escapeRe(literal: string): string {
-	return literal.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
 }
 
 /**

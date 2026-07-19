@@ -1,3 +1,5 @@
+import { SOLUTION_MARKER } from '../types/constants.js';
+import { isLangId, type LangId } from '../types/languages.js';
 import type { ParsedLeetCode } from '../types/leetcode.types.js';
 import { functionNameFor } from './leetcode-parser.service.js';
 
@@ -19,8 +21,28 @@ const JAVA_BOX: Record<string, string> = {
 	long:    'Long',
 };
 
-/** Languages that mapType knows how to translate to. */
-const SUPPORTED_LANGS = new Set(['java', 'python', 'javascript', 'rust']);
+/**
+ * Native container syntax per language — the single dispatch table `mapType`
+ * reads instead of a per-language `if` cascade. Presence of a key is what makes
+ * a language "type-mappable"; `box` (Java only) auto-boxes primitives inside a
+ * generic map. This set is deliberately broader than the runnable `LangId`s:
+ * `rust` is type-mappable (for display) without being runnable.
+ */
+interface TypeSyntax {
+	/** Wrap an already-mapped element type in the native array syntax. */
+	array(inner: string): string;
+	/** Wrap already-mapped key/value types in the native map syntax. */
+	map(key: string, value: string): string;
+	/** Primitive → boxed name for types appearing inside a generic map. */
+	box?: Record<string, string>;
+}
+
+const TYPE_SYNTAX: Record<string, TypeSyntax> = {
+	java:       { array: i => `${i}[]`,     map: (k, v) => `Map<${k}, ${v}>`,    box: JAVA_BOX },
+	python:     { array: i => `List[${i}]`, map: (k, v) => `Dict[${k}, ${v}]` },
+	javascript: { array: i => `${i}[]`,     map: (k, v) => `Record<${k}, ${v}>` },
+	rust:       { array: i => `Vec<${i}>`,  map: (k, v) => `HashMap<${k}, ${v}>` },
+};
 
 const MAP_RE = /^map<\s*([^,]+)\s*,\s*(.+?)\s*>$/;
 
@@ -43,24 +65,24 @@ const MAP_RE = /^map<\s*([^,]+)\s*,\s*(.+?)\s*>$/;
  * mapType('map<string,int>', 'java'); // → 'Map<String, Integer>'
  */
 export function mapType(genericType: string, language: string): string {
-	if (!SUPPORTED_LANGS.has(language)) { return genericType; }
+	const syntax = TYPE_SYNTAX[language];
+	if (!syntax) { return genericType; }
 
 	// Array — strip the trailing `[]` and recurse on the element type.
 	if (genericType.endsWith('[]')) {
-		const inner = mapType(genericType.slice(0, -2), language);
-		return wrapArray(inner, language);
+		return syntax.array(mapType(genericType.slice(0, -2), language));
 	}
 
-	// `map<K, V>` — recurse on K and V, then wrap with language container.
+	// `map<K, V>` — recurse on K and V, box (Java only), then wrap.
 	const mapM = MAP_RE.exec(genericType);
 	if (mapM) {
 		let k = mapType(mapM[1].trim(), language);
 		let v = mapType(mapM[2].trim(), language);
-		if (language === 'java') {
-			k = JAVA_BOX[k] ?? k;
-			v = JAVA_BOX[v] ?? v;
+		if (syntax.box) {
+			k = syntax.box[k] ?? k;
+			v = syntax.box[v] ?? v;
 		}
-		return wrapMap(k, v, language);
+		return syntax.map(k, v);
 	}
 
 	// Primitive lookup.
@@ -69,41 +91,6 @@ export function mapType(genericType: string, language: string): string {
 
 	// Passthrough for unknown generics (custom types, `void`, etc.).
 	return genericType;
-}
-
-/**
- * Wraps `inner` in the language's native array syntax.
- *
- * @param inner    - Already-mapped element type.
- * @param language - Target language id.
- * @returns Array-typed expression for the language.
- *
- * @example
- * wrapArray('int', 'rust'); // → 'Vec<int>'
- */
-function wrapArray(inner: string, language: string): string {
-	if (language === 'python') { return `List[${inner}]`; }
-	if (language === 'rust')   { return `Vec<${inner}>`; }
-	return `${inner}[]`;
-}
-
-/**
- * Wraps `k` / `v` in the language's native map/dictionary syntax.
- *
- * @param k        - Already-mapped key type.
- * @param v        - Already-mapped value type.
- * @param language - Target language id.
- * @returns Map-typed expression for the language.
- *
- * @example
- * wrapMap('String', 'Integer', 'java'); // → 'Map<String, Integer>'
- */
-function wrapMap(k: string, v: string, language: string): string {
-	if (language === 'java')       { return `Map<${k}, ${v}>`; }
-	if (language === 'python')     { return `Dict[${k}, ${v}]`; }
-	if (language === 'javascript') { return `Record<${k}, ${v}>`; }
-	if (language === 'rust')       { return `HashMap<${k}, ${v}>`; }
-	return `${k}, ${v}`;
 }
 
 /**
@@ -120,10 +107,7 @@ function wrapMap(k: string, v: string, language: string): string {
  * generateBoilerplate(parsed, 'java');
  */
 export function generateBoilerplate(parsed: ParsedLeetCode, language: string): string {
-	if (language === 'java')       { return javaBoilerplate(parsed); }
-	if (language === 'python')     { return pythonBoilerplate(parsed); }
-	if (language === 'javascript') { return jsBoilerplate(parsed); }
-	return '';
+	return isLangId(language) ? LANG_CODEGEN[language].boilerplate(parsed) : '';
 }
 
 /** Java wrapper: imports + `class Main` + signature + Scanner stdin + System.out.print. */
@@ -137,7 +121,7 @@ function javaBoilerplate(p: ParsedLeetCode): string {
 		'',
 		'class Main {',
 		`\tpublic static ${ret} ${fn}(${params}) {`,
-		'\t\t<<SOLUTION>>',
+		`\t\t${SOLUTION_MARKER}`,
 		'\t}',
 		'',
 		'\tpublic static void main(String[] args) {',
@@ -157,7 +141,7 @@ function pythonBoilerplate(p: ParsedLeetCode): string {
 	const reads  = p.params.map(pa => `\t${pa.name} = input()`).join('\n');
 	return [
 		`def ${fn}(${params}):`,
-		'\t<<SOLUTION>>',
+		`\t${SOLUTION_MARKER}`,
 		'',
 		'if __name__ == "__main__":',
 		reads || '\tpass',
@@ -175,7 +159,7 @@ function jsBoilerplate(p: ParsedLeetCode): string {
 		"const rl = readline.createInterface({ input: process.stdin });",
 		'',
 		`function ${fn}(${params}) {`,
-		'\t<<SOLUTION>>',
+		`\t${SOLUTION_MARKER}`,
 		'}',
 		'',
 		'const lines = [];',
@@ -202,10 +186,7 @@ function jsBoilerplate(p: ParsedLeetCode): string {
  * generateTestHarness(parsed, 'python');
  */
 export function generateTestHarness(parsed: ParsedLeetCode, language: string): string {
-	if (language === 'java')       { return javaHarness(parsed); }
-	if (language === 'python')     { return pythonHarness(parsed); }
-	if (language === 'javascript') { return jsHarness(parsed); }
-	return '';
+	return isLangId(language) ? LANG_CODEGEN[language].harness(parsed) : '';
 }
 
 /** Java assert harness with a `class Main { public static void main … }` wrapper. */
@@ -244,6 +225,25 @@ function jsHarness(p: ParsedLeetCode): string {
 	});
 	return [head, ...lines, ''].join('\n');
 }
+
+/**
+ * Per-runnable-language code generators, keyed by `LangId`. Adding a runnable
+ * language is one entry here (plus a `TYPE_SYNTAX` row) rather than a new branch
+ * in every `if (lang === …)` cascade. Presence in this map is exactly what makes
+ * `generateBoilerplate` / `generateTestHarness` emit for a language.
+ */
+interface LangCodegen {
+	/** Runnable stdin/stdout wrapper carrying a `<<SOLUTION>>` marker. */
+	boilerplate(parsed: ParsedLeetCode): string;
+	/** Assert-based test harness for the parsed cases. */
+	harness(parsed: ParsedLeetCode): string;
+}
+
+const LANG_CODEGEN: Record<LangId, LangCodegen> = {
+	java:       { boilerplate: javaBoilerplate,   harness: javaHarness },
+	python:     { boilerplate: pythonBoilerplate, harness: pythonHarness },
+	javascript: { boilerplate: jsBoilerplate,     harness: jsHarness },
+};
 
 /**
  * Converts a JSON value into a language-specific source-code literal.
@@ -335,8 +335,7 @@ function objectLiteral(obj: Record<string, unknown>, language: string): string {
  * injectSolution('    <<SOLUTION>>', 'return 0;');
  */
 export function injectSolution(boilerplate: string, solution: string): string {
-	const MARKER = '<<SOLUTION>>';
-	const idx = boilerplate.indexOf(MARKER);
+	const idx = boilerplate.indexOf(SOLUTION_MARKER);
 	if (idx === -1) { return boilerplate + solution; }
 
 	// Capture the marker line's leading whitespace so each solution line is
@@ -350,5 +349,5 @@ export function injectSolution(boilerplate: string, solution: string): string {
 		? ''
 		: solution.split('\n').map((l, i) => i === 0 ? l : indent + l).join('\n');
 
-	return boilerplate.slice(0, idx) + indented + boilerplate.slice(idx + MARKER.length);
+	return boilerplate.slice(0, idx) + indented + boilerplate.slice(idx + SOLUTION_MARKER.length);
 }

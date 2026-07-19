@@ -1,7 +1,7 @@
 import { formatRemaining } from '../../services/leetcode-challenge.helpers.js';
 import { resolveLangId } from '../../services/language-map.service.js';
-import type { BigOEstimate } from '../../services/leetcode-bigo.service.js';
 import type {
+	BigOEstimate,
 	ChallengePhase,
 	ParsedLeetCode,
 	TestResult,
@@ -36,7 +36,7 @@ import {
  *   - `<div id="results">` results sink
  *
  * @param parsed      - Fully parsed LeetCode artifact.
- * @param cssUri      - Webview URI for the shared stylesheet.
+ * @param cssUris     - Webview URIs for the stylesheets to link (shared + LeetCode).
  * @param cspSource   - Webview CSP source token (passed through into `<meta>`).
  * @param resultsHtml - Results markup to seed the sink with. Reassigning
  *   `webview.html` restarts the webview, so a result table posted immediately
@@ -53,10 +53,10 @@ import {
  * @returns Complete HTML document string.
  *
  * @example
- * renderLeetCodePreviewHtml(parsed, cssUri, panel.webview.cspSource, '', 'running', { unlimited: false, ms: 179_000 });
+ * renderLeetCodePreviewHtml(parsed, cssUris, panel.webview.cspSource, '', 'running', { unlimited: false, ms: 179_000 });
  */
 export function renderLeetCodePreviewHtml(
-	parsed: ParsedLeetCode, cssUri: string, cspSource: string, resultsHtml = '',
+	parsed: ParsedLeetCode, cssUris: string[], cspSource: string, resultsHtml = '',
 	state: ChallengePhase = 'idle', timer: TimerTick | null = null,
 ): string {
 	const timerLabel = timer === null ? '' : formatRemaining(timer.ms);
@@ -74,7 +74,7 @@ export function renderLeetCodePreviewHtml(
 		`<div id="results" class="results-container">${resultsHtml}</div>`,
 	].join('\n');
 
-	return shell(body, cssUri, cspSource, state);
+	return shell(body, cssUris, cspSource, state);
 }
 
 /**
@@ -134,15 +134,15 @@ export function renderBigOEstimateHtml(estimate: BigOEstimate): string {
  * `LeetCodeViewProvider` handles by running the same picker the view-title
  * button and the `obsidian-leetcode.open` command use.
  *
- * @param cssUri    - Webview URI for the shared stylesheet.
+ * @param cssUris   - Webview URIs for the stylesheets to link.
  * @param cspSource - Webview CSP source token.
  * @returns Complete HTML document string.
  *
  * @example
- * renderLeetCodeEmptyStateHtml(cssUri, view.webview.cspSource);
+ * renderLeetCodeEmptyStateHtml(cssUris, view.webview.cspSource);
  */
-export function renderLeetCodeEmptyStateHtml(cssUri: string, cspSource: string): string {
-	const linkTag = cssUri ? `<link rel="stylesheet" href="${cssUri}">` : '';
+export function renderLeetCodeEmptyStateHtml(cssUris: string[], cspSource: string): string {
+	const linkTag = cssLinks(cssUris);
 	return /* html */`<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -280,6 +280,23 @@ function renderResultRow(r: TestResult): string {
 }
 
 /**
+ * Render one `<link rel="stylesheet">` per stylesheet URI.
+ *
+ * URIs come from `webview.asWebviewUri` (trusted), so they are not escaped —
+ * consistent with how the rest of the shell treats them. An empty list yields
+ * an empty string.
+ *
+ * @param cssUris - Webview stylesheet URIs, in link order.
+ * @returns Newline-joined `<link>` tags, or `''` for an empty list.
+ *
+ * @example
+ * cssLinks([stylesUri, leetcodeUri]); // → '<link …styles.css>\n<link …leetcode-preview.css>'
+ */
+function cssLinks(cssUris: string[]): string {
+	return cssUris.map(uri => `<link rel="stylesheet" href="${uri}">`).join('\n');
+}
+
+/**
  * HTML shell — wraps the body, links the stylesheet, declares CSP for inline
  * scripts.
  *
@@ -300,17 +317,17 @@ function renderResultRow(r: TestResult): string {
  * in-place transition rather than anything read by a selector today.
  *
  * @param body      - Inner HTML to place inside `<body>`.
- * @param cssUri    - Webview URI for the shared stylesheet.
+ * @param cssUris   - Webview URIs for the stylesheets to link.
  * @param cspSource - Webview CSP source token.
  * @param phase     - `ChallengeState['phase']` this render seeds `data-phase`
  *   with — drives the running-only scroll-to-top on load.
  * @returns Complete HTML document string.
  *
  * @example
- * shell('<h1>hi</h1>', uri, panel.webview.cspSource, 'running');
+ * shell('<h1>hi</h1>', cssUris, panel.webview.cspSource, 'running');
  */
-function shell(body: string, cssUri: string, cspSource: string, phase: ChallengePhase = 'idle'): string {
-	const linkTag = cssUri ? `<link rel="stylesheet" href="${cssUri}">` : '';
+function shell(body: string, cssUris: string[], cspSource: string, phase: ChallengePhase = 'idle'): string {
+	const linkTag = cssLinks(cssUris);
 	return /* html */`<!DOCTYPE html>
 <html lang="en">
 <head>

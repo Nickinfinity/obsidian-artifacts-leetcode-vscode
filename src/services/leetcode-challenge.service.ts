@@ -1,19 +1,14 @@
 import * as vscode from 'vscode';
+import { END_CHALLENGE_COMMAND, TICK_MS } from '../types/constants.js';
 import type { ChallengeState, ParsedLeetCode, PracticeConfig, TimerTick } from '../types/leetcode.types.js';
 import { formatRemaining, timerTick } from './leetcode-challenge.helpers.js';
 import { openExerciseFile } from './exercise-file.service.js';
 import { LeetCodeTimer } from './leetcode-timer.service.js';
 import { PracticeMode } from './practice-mode.service.js';
 
-/** Command that tears the active challenge down and restores editor settings. */
-export const END_CHALLENGE_COMMAND = 'obsidian-leetcode.endChallenge';
-
-/** Status-bar refresh cadence for the timer. */
-const TICK_MS = 1000;
-
 /**
  * A live challenge run: one temp file, one set of editor restrictions, one
- * timer (P7: always running, bounded or unlimited).
+ * timer (always running, bounded or unlimited).
  *
  * Only one may be active per window — `startChallenge()` ends any predecessor
  * before starting a new run, so editor settings are always restored from the

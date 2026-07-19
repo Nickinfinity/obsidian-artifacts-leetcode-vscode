@@ -4,6 +4,8 @@ import type {
 	LeetCodeSolution,
 	TestCase,
 } from '../types/leetcode.types.js';
+import { safeJsonParse } from '../utils/safe-json.js';
+import { sectionBounds } from './leetcode-section-bounds.helpers.js';
 
 const SOLUTIONS_RE     = /^# Solutions\s*$/m;
 const SETUP_RE         = /^# Setup\s*$/m;
@@ -107,12 +109,8 @@ function extractJsonCases(body: string, headingRe: RegExp): TestCase[] {
 	if (!section) { return []; }
 	const fence = JSON_FENCE.exec(section);
 	if (!fence) { return []; }
-	try {
-		const parsed: unknown = JSON.parse(fence[1]);
-		return Array.isArray(parsed) ? parsed as TestCase[] : [];
-	} catch {
-		return [];
-	}
+	const parsed = safeJsonParse(fence[1]);
+	return Array.isArray(parsed) ? parsed as TestCase[] : [];
 }
 
 /**
@@ -210,11 +208,8 @@ export function extractAttempts(body: string): Attempt[] {
  * extractSection('## Tests\n```json\n[]\n```', /^## Tests\s*$/m);
  */
 function extractSection(body: string, headingRe: RegExp): string | null {
-	const match = headingRe.exec(body);
-	if (!match) { return null; }
-	const rest = body.slice(match.index + match[0].length);
-	const next = /^#{1,2} /m.exec(rest);
-	return next ? rest.slice(0, next.index) : rest;
+	const bounds = sectionBounds(body, headingRe, /^#{1,2} /m);
+	return bounds ? body.slice(bounds.headingEnd, bounds.bodyEnd) : null;
 }
 
 /**
@@ -231,11 +226,8 @@ function extractSection(body: string, headingRe: RegExp): string | null {
  * extractTopLevelSection('# Setup\n## Java\n…\n# Solutions\n…', /^# Setup\s*$/m);
  */
 function extractTopLevelSection(body: string, headingRe: RegExp): string | null {
-	const match = headingRe.exec(body);
-	if (!match) { return null; }
-	const rest = body.slice(match.index + match[0].length);
-	const next = /^# /m.exec(rest);
-	return next ? rest.slice(0, next.index) : rest;
+	const bounds = sectionBounds(body, headingRe, /^# /m);
+	return bounds ? body.slice(bounds.headingEnd, bounds.bodyEnd) : null;
 }
 
 /** Split a top-level section body into its `## <Language>` chunks. */
@@ -335,11 +327,7 @@ function parseMeta(raw: string | undefined): { solvedAt?: string; duration?: str
  */
 function parseHtmlCommentJson(raw: string | undefined): Record<string, unknown> | null {
 	if (!raw) { return null; }
-	try {
-		return JSON.parse(raw) as Record<string, unknown>;
-	} catch {
-		return null;
-	}
+	return safeJsonParse<Record<string, unknown>>(raw);
 }
 
 // ── Attempts tree ─────────────────────────────────────────────────────────────

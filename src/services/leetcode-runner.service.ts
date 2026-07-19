@@ -4,13 +4,12 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { MAX_SUITE_TIMEOUT_MS } from '../types/constants.js';
 import type {
-	LangRunner,
 	ParsedLeetCode,
 	TestCase,
 	TestResult,
 } from '../types/leetcode.types.js';
-import type { CaseOutcome, EnvContext, TestEnv } from './test-envs/env.types.js';
-import { canonicalJson } from '../utils/canonical-json.js';
+import type { EnvContext, TestEnv } from './test-envs/env.types.js';
+import { collectResults, errorResult, type RunFailure } from './leetcode-runner.helpers.js';
 
 interface ExecResult { stdout: string; stderr: string }
 class ExecErr extends Error {
@@ -59,19 +58,19 @@ function execAsync(cmd: string, opts: { cwd?: string; timeoutMs?: number } = {})
 }
 
 /**
- * Probe whether the language toolchain backing `runner` is installed.
+ * Probe whether a language toolchain is installed by running its detect command.
  *
- * Runs `runner.detectCmd` and returns true on exit 0, false on any failure.
+ * Runs `detectCmd` and returns true on exit 0, false on any failure.
  *
- * @param runner - Language runner config to probe.
+ * @param detectCmd - Version probe, e.g. `'node --version'` (from `LANGUAGES`).
  * @returns True if the runtime is callable, false otherwise.
  *
  * @example
- * await detectRuntime(jsRunner); // → true on machines with `node` on PATH.
+ * await detectRuntime('node --version'); // → true on machines with `node` on PATH.
  */
-export async function detectRuntime(runner: LangRunner): Promise<boolean> {
+export async function detectRuntime(detectCmd: string): Promise<boolean> {
 	try {
-		await execAsync(runner.detectCmd);
+		await execAsync(detectCmd);
 		return true;
 	} catch {
 		return false;
@@ -153,9 +152,6 @@ export async function runSuite(
 
 // ── Internals ─────────────────────────────────────────────────────────────────
 
-/** How the child process ended, when it did not end cleanly. */
-interface RunFailure { timedOut: boolean; message: string }
-
 /** Run the build command; returns `null` on success, the failure message otherwise. */
 async function tryCompile(command: string, cwd: string): Promise<string | null> {
 	try {
@@ -192,61 +188,4 @@ async function runProgram(
 		const message  = timedOut ? 'timeout' : (err.stderr || err.message || String(err)).trim();
 		return { stdout: err.stdout ?? '', failure: { timedOut, message } };
 	}
-}
-
-/**
- * Join the suite's cases against whatever outcomes the program managed to print.
- *
- * A case with no outcome inherits the run failure — `timeout` when the child was
- * killed, the process's stderr otherwise. Cases that printed before a kill keep
- * their real results.
- *
- * @param tests    - The suite, in order.
- * @param outcomes - Parsed sentinel lines, possibly fewer than `tests.length`.
- * @param failure  - How the process ended, or `null` when it exited cleanly.
- * @returns One result per case.
- *
- * @example
- * collectResults(tests, [{ index: 0, actual: '1', ms: 2 }], { timedOut: true, message: 'timeout' });
- */
-function collectResults(
-	tests: TestCase[], outcomes: CaseOutcome[], failure: RunFailure | null,
-): TestResult[] {
-	const byIndex = new Map<number, CaseOutcome>();
-	for (const o of outcomes) { byIndex.set(o.index, o); }
-
-	return tests.map((testCase, i) => {
-		const outcome = byIndex.get(i);
-		if (!outcome) {
-			const message = failure ? failure.message : 'no output';
-			return errorResult(i, testCase, message);
-		}
-		if (outcome.error !== undefined) {
-			const result = errorResult(i, testCase, outcome.error);
-			result.duration = outcome.ms;
-			return result;
-		}
-		const actual = outcome.actual ?? '';
-		return {
-			index:    i,
-			passed:   actual === canonicalJson(testCase.expected),
-			input:    testCase.input,
-			expected: testCase.expected,
-			actual,
-			duration: outcome.ms,
-		};
-	});
-}
-
-/** A failed result carrying `message` as its error. */
-function errorResult(index: number, testCase: TestCase, message: string): TestResult {
-	return {
-		index,
-		passed:   false,
-		input:    testCase.input,
-		expected: testCase.expected,
-		actual:   '',
-		duration: 0,
-		error:    message,
-	};
 }

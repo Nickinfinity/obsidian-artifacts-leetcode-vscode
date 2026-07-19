@@ -36,7 +36,7 @@ export interface PanelCtx {
 	panel: vscode.WebviewView;
 	fileUri: vscode.Uri;
 	parsed: ParsedLeetCode;
-	cssUri: string;
+	cssUris: string[];
 	/**
 	 * URI of the most recent attempt's temp file, or `null` before Solve It.
 	 *
@@ -121,8 +121,8 @@ export class LeetCodeViewProvider implements vscode.WebviewViewProvider {
 		});
 
 		if (this.ctx) {
-			this.ctx.panel  = webviewView;
-			this.ctx.cssUri = this.cssUri();
+			this.ctx.panel   = webviewView;
+			this.ctx.cssUris = this.cssUris();
 		}
 		this.render();
 	}
@@ -153,7 +153,7 @@ export class LeetCodeViewProvider implements vscode.WebviewViewProvider {
 		if (!this.view) { return; }
 		this.ctx = {
 			context: this.context, panel: this.view, fileUri, parsed,
-			cssUri: this.cssUri(), attemptUri: null,
+			cssUris: this.cssUris(), attemptUri: null,
 		};
 		this.render();
 	}
@@ -164,9 +164,9 @@ export class LeetCodeViewProvider implements vscode.WebviewViewProvider {
 		const cspSource = this.view.webview.cspSource;
 		this.view.webview.html = this.ctx
 			? renderLeetCodePreviewHtml(
-				this.ctx.parsed, this.ctx.cssUri, cspSource, '', this.currentPhase(), this.timerSeed(),
+				this.ctx.parsed, this.ctx.cssUris, cspSource, '', this.currentPhase(), this.timerSeed(),
 			)
-			: renderLeetCodeEmptyStateHtml(this.cssUri(), cspSource);
+			: renderLeetCodeEmptyStateHtml(this.cssUris(), cspSource);
 	}
 
 	/**
@@ -217,12 +217,14 @@ export class LeetCodeViewProvider implements vscode.WebviewViewProvider {
 		return 'idle';
 	}
 
-	/** Webview URI for the shared stylesheet, scoped to the live view. */
-	private cssUri(): string {
-		if (!this.view) { return ''; }
-		return this.view.webview.asWebviewUri(
-			vscode.Uri.joinPath(this.context.extensionUri, 'src', 'ui', 'styles.css'),
+	/** Webview URIs for the shared + LeetCode stylesheets, scoped to the live view. */
+	private cssUris(): string[] {
+		if (!this.view) { return []; }
+		const webview = this.view.webview;
+		const uri = (file: string): string => webview.asWebviewUri(
+			vscode.Uri.joinPath(this.context.extensionUri, 'src', 'ui', file),
 		).toString();
+		return [uri('styles.css'), uri('leetcode-preview.css')];
 	}
 
 	// ── Message routing ──────────────────────────────────────────────────────

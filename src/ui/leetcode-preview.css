@@ -1,0 +1,302 @@
+/*
+ * LeetCode feature styles — the sidebar view (empty state + nav header) and the
+ * preview panel (difficulty/status badges, example cards, result rows, summary,
+ * language selector, reference-solution spoiler, practice settings).
+ *
+ * Split out of styles.css so the shared chrome (settings panel, popup-body,
+ * badges, .code) stays lean. Loaded alongside styles.css by the LeetCode panel
+ * and sidebar view — never on its own, so rules here freely build on the shared
+ * base (e.g. .difficulty-* only add color to the shared .badge shape).
+ */
+
+/* ── LeetCode sidebar view — empty state ──────────────────────────────────────── */
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 16px 4px;
+}
+
+.empty-state p {
+  color: var(--vscode-descriptionForeground);
+  margin: 0;
+}
+
+/* ── LeetCode sidebar view — return/close nav header ─────────────────────────── */
+
+.nav-header {
+  display: flex;
+  margin-bottom: 10px;
+}
+
+.nav-header-left {
+  justify-content: flex-start;
+}
+
+.nav-header-right {
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+}
+
+.nav-timer {
+  font-variant-numeric: tabular-nums;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--vscode-descriptionForeground);
+}
+
+.nav-nolimit {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.75;
+}
+
+.nav-back,
+.nav-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+  font-size: 20px;
+  line-height: 1;
+}
+
+.nav-back {
+  color: var(--vscode-foreground);
+}
+
+.nav-back:hover {
+  background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground));
+}
+
+.nav-close {
+  color: var(--vscode-testing-iconFailed, #f44336);
+}
+
+.nav-close:hover {
+  background: var(--vscode-inputValidation-errorBackground, rgba(244, 67, 54, 0.1));
+}
+
+/* ── LeetCode preview panel ────────────────────────────────────────────────── */
+/*
+ * Difficulty badges follow the same .badge sizing / border shape as the
+ * artifact-picker badges above; only the color/border accent changes per
+ * difficulty tier. All colors resolve through VS Code CSS variables so the
+ * panel adapts to light/dark themes automatically.
+ */
+
+.difficulty-easy {
+  color: var(--vscode-testing-iconPassed, #4caf50);
+  border-color: var(--vscode-testing-iconPassed, #4caf50);
+}
+
+.difficulty-medium {
+  color: var(--vscode-charts-orange, #e8a64a);
+  border-color: var(--vscode-charts-orange, #e8a64a);
+}
+
+.difficulty-hard {
+  color: var(--vscode-testing-iconFailed, #f44336);
+  border-color: var(--vscode-testing-iconFailed, #f44336);
+}
+
+/* Status badges — muted/in-progress/done. */
+
+.status-unsolved {
+  color: var(--vscode-disabledForeground);
+}
+
+.status-attempted {
+  color: var(--vscode-charts-yellow, #cca700);
+}
+
+.status-solved {
+  color: var(--vscode-testing-iconPassed, #4caf50);
+}
+
+/*
+ * Example cards — bordered blocks rendered under the problem description.
+ * Matches the rounded-corner / panel-border idiom used by .code and .pill.
+ */
+.example-card {
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 4px;
+  padding: 8px 12px;
+  margin: 6px 0;
+}
+
+.example-card .label {
+  font-weight: 700;
+}
+
+.example-card code {
+  font-family: var(--vscode-editor-font-family, monospace);
+}
+
+/* Test result rows — accent left-border by outcome. */
+
+.test-pass {
+  border-left: 3px solid var(--vscode-testing-iconPassed, #4caf50);
+  padding-left: 8px;
+}
+
+.test-fail {
+  border-left: 3px solid var(--vscode-testing-iconFailed, #f44336);
+  padding-left: 8px;
+}
+
+.test-error {
+  background: var(--vscode-inputValidation-errorBackground, rgba(244, 67, 54, 0.1));
+  padding: 4px 8px;
+  border-radius: 3px;
+  font-family: var(--vscode-editor-font-family, monospace);
+}
+
+/*
+ * Hidden grading-case input. A final row shows its outcome but never its data —
+ * otherwise the grading suite could be read off the results table.
+ */
+
+.masked {
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-style: italic;
+  color: var(--vscode-disabledForeground);
+  background: var(--vscode-textBlockQuote-background);
+  border-radius: 3px;
+  padding: 0 6px;
+}
+
+/* Aggregate pass/fail summary banner above the per-test rows. */
+
+.results-summary {
+  font-weight: 700;
+  text-align: center;
+  padding: 8px 0;
+  font-size: 1.1em;
+}
+
+.results-summary.all-pass {
+  color: var(--vscode-testing-iconPassed, #4caf50);
+}
+
+.results-summary.has-fail {
+  color: var(--vscode-testing-iconFailed, #f44336);
+}
+
+/* Language selector — styled <select> matching the rest of the dropdowns. */
+
+.lang-selector {
+  background: var(--vscode-dropdown-background);
+  color: var(--vscode-dropdown-foreground);
+  border: 1px solid var(--vscode-dropdown-border);
+  border-radius: 3px;
+  padding: 4px 8px;
+}
+
+.lang-select-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 14px 0 6px;
+}
+
+/*
+ * Reference solutions are spoilers — collapsed until the user asks for them.
+ */
+
+.solutions-details {
+  margin-top: 14px;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 4px;
+  padding: 8px 12px;
+}
+
+.solutions-details summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
+  user-select: none;
+}
+
+/* ── Practice settings (pre-challenge checkbox list + time limit) ───────────── */
+
+.practice-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.practice-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 12px;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 4px;
+}
+
+.practice-item:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+
+.practice-item input[type="checkbox"] {
+  margin-top: 2px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.practice-item input[type="checkbox"]:disabled,
+.practice-item input[type="checkbox"]:disabled + .practice-label {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.practice-label {
+  flex: 1;
+  cursor: pointer;
+}
+
+.practice-label-text {
+  display: block;
+  font-weight: 500;
+}
+
+.practice-hint {
+  display: block;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  margin-top: 2px;
+}
+
+.time-limit-row input[type="number"] {
+  width: 80px;
+  flex: 0 0 auto;
+  padding: 5px 8px;
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  border: 1px solid var(--vscode-input-border, transparent);
+  border-radius: 3px;
+  font-family: var(--vscode-editor-font-family, monospace);
+  outline: none;
+}
+
+.time-limit-row input[type="number"]:focus {
+  border-color: var(--vscode-focusBorder);
+}
+
+.time-limit-row .hint {
+  margin-top: 0;
+}

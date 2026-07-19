@@ -1,32 +1,12 @@
+import { FENCE } from '../types/constants.js';
+import type { AttemptEntry } from '../types/leetcode.types.js';
+import { sectionBounds, type SectionBounds } from './leetcode-section-bounds.helpers.js';
 import { resolveLangId } from './language-map.service.js';
-
-/** Markdown fence delimiter, kept as a constant so literals stay simple. */
-const FENCE = '```';
 
 const ATTEMPTS_HEADING_RE  = /^# Attempts\s*$/m;
 const SOLUTIONS_HEADING_RE = /^# Solutions\s*$/m;
-const TOP_HEADING_RE       = /^# /m;
+const TOP_BOUNDARY_RE      = /^# /m;
 const SUB_HEADING_RE       = /^## (.+)\r?\n/gm;
-
-/**
- * One run to append to an artifact's `# Attempts` section — the writer-side
- * counterpart of `Attempt` (no `language`; that comes from the `langId`
- * argument to `appendAttempt`, resolved to canonical the same way).
- */
-export interface AttemptEntry {
-	/** ISO-8601 timestamp of the run */
-	at: string;
-	/** Human-readable elapsed time, e.g. `'8m22s'` */
-	duration: string;
-	/** True when every case (public + final) passed on this run */
-	passed: boolean;
-	/** Big-O notation from `estimateBigO`, when computed for this run */
-	bigO?: string;
-	/** Confidence tier of the Big-O estimate, when computed */
-	confidence?: string;
-	/** The submitted buffer, verbatim */
-	code: string;
-}
 
 /**
  * Appends one attempt entry to an artifact's `# Attempts` section — newest
@@ -59,48 +39,16 @@ export function appendAttempt(raw: string, langId: string, entry: AttemptEntry):
 	const canonical = resolveLangId(langId);
 	const block = renderEntryBlock(canonical, entry);
 
-	const section = locateTopSection(raw, ATTEMPTS_HEADING_RE);
+	const section = sectionBounds(raw, ATTEMPTS_HEADING_RE, TOP_BOUNDARY_RE);
 	if (!section) { return insertNewAttemptsSection(raw, canonical, block); }
 	return insertIntoAttemptsSection(raw, section, canonical, block);
-}
-
-// ── Section location (index-based; mirrors leetcode-sections.helpers.ts) ──────
-
-/** Byte-offset bounds of a top-level (`#`) section's body. */
-interface TopSection {
-	/** Index right after the heading line — where the section body starts */
-	headingEnd: number;
-	/** Index where the section body ends — next top-level heading, or EOF */
-	bodyEnd: number;
-}
-
-/**
- * Locate a top-level section's byte bounds without slicing out its content —
- * the writer needs indices to splice around, not the text a reader would
- * return.
- *
- * @param raw       - Full file content.
- * @param headingRe - Regex matching the section's own heading line.
- * @returns Bounds, or `null` when the heading is absent.
- *
- * @example
- * locateTopSection(raw, /^# Solutions\s*$/m);
- */
-function locateTopSection(raw: string, headingRe: RegExp): TopSection | null {
-	const m = headingRe.exec(raw);
-	if (!m) { return null; }
-	const headingEnd = m.index + m[0].length;
-	const rest = raw.slice(headingEnd);
-	const next = TOP_HEADING_RE.exec(rest);
-	const bodyEnd = next ? headingEnd + next.index : raw.length;
-	return { headingEnd, bodyEnd };
 }
 
 // ── Inserting a brand-new `# Attempts` section ─────────────────────────────────
 
 /** Build the whole-file result when no `# Attempts` section exists yet. */
 function insertNewAttemptsSection(raw: string, canonical: string, block: string): string {
-	const solutions = locateTopSection(raw, SOLUTIONS_HEADING_RE);
+	const solutions = sectionBounds(raw, SOLUTIONS_HEADING_RE, TOP_BOUNDARY_RE);
 	const atIndex = solutions ? solutions.bodyEnd : raw.length;
 	const sectionText = `# Attempts\n\n## ${canonical}\n${block}`;
 	return spliceIn(raw, atIndex, sectionText);
@@ -109,7 +57,7 @@ function insertNewAttemptsSection(raw: string, canonical: string, block: string)
 // ── Extending an existing `# Attempts` section ─────────────────────────────────
 
 /** Build the whole-file result when a `# Attempts` section already exists. */
-function insertIntoAttemptsSection(raw: string, section: TopSection, canonical: string, block: string): string {
+function insertIntoAttemptsSection(raw: string, section: SectionBounds, canonical: string, block: string): string {
 	const body  = raw.slice(section.headingEnd, section.bodyEnd);
 	const chunk = findLanguageChunk(body, canonical);
 

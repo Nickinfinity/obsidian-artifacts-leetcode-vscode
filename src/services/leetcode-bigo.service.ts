@@ -8,29 +8,11 @@ import {
 	stripCLikeComments,
 	stripPythonComments,
 } from './leetcode-bigo.helpers.js';
-
-/** Confidence tier for a `BigOEstimate` — how much of the classification was inferred vs. counted. */
-export type BigOConfidence = 'high' | 'medium' | 'low';
-
-/**
- * Result of a static Big-O heuristic pass over one candidate's source.
- *
- * This is **informational, never pass/fail** — static loop-counting is easily
- * fooled (hidden library costs, early returns, amortised structures), so a
- * caller must always render `confidence` and `reason` alongside `notation`
- * rather than treating the notation as a verdict.
- */
-export interface BigOEstimate {
-	/** Complexity class, e.g. `'O(n)'`, `'O(n^2)'`, `'O(n log n)'`, `'O(2^n)?'` */
-	notation: string;
-	/** How much of `notation` was counted directly vs. inferred/guessed */
-	confidence: BigOConfidence;
-	/** One-line, user-facing explanation of how `notation` was reached */
-	reason: string;
-}
+import { isLangId, type LangId } from '../types/languages.js';
+import type { BigOConfidence, BigOEstimate } from '../types/leetcode.types.js';
 
 /** Languages this heuristic understands. Anything else is reported, not guessed. */
-type SupportedLang = 'java' | 'python' | 'javascript';
+type SupportedLang = LangId;
 
 /**
  * Estimate the asymptotic complexity of a candidate solution by scanning its
@@ -139,8 +121,7 @@ function downgrade(confidence: BigOConfidence): BigOConfidence {
 
 /** Narrow an arbitrary `langId` to one this heuristic has a scanner for. */
 function toSupportedLang(langId: string): SupportedLang | null {
-	if (langId === 'java' || langId === 'python' || langId === 'javascript') { return langId; }
-	return null;
+	return isLangId(langId) ? langId : null;
 }
 
 // Re-exported so callers that only need the scan shape don't reach into helpers.

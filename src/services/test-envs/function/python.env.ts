@@ -1,8 +1,9 @@
 import { LEET_SENTINEL } from '../../../types/constants.js';
+import { escapeRe } from '../../../utils/regex.helpers.js';
 import { jsonToLiteral } from '../../leetcode-codegen.service.js';
 import { functionNameFor } from '../../leetcode-parser.service.js';
-import type { CaseOutcome, EmittedProgram, EnvContext, TestEnv } from '../env.types.js';
-import { parseSentinelLines } from '../sentinel.helpers.js';
+import type { EnvContext } from '../env.types.js';
+import { makeFunctionEnv } from './make-function-env.js';
 
 /** A top-level `def <fn>(` — column 0, so `import sol; sol.<fn>` resolves. */
 function topLevelDefRe(fn: string): RegExp {
@@ -23,19 +24,15 @@ function topLevelDefRe(fn: string): RegExp {
  * Each emitted line is flushed: Python block-buffers a piped stdout, and a
  * timeout-kill would otherwise discard the lines already produced.
  */
-export const pythonFunctionEnv: TestEnv = {
-	type: 'function',
+export const pythonFunctionEnv = makeFunctionEnv({
 	language: 'python',
+	candidateFile: 'sol.py',
+	runnerFile: 'runner.py',
+	run: 'python3 runner.py',
+	candidateContent: ctx => `${ctx.code}\n`,
+	buildRunner: runnerSource,
 
-	/**
-	 * Reject a candidate with no top-level `def <fn>` for the runner to import.
-	 *
-	 * @param ctx - Env context carrying the candidate source and function name.
-	 * @returns A user-facing message, or `null` when the candidate is runnable.
-	 *
-	 * @example
-	 * pythonFunctionEnv.validate({ code: 'class S:\n def f(): ...', … }); // → 'define a top-level function…'
-	 */
+	/** Reject a candidate with no top-level `def <fn>` for the runner to import. */
 	validate(ctx: EnvContext): string | null {
 		const fn = functionNameFor(ctx.parsed, ctx.langId);
 		if (!topLevelDefRe(fn).test(ctx.code)) {
@@ -43,39 +40,7 @@ export const pythonFunctionEnv: TestEnv = {
 		}
 		return null;
 	},
-
-	/**
-	 * Emit `sol.py` (verbatim candidate) and the generated `runner.py`.
-	 *
-	 * @param ctx - Parsed artifact, candidate source, and the suite.
-	 * @returns The two files plus the run command (no compile step).
-	 *
-	 * @example
-	 * pythonFunctionEnv.emit({ parsed, langId: 'python', code, cases });
-	 */
-	emit(ctx: EnvContext): EmittedProgram {
-		return {
-			files: [
-				{ name: 'sol.py', content: `${ctx.code}\n` },
-				{ name: 'runner.py', content: runnerSource(ctx) },
-			],
-			run: 'python3 runner.py',
-		};
-	},
-
-	/**
-	 * Recover per-case outcomes from stdout.
-	 *
-	 * @param stdout - Raw stdout, possibly truncated by a timeout-kill.
-	 * @returns One outcome per intact sentinel line.
-	 *
-	 * @example
-	 * pythonFunctionEnv.parse('__LEET__{"index":0,"actual":"1","ms":2}\n');
-	 */
-	parse(stdout: string): CaseOutcome[] {
-		return parseSentinelLines(stdout);
-	},
-};
+});
 
 /**
  * Build the generated `runner.py` — imports `sol` and drives the suite.
@@ -127,9 +92,4 @@ function runnerSource(ctx: EnvContext): string {
 		'        __emit({"index": __i, "error": str(__e), "ms": int((__time.time() - __t0) * 1000)})',
 		'',
 	].join('\n');
-}
-
-/** Escape a string for literal use inside a RegExp. */
-function escapeRe(literal: string): string {
-	return literal.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
 }

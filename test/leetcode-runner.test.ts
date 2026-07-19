@@ -4,11 +4,10 @@ import {
     runSuite,
     suiteTimeout,
 } from '../src/services/leetcode-runner.service.js';
-import { jsRunner } from '../src/services/lang-runners/javascript.runner.js';
 import { javascriptFunctionEnv } from '../src/services/test-envs/function/javascript.env.js';
 import { defaultPracticeConfig, defaultTestConfig } from '../src/services/leetcode-parser.service.js';
+import { LANGUAGES } from '../src/types/languages.js';
 import type {
-    LangRunner,
     ParsedLeetCode,
     TestCase,
 } from '../src/types/leetcode.types.js';
@@ -58,12 +57,11 @@ suite('leetcode-runner', () => {
     suite('detectRuntime', () => {
 
         test('returns true for an installed runtime', async () => {
-            assert.strictEqual(await detectRuntime(jsRunner), true);
+            assert.strictEqual(await detectRuntime(LANGUAGES.javascript.detectCmd), true);
         });
 
         test('returns false for a missing runtime', async () => {
-            const bogus: LangRunner = { ...jsRunner, detectCmd: 'definitely-not-a-real-binary-xyz --version' };
-            assert.strictEqual(await detectRuntime(bogus), false);
+            assert.strictEqual(await detectRuntime('definitely-not-a-real-binary-xyz --version'), false);
         });
     });
 

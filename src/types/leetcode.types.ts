@@ -117,7 +117,7 @@ export interface TestResult {
  * latest passing one per language is typically marked with `solvedAt`.
  */
 export interface LeetCodeSolution {
-	/** Language id matching a `LangRunner.id` (e.g. `'typescript'`, `'python'`) */
+	/** Canonical `languageId` (e.g. `'typescript'`, `'python'`) */
 	language: string;
 	/** Optional short label distinguishing approaches (e.g. `'two-pointer'`) */
 	label?: string;
@@ -350,26 +350,42 @@ export interface LeetCodeSummary {
 	tags: string[];
 }
 
+/** Confidence tier for a `BigOEstimate` — how much of the classification was inferred vs. counted. */
+export type BigOConfidence = 'high' | 'medium' | 'low';
+
 /**
- * Per-language runner configuration used by the LeetCode test executor.
+ * Result of a static Big-O heuristic pass over one candidate's source.
  *
- * Each runner knows how to write a candidate solution to disk, optionally
- * compile it, and invoke the resulting program. `detectCmd` is run once to
- * confirm the language toolchain is installed on the host.
+ * This is **informational, never pass/fail** — static loop-counting is easily
+ * fooled (hidden library costs, early returns, amortised structures), so a
+ * caller must always render `confidence` and `reason` alongside `notation`
+ * rather than treating the notation as a verdict.
  */
-export interface LangRunner {
-	/** Stable identifier (e.g. `'typescript'`, `'python'`) */
-	id: string;
-	/** Human-readable name shown in pickers */
-	displayName: string;
-	/** Source-file extension including leading dot (e.g. `'.ts'`) */
-	fileExtension: string;
-	/** Optional override for the source file's base name (default: problem slug) */
-	fileName?: string;
-	/** Optional compile step — returns the shell command to compile `filePath` */
-	compile?: (filePath: string) => string;
-	/** Returns the shell command to run the (possibly compiled) program */
-	run: (filePath: string) => string;
-	/** Probe command used to verify the toolchain is available (e.g. `'node --version'`) */
-	detectCmd: string;
+export interface BigOEstimate {
+	/** Complexity class, e.g. `'O(n)'`, `'O(n^2)'`, `'O(n log n)'`, `'O(2^n)?'` */
+	notation: string;
+	/** How much of `notation` was counted directly vs. inferred/guessed */
+	confidence: BigOConfidence;
+	/** One-line, user-facing explanation of how `notation` was reached */
+	reason: string;
+}
+
+/**
+ * One run to append to an artifact's `# Attempts` section — the writer-side
+ * counterpart of `Attempt` (no `language`; that comes from the `langId`
+ * argument to `appendAttempt`, resolved to canonical the same way).
+ */
+export interface AttemptEntry {
+	/** ISO-8601 timestamp of the run */
+	at: string;
+	/** Human-readable elapsed time, e.g. `'8m22s'` */
+	duration: string;
+	/** True when every case (public + final) passed on this run */
+	passed: boolean;
+	/** Big-O notation from `estimateBigO`, when computed for this run */
+	bigO?: string;
+	/** Confidence tier of the Big-O estimate, when computed */
+	confidence?: string;
+	/** The submitted buffer, verbatim */
+	code: string;
 }
