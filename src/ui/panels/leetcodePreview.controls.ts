@@ -53,18 +53,27 @@ export function renderNavHeader(phase: ChallengePhase, remainingLabel = '', unli
 }
 
 /**
- * Render the language `<select>` for the challenge.
+ * Render the pre-start language chooser.
+ *
+ * The dropdown is a *choice*, so it appears only when the exercise offers more
+ * than one runnable language. With exactly one, there is nothing to choose —
+ * the run defaults to it, and a {@link renderLanguageMarker hidden marker}
+ * carries the id so the webview still knows the language without showing an
+ * empty-looking selector. With none, an explanatory hint replaces it.
  *
  * @param p - Parsed LeetCode artifact.
- * @returns HTML for the labelled selector row, or `''` when no language is runnable.
+ * @returns HTML for the chooser, a hidden marker, or a hint.
  *
  * @example
- * renderLanguageRow(parsed); // → '<div class="lang-select-row">…</div>'
+ * renderLanguageRow(parsed); // 2+ langs → '<div class="lang-select-row">…</div>'
  */
 export function renderLanguageRow(p: ParsedLeetCode): string {
 	const langs = availableLanguages(p);
 	if (langs.length === 0) {
 		return `<div class="hint">No test environment for <code>${escHtml(p.test.type)}</code> in any language this exercise provides.</div>`;
+	}
+	if (langs.length === 1) {
+		return renderLanguageMarker(langs[0]);
 	}
 
 	const options = langs
@@ -77,6 +86,25 @@ export function renderLanguageRow(p: ParsedLeetCode): string {
 		`<select id="langSelector" class="lang-selector">${options}</select>`,
 		'</div>',
 	].join('\n');
+}
+
+/**
+ * Render the hidden `#langSelector` marker — the language, with no visible
+ * chooser. Used once the language is fixed rather than chosen: a running
+ * challenge (locked to the language Solve It started), or a single-language
+ * exercise (no choice to offer). The webview reads `#langSelector.value` for
+ * both block-filtering and its Solve It payload, so this keeps that wiring
+ * working without presenting options.
+ *
+ * @param langId - The canonical language to lock in, or `''` when unknown.
+ * @returns A hidden `<input>` carrying the language, or `''` when there is none.
+ *
+ * @example
+ * renderLanguageMarker('rust'); // → '<input type="hidden" id="langSelector" value="rust">'
+ */
+export function renderLanguageMarker(langId: string): string {
+	if (langId === '') { return ''; }
+	return `<input type="hidden" id="langSelector" value="${escHtml(langId)}">`;
 }
 
 /**
@@ -209,23 +237,32 @@ export function renderActions(p: ParsedLeetCode): string {
  *
  * | Phase | Visible | Hidden |
  * |---|---|---|
- * | `idle` / `attempted` | language select, practice settings, Solve It | Run Tests, Submit |
- * | `running` | language select, Run Tests, Submit | practice settings, Solve It |
- * | `solved` | language select, `.solved-summary`, Solve It (retry) | Run Tests, Submit, practice settings |
+ * | `idle` / `attempted` | language **chooser** (2+ langs), practice settings, Solve It | Run Tests, Submit |
+ * | `running` | Run Tests, Submit (language is **fixed**, marker only) | language chooser, practice settings, Solve It |
+ * | `solved` | language **chooser** (retry), `.solved-summary`, Solve It (retry) | Run Tests, Submit, practice settings |
+ *
+ * The language chooser is a *pre-start* control: it appears only where the
+ * next action is Solve It (`idle`/`attempted`/`solved`), and only when there
+ * is more than one runnable language to choose between. Once `running`, the
+ * language is locked to what Solve It started — the chooser is gone and a
+ * hidden marker carries `activeLangId` so Run Tests / Submit and block-filtering
+ * stay bound to that one language, never a value the user could change mid-run.
  *
  * `attempted` renders identically to `idle` — a failed Submit already ended
  * the challenge and lifted every restriction, so the solver lands back on the
  * same pre-challenge screen (see `docs/plans/3-button-state.md`).
  *
- * @param state - Current `ChallengeState['phase']`.
- * @param p - Parsed LeetCode artifact.
+ * @param state       - Current `ChallengeState['phase']`.
+ * @param p           - Parsed LeetCode artifact.
+ * @param activeLangId - The language the live run is locked to; used only by
+ *   `running` to seed the hidden marker. Ignored in other phases.
  * @returns HTML for the controls block appropriate to `state`.
  *
  * @example
- * renderControls('running', parsed); // → language row + Run Tests + Submit, no practice settings
+ * renderControls('running', parsed, 'rust'); // → Run Tests + Submit, hidden 'rust' marker
  */
-export function renderControls(state: ChallengePhase, p: ParsedLeetCode): string {
-	if (state === 'running') { return renderRunningControls(p); }
+export function renderControls(state: ChallengePhase, p: ParsedLeetCode, activeLangId = ''): string {
+	if (state === 'running') { return renderRunningControls(p, activeLangId); }
 	if (state === 'solved')  { return renderSolvedControls(p); }
 	return renderIdleControls(p);
 }
@@ -255,19 +292,26 @@ function renderIdleControls(p: ParsedLeetCode): string {
 }
 
 /**
- * Render the in-challenge controls: the language select plus Run Tests and
- * Submit. Practice settings and Solve It are gone — the run is already live,
- * so there is nothing left to configure and nothing to start a second time.
+ * Render the in-challenge controls: Run Tests and Submit, with the language
+ * fixed. The chooser, practice settings, and Solve It are all gone — the run
+ * is live, so there is nothing to configure, nothing to start again, and no
+ * language to re-pick. A hidden marker carries the locked language so the
+ * webview's block-filter and payloads stay bound to it; Run Tests / Submit
+ * themselves read the language authoritatively from the live session, so the
+ * marker is a UI convenience, never the source of truth.
  *
- * @param p - Parsed LeetCode artifact.
+ * @param p           - Parsed LeetCode artifact.
+ * @param activeLangId - The language this run is locked to (`''` falls back to
+ *   the exercise's sole runnable language, if any).
  * @returns HTML for the running controls block.
  *
  * @example
- * renderRunningControls(parsed);
+ * renderRunningControls(parsed, 'rust');
  */
-function renderRunningControls(p: ParsedLeetCode): string {
+function renderRunningControls(p: ParsedLeetCode, activeLangId: string): string {
+	const locked = activeLangId || (availableLanguages(p)[0] ?? '');
 	return [
-		renderLanguageRow(p),
+		renderLanguageMarker(locked),
 		'<div class="actions">',
 		'<button id="runTestsBtn" class="btn btn-secondary">Run Tests</button>',
 		'<button id="submitBtn" class="btn btn-secondary">Submit</button>',

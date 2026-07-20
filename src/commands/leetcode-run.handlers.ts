@@ -38,22 +38,25 @@ import type { PanelCtx } from '../ui/views/leetcodeView.provider.js';
  * this guard exists because webview state drifts when the panel is disposed or
  * the challenge is ended from the command palette.
  *
- * @param ctx      - Panel session state.
- * @param language - Language chosen in the panel.
+ * The language is taken from the **live session**, not the webview: the panel
+ * shows no language chooser mid-run, so the language is whatever Solve It
+ * started, and grading must bind to the buffer that is actually open.
+ *
+ * @param ctx - Panel session state.
  *
  * @example
- * await handleRunTests(ctx, 'javascript');
+ * await handleRunTests(ctx);
  */
-export async function handleRunTests(ctx: PanelCtx, language: string | undefined): Promise<void> {
-	const setup = resolveRunSetup(ctx, language);
-	if (!setup) { return; }
-	const { langId, lang, env } = setup;
-
+export async function handleRunTests(ctx: PanelCtx): Promise<void> {
 	const session = activeChallenge();
-	if (session?.langId !== langId) {
+	if (!session) {
 		void vscode.window.showWarningMessage('Start the challenge with "Solve It" first.');
 		return;
 	}
+
+	const setup = resolveRunSetup(ctx, session.langId);
+	if (!setup) { return; }
+	const { langId, lang, env } = setup;
 
 	const code = await liveBuffer(session.fileUri);
 	if (!await runtimeReady(lang, env)) { return; }
@@ -96,15 +99,19 @@ export async function handleRunTests(ctx: PanelCtx, language: string | undefined
  * await handleSubmit(ctx, 'python');
  */
 export async function handleSubmit(ctx: PanelCtx, language: string | undefined): Promise<void> {
-	const setup = resolveRunSetup(ctx, language);
-	if (!setup) { return; }
-	const { langId, lang, env } = setup;
-
 	// Claimed synchronously, before any `await` below — see the re-entrancy
 	// note above. `liveSession` (not a fresh `activeChallenge()` call) is what
 	// `wasLive` and `finishChallenge` both key off for the rest of this run.
 	const liveSession = activeChallenge();
-	const wasLive = liveSession?.langId === langId;
+	// A live run's language is authoritative — the panel offers no chooser
+	// mid-run, and there is only ever one session, so it is this exercise's.
+	// `language` (the webview's marker/choice) is the fallback for a dry-run
+	// Submit with no live challenge.
+	const setup = resolveRunSetup(ctx, liveSession?.langId ?? language);
+	if (!setup) { return; }
+	const { langId, lang, env } = setup;
+
+	const wasLive = liveSession !== null;
 	if (wasLive && liveSession && !claimSubmission(liveSession)) { return; }
 
 	const code = await candidateSource(ctx, langId);

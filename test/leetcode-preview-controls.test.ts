@@ -164,6 +164,25 @@ suite('leetcodePreview.controls', () => {
             assert.ok(!html.includes('<select'));
             assert.ok(html.includes('<code>class</code>'));
         });
+
+        // A single runnable language is not a choice — the user configures
+        // nothing, the run defaults to it. No visible chooser, but a hidden
+        // marker still carries the id so the webview knows the language.
+        test('a single runnable language renders no visible selector', () => {
+            const p = fixture({
+                setups:    [{ language: 'rust', code: 'fn two_sum() {}' }],
+                solutions: [],
+            });
+            const html = renderLanguageRow(p);
+            assert.ok(!html.includes('<select'), 'no dropdown for one language');
+            assert.ok(/<input type="hidden" id="langSelector" value="rust"/.test(html),
+                'a hidden marker carries the single language');
+        });
+
+        test('two or more runnable languages render a visible selector', () => {
+            const html = renderLanguageRow(fixture());
+            assert.ok(html.includes('<select id="langSelector"'));
+        });
     });
 
     // ── renderSetups ──────────────────────────────────────────────────────────
@@ -299,6 +318,25 @@ suite('leetcodePreview.controls', () => {
             assert.ok(!html.includes('class="practice-option"'));
             assert.ok(!html.includes('id="timeLimit"'));
             assert.ok(!html.includes('id="solveBtn"'));
+        });
+
+        // The language is fixed once the clock starts — the selector was the
+        // pre-start choice, and offering it mid-run risks grading a language
+        // other than the one whose temp file is open.
+        test('running renders no visible language selector, even with 2+ languages', () => {
+            const html = renderControls('running', fixture(), 'python');
+            assert.ok(!html.includes('<select'), 'no dropdown while running');
+        });
+
+        test('running carries the active language as a hidden marker', () => {
+            const html = renderControls('running', fixture(), 'python');
+            assert.ok(/<input type="hidden" id="langSelector" value="python"/.test(html),
+                'the locked language is emitted so the webview filters blocks to it');
+        });
+
+        test('solved still offers the selector for a retry (2+ languages)', () => {
+            const html = renderControls('solved', fixture());
+            assert.ok(html.includes('<select id="langSelector"'));
         });
 
         test('solved shows the .solved-summary block and a Solve It retry button', () => {

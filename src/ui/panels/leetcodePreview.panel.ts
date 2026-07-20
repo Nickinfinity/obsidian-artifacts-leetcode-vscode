@@ -57,7 +57,7 @@ import {
  */
 export function renderLeetCodePreviewHtml(
 	parsed: ParsedLeetCode, cssUris: string[], cspSource: string, resultsHtml = '',
-	state: ChallengePhase = 'idle', timer: TimerTick | null = null,
+	state: ChallengePhase = 'idle', timer: TimerTick | null = null, activeLangId = '',
 ): string {
 	const timerLabel = timer === null ? '' : formatRemaining(timer.ms);
 	const unlimited = timer?.unlimited ?? false;
@@ -70,7 +70,7 @@ export function renderLeetCodePreviewHtml(
 		renderTestCounts(parsed),
 		renderSetups(parsed),
 		renderSolutionsSection(parsed),
-		renderControls(state, parsed),
+		renderControls(state, parsed, activeLangId),
 		`<div id="results" class="results-container">${resultsHtml}</div>`,
 	].join('\n');
 
