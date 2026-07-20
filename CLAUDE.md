@@ -35,7 +35,8 @@ Press **F5** for the Extension Development Host — the only check for `vscode`-
 core *Obsidian Artifacts: AI Snippets & Tools* extension (Jira **VSX-35** / **VSX-64…68**).
 It turns `type: leetcode` notes in an Obsidian vault into runnable coding challenges: parse
 → generate boilerplate + a per-language test harness → run solutions against JSON test cases
-via local runtimes (Java / Python / JavaScript) → show pass/fail in a preview panel. No
+via local runtimes (Java / Python / JavaScript / Rust / TypeScript) → show pass/fail in a
+preview panel. No
 artifact-type machinery, no parser/render/varset pipeline — the only shared concept kept is
 a trimmed vault-folder picker.
 
@@ -59,7 +60,7 @@ src/
 ├── commands/           # VS Code command handlers + run orchestration (picker, solveIt, submit)
 ├── services/           # Domain logic: parse, codegen, runner, challenge/timer, vault, attempts
 │   └── test-envs/      # (test type × language) environments — validate/emit/parse a suite
-│       └── function/   # The three `function` envs, all built by makeFunctionEnv(spec)
+│       └── function/   # The five `function` envs, all built by makeFunctionEnv(spec)
 ├── ui/
 │   ├── panels/         # Webview HTML renderers + message handling (settings, preview)
 │   ├── views/          # Activity-Bar WebviewView providers (sidebar)
@@ -188,16 +189,29 @@ folder) are gone.
 
 1. a `LANGUAGES` entry (`src/types/languages.ts`),
 2. a `TYPE_SYNTAX` row (type mapping),
-3. a `LANG_CODEGEN` row (boilerplate + harness),
+3. a `LANG_CODEGEN` row (boilerplate + harness — the template itself lives in its own file
+   under [src/services/codegen/](src/services/codegen/), e.g. `rust.codegen.ts`,
+   `typescript.codegen.ts`, imported into the row, never inlined),
 4. a `makeFunctionEnv(spec)` env (`test-envs/function/`).
+
+A version- or library-gated language doesn't add a fifth row — it uses `TestEnv.requires` /
+`detect()` on row 4's registration instead. TypeScript is the first env to do this:
+`typescriptFunctionEnv.detect()` gates on the running Node satisfying
+`nodeSupportsStripTypes` (≥ 22.18 on the 22.x line, ≥ 23.10 on 23.x) before the language ever
+reaches the selector — `LANGUAGES.typescript.detectCmd` (`node --version`, row 1) only proves
+*some* Node is installed, not that it's new enough for `node:module.stripTypeScriptTypes`.
 
 `TYPE_SYNTAX` and `LANG_CODEGEN` are **two** tables in
 [leetcode-codegen.service.ts](src/services/leetcode-codegen.service.ts), deliberately not
-merged: `TYPE_SYNTAX` covers the *type-mappable* set (java/python/javascript/**rust**),
-`LANG_CODEGEN: Record<LangId, …>` the *runnable* set. Rust is type-mappable but not runnable,
-so one `Record<LangId, …>` would silently drop its type mapping. The broad **cosmetic** tables
-(`LANG_ALIAS`, `LANG_EXT` — 40+ fence→id/ext entries) stay in `constants.ts` and are *not*
-folded into the 3-language registry; a consistency test guards them against drift.
+merged: `TYPE_SYNTAX: Record<string, …>` covers the *type-mappable* set (currently
+java/python/javascript/rust/typescript, open-ended for a future display-only language),
+`LANG_CODEGEN: Record<LangId, …>` the *runnable* set — compiler-checked exhaustive over
+`LangId`, so a type-mappable language that never becomes runnable can't force a fake codegen
+entry. Both tables happen to cover the same five languages today now that Rust and TypeScript
+are runnable, but the split still guards against the next type-mappable-only addition. The
+broad **cosmetic** tables (`LANG_ALIAS`, `LANG_EXT` — 40+ fence→id/ext entries) stay in
+`constants.ts` and are *not* folded into the runnable-language registry; a consistency test
+guards them against drift.
 
 ### Code generation
 
@@ -223,13 +237,14 @@ parses its output into per-case outcomes. `testEnvFor(type, langId)` returns
 `TestEnv | undefined` — the absence of a pair **is** the matrix, and `languagesForType(type)`
 drives the language selector directly, so there is no second table to keep in sync.
 
-The three `function` envs come from `makeFunctionEnv(spec)`
+The five `function` envs come from `makeFunctionEnv(spec)`
 ([make-function-env.ts](src/services/test-envs/function/make-function-env.ts)), which owns
 `type: 'function'`, the two-file emit shape, and the shared sentinel parser; each language
 supplies only its `runnerSource` / `candidateContent` / `validate`. They are self-contained —
 the extension ships zero runtime dependencies and has no install path, so it cannot assume a
-JUnit jar exists. `TestEnv.requires` / `detect()` exist so a library-backed env can be added
-later without touching the runner.
+JUnit jar exists. `TestEnv.requires` / `detect()` exist so a version- or library-gated env can
+run its own extra check without touching the runner; TypeScript's env is the first to use it,
+gating on a Node version floor rather than a missing package (see the four-rows section above).
 
 **The candidate is never spliced.** `env.emit(ctx)` returns `{ files, compile?, run }`. The
 solver's code is written **verbatim** as one file; a generated *driver* links to it, so their
@@ -240,6 +255,8 @@ imports, helpers, and structure survive and cannot collide with the driver's cla
 | java | `Solution.java` (method wrapped in `class Solution`) | second compilation unit — `javac Solution.java Runner.java`, `java Runner` |
 | python | `sol.py` | `importlib`; an `if __name__=='__main__'` guard keeps the solver's own main dormant |
 | javascript | `sol.js` | Node's `vm` — fresh context, pull the function from the sandbox |
+| rust | `solution.rs` (leading `fn` rewritten `pub fn`) | second compilation unit — generated `runner.rs` declares `mod solution;`, `rustc -O runner.rs -o runner` pulls it in, `./runner` |
+| typescript | `sol.ts` (written verbatim) | generated `runner.js` reads it, strips types with `node:module.stripTypeScriptTypes`, evaluates the result in a `vm` sandbox — same shape as the javascript env plus one call |
 
 (Splicing into a generated `class Main` was the old model; it collided the moment a solver
 wrote their own `import`, `class Main`, or `main()`.) Commands run with the temp dir as
@@ -247,6 +264,14 @@ wrote their own `import`, `class Main`, or `main()`.) Commands run with the temp
 returns a plain user-facing message (or `null`) — a Java method wrapped in the solver's own
 `class`, a Python `def` nested in a class, a JS buffer that never names the function — so the
 panel shows *"Java setup must be a bare method, not a class"* instead of a compiler dump.
+
+**Rust has no serde.** Results serialise through a local `LeetJson` trait (compact, key-sorted
+JSON — `i32`/`f64`/`bool`/`String`/`Vec<T>`/`Option<T>`/`HashMap<String, T>`), not `{:?}` Debug:
+`Vec` Debug-prints with `", "` separators (never `canonicalJson`'s `[0,1]`) and `HashMap` Debug
+order is unspecified. Structs and enums are out of scope until a serde upgrade. **TypeScript
+never invokes `tsc`.** Non-erasable syntax (`enum`, `namespace`, parameter properties,
+decorators) throws straight out of `stripTypeScriptTypes` or `vm.runInContext` with that
+runtime's own message, caught and reported per-case rather than crashing the child process.
 
 **The batch protocol.** One process per suite, one sentinel line per case:
 

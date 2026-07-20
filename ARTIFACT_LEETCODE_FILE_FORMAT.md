@@ -34,8 +34,10 @@ function: twoSum
 algorithm: hash-map
 status: unsolved
 params:
-  - { name: nums, type: int[] }
-  - { name: target, type: int }
+  - name: nums
+    type: int[]
+  - name: target
+    type: int
 returns: int[]
 practice:
   timeLimit: 30
@@ -158,13 +160,18 @@ params: []
 params:
   - name: nums
     type: int[]
-  - { name: target, type: int }
+  - name: target
+    type: int
 ~~~
 
-Both the multi-line `- name:` / `type:` form and the inline `{ name, type }`
-form parse. A `ParamDef` is only kept when **both** `name` and `type` are set.
-Any non-empty value directly after `params:` (other than `[]`) yields an empty
-list — the entries must be on the following indented lines.
+Only the multi-line `- name:` / `type:` form parses — each field on its own
+indented line. The parser reads `key: value` lines only
+([`assignParamField`](src/services/leetcode-parser.helpers.ts) → `KV_RE`), so a
+YAML **inline flow-map** (`- { name: nums, type: int[] }`) does **not** parse:
+the line starts with `{`, matches no `key:` pair, and the entry is silently
+dropped. A `ParamDef` is kept only when **both** `name` and `type` are set. Any
+non-empty value directly after `params:` (other than `[]`) yields an empty list
+— the entries must be on the following indented lines.
 
 ---
 
@@ -299,15 +306,18 @@ language)` translates them. Unknown generics pass through unchanged; unknown
 languages return the generic as-is. Java boxes primitives inside generics
 (`int` → `Integer`).
 
-| Generic | Java | Python | JavaScript | Rust |
-|---|---|---|---|---|
-| `int` | `int` | `int` | `number` | `i32` |
-| `float` | `double` | `float` | `number` | `f64` |
-| `string` | `String` | `str` | `string` | `String` |
-| `bool` | `boolean` | `bool` | `boolean` | `bool` |
-| `int[]` | `int[]` | `List[int]` | `number[]` | `Vec<i32>` |
-| `int[][]` | `int[][]` | `List[List[int]]` | `number[][]` | `Vec<Vec<i32>>` |
-| `map<string,int>` | `Map<String, Integer>` | `Dict[str, int]` | `Record<string, number>` | `HashMap<String, i32>` |
+| Generic | Java | Python | JavaScript | Rust | TypeScript |
+|---|---|---|---|---|---|
+| `int` | `int` | `int` | `number` | `i32` | `number` |
+| `float` | `double` | `float` | `number` | `f64` | `number` |
+| `string` | `String` | `str` | `string` | `String` | `string` |
+| `bool` | `boolean` | `bool` | `boolean` | `bool` | `boolean` |
+| `int[]` | `int[]` | `List[int]` | `number[]` | `Vec<i32>` | `number[]` |
+| `int[][]` | `int[][]` | `List[List[int]]` | `number[][]` | `Vec<Vec<i32>>` | `number[][]` |
+| `map<string,int>` | `Map<String, Integer>` | `Dict[str, int]` | `Record<string, number>` | `HashMap<String, i32>` | `Record<string, number>` |
+
+TypeScript's container syntax (`array`/`map`) is identical to JavaScript's — both are the
+same structural type system at the declaration level the codegen writes to.
 
 ---
 
@@ -320,14 +330,23 @@ How a test executes is data, not a branch. A **test environment** is a
 
 | `test.type` | Languages with an environment |
 |---|---|
-| `function` | `java`, `python`, `javascript` |
+| `function` | `java`, `javascript`, `python`, `rust`, `typescript` |
 | `class`, `stdin-stdout`, `in-place` | *(none — reserved; selector renders empty)* |
 
-The three `function` environments are self-contained (the extension ships zero
+The five `function` environments are self-contained (the extension ships zero
 runtime dependencies). The solver's code is written verbatim as its own file and
 a generated driver links to it — the candidate is **never** spliced into a
 wrapper, and must be a bare declaration of the function, never a program that
 reads stdin.
+
+**Per-language ceilings.** Rust serialises results through a local `LeetJson`
+trait (compact, key-sorted JSON) rather than serde or `{:?}` Debug — neither
+reliably matches `canonicalJson`'s formatting — so structs and enums are not
+yet supported as param/return types. TypeScript never invokes `tsc`: the default path
+strips types in-process with Node's own `stripTypeScriptTypes` and runs the
+result in a `vm` sandbox, gated on `detect()` finding Node ≥ 22.18 (22.x line)
+or ≥ 23.10 (23.x line) — older Node drops TypeScript out of the language
+selector rather than failing mid-run.
 
 ---
 
