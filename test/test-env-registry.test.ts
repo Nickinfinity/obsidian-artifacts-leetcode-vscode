@@ -33,8 +33,15 @@ suite('test-env registry', () => {
         });
 
         test('an unregistered language has no environment', () => {
-            assert.strictEqual(testEnvFor('function', 'rust'), undefined);
-            assert.strictEqual(testEnvFor('function', 'typescript'), undefined);
+            // `ruby` is a non-`LangId`: rust and typescript are now registered
+            // function envs (wave 3), so they resolve rather than returning undefined.
+            assert.strictEqual(testEnvFor('function', 'ruby'), undefined);
+            assert.strictEqual(testEnvFor('function', 'kotlin'), undefined);
+        });
+
+        test('rust and typescript resolve to their registered function envs', () => {
+            assert.strictEqual(testEnvFor('function', 'rust')?.language, 'rust');
+            assert.strictEqual(testEnvFor('function', 'typescript')?.language, 'typescript');
         });
 
         test('built-in function envs declare no external dependency', () => {
@@ -50,8 +57,9 @@ suite('test-env registry', () => {
 
     suite('languagesForType', () => {
 
-        test('function resolves to the three built-in languages, sorted', () => {
-            assert.deepStrictEqual(languagesForType('function'), ['java', 'javascript', 'python']);
+        test('function resolves to the five built-in languages, sorted', () => {
+            assert.deepStrictEqual(languagesForType('function'),
+                ['java', 'javascript', 'python', 'rust', 'typescript']);
         });
 
         test('a reserved type resolves to no language at all', () => {

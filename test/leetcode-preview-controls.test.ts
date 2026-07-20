@@ -122,8 +122,10 @@ suite('leetcodePreview.controls', () => {
         });
 
         test('a language with no environment for the test type is filtered out', () => {
+            // `ruby` has no registered function env (rust/typescript now do, as of
+            // wave 3), so it is the honest stand-in for "declared but unrunnable".
             const p = fixture({
-                setups:    [{ language: 'rust', code: 'fn two_sum() {}' }],
+                setups:    [{ language: 'ruby', code: 'def two_sum; end' }],
                 solutions: [{ language: 'python', code: '# py' }],
             });
             assert.deepStrictEqual(availableLanguages(p), ['python']);

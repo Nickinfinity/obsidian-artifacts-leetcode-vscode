@@ -3,6 +3,8 @@ import type { TestEnv } from './env.types.js';
 import { javaFunctionEnv } from './function/java.env.js';
 import { javascriptFunctionEnv } from './function/javascript.env.js';
 import { pythonFunctionEnv } from './function/python.env.js';
+import { rustFunctionEnv } from './function/rust.env.js';
+import { typescriptFunctionEnv } from './function/typescript.env.js';
 
 /** `"<type>::<language>"` → env. The absence of a key *is* the capability matrix. */
 const registry = new Map<string, TestEnv>();
@@ -53,7 +55,7 @@ export function testEnvFor(type: TestTypeId, language: string): TestEnv | undefi
  * @returns Sorted canonical language ids; `[]` for a reserved type.
  *
  * @example
- * languagesForType('function'); // → ['java', 'javascript', 'python']
+ * languagesForType('function'); // → ['java', 'javascript', 'python', 'rust', 'typescript']
  * languagesForType('class');    // → []
  */
 export function languagesForType(type: TestTypeId): string[] {
@@ -71,3 +73,5 @@ export function languagesForType(type: TestTypeId): string[] {
 register(javascriptFunctionEnv);
 register(pythonFunctionEnv);
 register(javaFunctionEnv);
+register(rustFunctionEnv);
+register(typescriptFunctionEnv);

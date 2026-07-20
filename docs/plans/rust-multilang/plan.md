@@ -506,12 +506,28 @@ point user data reaches a subprocess as anything but file contents.
 - **Depends on:** T13
 - **Test first:** with `libDir` set, a candidate calling `require('lodash')` resolves; with
   `libDir` unset, emit output is byte-identical to Phase 1's.
-- **Done when:** the sandbox gains a `require` from `module.createRequire()` rooted at `libDir` —
-  **and nothing else**. No `process`, no `fs`, no `child_process`. This is the sharp edge of the
-  phase: the current env deliberately runs candidates in a bare `vm` context with no `require`
-  at all. TypeScript inherits unchanged — same env plus the strip call.
+- **Done when:** the sandbox's `require` is **replaced** by one from `module.createRequire()`
+  rooted at `libDir`, so a candidate resolves the exercise's declared libraries instead of the
+  runner's own resolution paths. TypeScript inherits unchanged — same env plus the strip call.
 - **Gate:** full gate + the reviewer's manual security trace on this diff specifically (§3.1) —
-  a widened `vm` sandbox is precisely the case no local rule set detects.
+  a `vm` sandbox is precisely the case no local rule set detects.
+
+> **⚠️ This task's original premise was false and was corrected in wave 3.** It read: *"the
+> sandbox gains a `require` … This is the sharp edge of the phase: the current env deliberately
+> runs candidates in a bare `vm` context with no `require` at all."* Verified against the tree —
+> [javascript.env.ts:72](../../../src/services/test-envs/function/javascript.env.ts#L72) builds
+> `{ module, exports, console, require, process }` and the env's own JSDoc says it gives the
+> solver `console` and `require`. There is no bare sandbox to widen; `require` and `process` are
+> already there. T16 therefore **swaps** a `require`, it does not grant one — a materially
+> smaller change than planned, and its "no `process`" clause was describing a restriction the
+> code never had.
+>
+> **The real finding this exposed is bigger than T16** and is tracked separately (see the ledger,
+> and §0's trust-class note): artifact-supplied `# Solutions` code reaches this sandbox through
+> `candidateSource()`'s no-live-challenge fallback, so opening a third-party `.md` and pressing
+> Submit executes its code with `require('child_process')` in scope. Node documents that `vm`
+> **is not a security mechanism**, so removing `require` would not make this a boundary either.
+> Do not let T16 masquerade as the fix for it.
 
 ### T17 — Python libraries (venv)
 
