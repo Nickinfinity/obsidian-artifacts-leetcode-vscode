@@ -111,8 +111,9 @@ forbidden-files list, report caps). Skills do **not** auto-load in subagents —
 > person holds the architecture line. You direct; you implement only orchestrator-tagged
 > tasks and integration hunks — never a worker's task.
 >
-> First load, via the Skill tool: `caveman`, `ponytail`, `mastering-typescript`. Run
-> `sonar-analyze` on any code you land yourself — the standard you enforce applies to you.
+> First load, via the Skill tool: `caveman`, `ponytail`, `mastering-typescript`. Fix the IDE's
+> Sonar diagnostics on any code you land yourself (§3.1) — the standard you enforce applies to
+> you.
 >
 > **Tech-lead duties:** hold the plan's architecture decisions against drift; land every
 > shared-file wire-up (registrations, table rows) yourself at wave close; arbitrate
@@ -140,9 +141,11 @@ forbidden-files list, report caps). Skills do **not** auto-load in subagents —
 > diff *doesn't* do — the missing guard, the untested branch, the unescaped value. You never
 > edit code — you return a verdict the orchestrator enforces.
 >
-> First load, via the Skill tool: `caveman`, `ponytail`, `mastering-typescript`. Run
-> `sonar-analyze` on the diff yourself — a worker's "sonar clean" claim is verified, never
-> trusted.
+> First load, via the Skill tool: `caveman`, `ponytail`, `mastering-typescript`. Re-read the
+> diff for the rule classes the IDE analyser reports (§3.1) rather than trusting a worker's
+> "clean" claim — and note that the analyser performs **no taint analysis**, so on any
+> subprocess, filesystem, or webview surface your §5 trace is not a second opinion, it is the
+> only check that exists.
 >
 > Review in this order, cheapest rejection first — **except security, which you always
 > complete**: even when an earlier check already failed, a security defect found anywhere is
@@ -167,7 +170,7 @@ forbidden-files list, report caps). Skills do **not** auto-load in subagents —
 >    `any` at a trust boundary. Injection surfaces (`eval`, `new Function`, template-built
 >    commands) are defects wherever they appear. When a diff widens a sandbox or adds a
 >    subprocess, name the new attack surface in your verdict even when you approve.
-> 6. **Sonar findings** — fixed, not filed.
+> 6. **Static-analysis findings** — the IDE's rule-tagged diagnostics, fixed, not filed.
 >
 > Verdict, terse:
 > `APPROVE` — one line why; plus the attack-surface note when §5 applies.
@@ -207,8 +210,9 @@ forbidden-files list, report caps). Skills do **not** auto-load in subagents —
 > runtime dependencies.
 >
 > First load, via the Skill tool: `caveman`, `ponytail`, `mastering-typescript`. Order of
-> work: design the types → write the failing test → smallest implementation that passes →
-> `sonar-analyze` and fix what it finds → gate your slice → report.
+> work: design the types → write the failing test → smallest implementation that passes → fix
+> the IDE's Sonar diagnostics on your diff (§3.1 — they arrive on their own; do not invoke
+> `sonar-analyze`) → gate your slice → report.
 >
 > **Task (verbatim from the plan):** `<task block: Owns / Reads / Depends on / Test first /
 > Done when / Gate>`
@@ -219,7 +223,8 @@ forbidden-files list, report caps). Skills do **not** auto-load in subagents —
 > note for the orchestrator.
 >
 > **Report (terse, ≤ 15 lines):** files touched · tests added (names) · count before → after
-> · gate tail · sonar findings fixed · deviations or blockers. No prose beyond that.
+> · gate tail · IDE analyser findings fixed (with rule ids) · deviations or blockers. No prose
+> beyond that.
 
 ---
 
@@ -234,11 +239,42 @@ explicit Skill-tool invocations, and a dispatch prompt missing them is a bug in 
 | `caveman` | Output compression. Terse reports and verdicts, full technical substance. Applies to agent-to-orchestrator traffic, **not** to code, commits, or PR bodies. |
 | `ponytail` | Solution sizing. Climb the ladder — does it need to exist, is it already here, does stdlib cover it — before writing anything. Shortest working diff. The reviewer applies the same lens destructively: flag speculative abstraction for deletion. |
 | `mastering-typescript` | Writing **and** reviewing TS. Type-level correctness, `satisfies`, discriminated unions over `any`, no unchecked casts. Workers consult it before designing a type; the reviewer consults it again when judging one. |
-| `sonarqube` plugin (`sonar-analyze`) | Quality/security pass on every non-trivial diff. The worker runs it before reporting; the reviewer runs it **independently** on the same diff — a worker's "sonar clean" claim is verified, never trusted. Findings are **fixed**, not filed. |
 
 **Order of operations inside a task:** `mastering-typescript` (design the types) → TDD (write
-the failing test) → `ponytail` (write the smallest thing that passes) → `sonar-analyze` (fix
-what it finds) → gate → `caveman` (report).
+the failing test) → `ponytail` (write the smallest thing that passes) → fix what the static
+analyser reports (§3.1) → gate → `caveman` (report).
+
+### 3.1 Static analysis — the IDE extension is the gate, not `sonar-analyze`
+
+**The Sonar pass in this repo runs through the *SonarQube for IDE* (SonarLint) VS Code
+extension.** Its findings arrive automatically as `<ide_diagnostics>` after every `Edit`/`Write`
+— for the orchestrator, the workers, and the reviewer alike — and they are rule-tagged
+(`typescript:S3776`, `typescript:S8786`). **Findings are fixed, not filed.** No agent needs to
+invoke anything to get them; they simply arrive.
+
+**Do not invoke or install `sonar-analyze`, `mcp__sonarqube__*`, or the `sonar` CLI.** They
+require either a running SonarQube server or a Cloud organisation, and the analysis worth having
+there — taint/dataflow — is a Developer Edition feature. For a private repository there is no
+free path to it. A plan that gates a task on `sonar-analyze` is specifying a check this repo
+cannot run.
+
+**The ceiling, and it is load-bearing.** Standalone IDE analysis runs *local* rules only. It does
+**not** perform taint analysis, so it will never find an injection or a path-traversal defect.
+Those surfaces are held by two things and nothing else:
+
+1. **Construction** — user data reaches a subprocess as argv elements via `execFile`, never as a
+   command string; every user-influenced path is normalised and containment-asserted before any
+   write; every webview interpolation goes through `escHtml`; every parse is guarded.
+2. **The reviewer's manual §2 security trace** — which, absent taint analysis, is the *only*
+   line of defence on those surfaces. Weight it accordingly: it is not a second opinion, it is
+   the check.
+
+This is why §4's security marking matters more here than it would in a repo with a full analyser
+behind it.
+
+**If the extension is absent** — diagnostics stop arriving — the gate degrades to `pnpm lint` +
+`npx tsc --noEmit` + the reviewer's manual pass. That degradation is **recorded in the ledger**,
+never skipped silently.
 
 ---
 
@@ -375,8 +411,9 @@ Before any agent is dispatched, the plan must satisfy:
       hunks in the wave table, not inside worker tasks.
 - [ ] Every task touching untrusted input (artifact `.md`, test JSON, solution buffer,
       subprocess argv, user-influenced paths, webview interpolation) is **marked
-      security-critical**, its Test-first field includes a hostile input, and its Gate
-      includes `sonar-analyze`.
+      security-critical** and its Test-first field includes a hostile input. Its Gate names the
+      **reviewer's manual security trace** — not `sonar-analyze`, which this repo cannot run
+      (§3.1), and which would not catch taint defects even if it could.
 - [ ] Shared-file (registry/table) edits are assigned to the orchestrator, not a worker.
 - [ ] Every `vscode`-free task names a test file and a first failing assertion.
 - [ ] Every `vscode`-coupled task names its F5 click-path.

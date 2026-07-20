@@ -119,6 +119,11 @@ Phases 3–4 do **not** — see step 6.
   T22 (untrusted `.md` parse — new case schemas), T27 (per-case stdin fed to child processes),
   T30 (recursive vault walk — symlink containment under the `LeetCode/` root).
   Their Test-first includes a hostile input; their review verdict names the attack surface.
+- **Static analysis:** the *SonarQube for IDE* extension only — diagnostics arrive on their own
+  after every edit and are fixed, not filed. `sonar-analyze` / `mcp__sonarqube__*` / the `sonar`
+  CLI are **not** to be invoked or installed ([CREATING_A_PLAN.md §3.1](../../../CREATING_A_PLAN.md)).
+  It performs **no taint analysis**, so on every surface listed above the reviewer's manual
+  trace is the only check that exists — not a second opinion.
 - **Review:** max 2 `CHANGES` rounds per task, then `ESCALATE`; verdicts and round counts go in
   the ledger Notes column.
 
@@ -428,8 +433,10 @@ point user data reaches a subprocess as anything but file contents.
   Cover `;rm -rf /`, `../../etc/passwd`, `-rf`, empty string.
 - **Done when:** pure, `vscode`-free, exported. (The parser wires it in T11 — not here; the
   parser file belongs to T11.)
-- **Gate:** full gate + `sonar-analyze` clean (a security hotspot is expected; it must come back
-  clean).
+- **Gate:** full gate. **Reviewer's manual security trace is the gate here** — `sonar-analyze`
+  is not runnable in this repo and would not catch a taint defect anyway
+  ([CREATING_A_PLAN.md §3.1](../../../CREATING_A_PLAN.md)). This task *is* the trust boundary,
+  so the trace is mandatory and its verdict names the surface.
 
 ### T11 — Parse `libs:`, reserve `test.runtime`
 
@@ -503,7 +510,8 @@ point user data reaches a subprocess as anything but file contents.
   **and nothing else**. No `process`, no `fs`, no `child_process`. This is the sharp edge of the
   phase: the current env deliberately runs candidates in a bare `vm` context with no `require`
   at all. TypeScript inherits unchanged — same env plus the strip call.
-- **Gate:** full gate + `sonar-analyze` on this diff specifically.
+- **Gate:** full gate + the reviewer's manual security trace on this diff specifically (§3.1) —
+  a widened `vm` sandbox is precisely the case no local rule set detects.
 
 ### T17 — Python libraries (venv)
 
@@ -627,7 +635,7 @@ test: { type: function, mutates: nums }
 - **Done when:** three schemas parse and validate — class ops-sequence, `test.mutates: <param>`
   (must name a declared param), stdin/stdout string pairs. `type: in-place` yields the pointer
   message.
-- **Gate:** full gate + `sonar-analyze`.
+- **Gate:** full gate + the reviewer's manual security trace (§3.1).
 
 ### T23 — `makeClassEnv` factory
 
@@ -686,7 +694,7 @@ test: { type: function, mutates: nums }
 - **Done when:** interpreted languages run the candidate file directly; compiled languages
   compile once, run per case; the candidate is written verbatim — `buildExecutable`
   normalisation explicitly bypassed for this type.
-- **Gate:** full gate + `sonar-analyze`.
+- **Gate:** full gate + the reviewer's manual security trace (§3.1).
 
 ### T28 — Documentation (Phase 2.5)
 
@@ -972,7 +980,7 @@ every run; a drop is a blocker until explained.
 | Rust `{:?}` invalid JSON for some return shape | Ceiling commented at the emit site; structs/enums out of scope until serde in T18 |
 | Env build slow enough to feel broken | T12 cache + own budget; second run of a set skips install; T21 verifies |
 | Two windows build the same env concurrently | `<key>.tmp-<pid>` + atomic rename; loser deletes its tmp |
-| Widening the `vm` sandbox with `require` re-opens escape paths | T16 grants `require` only; `sonar-analyze` on that diff specifically |
+| Widening the `vm` sandbox with `require` re-opens escape paths | T16 grants `require` only; reviewer's manual security trace on that diff specifically — no analyser in this repo performs taint analysis (§3.1) |
 | Cache grows to gigabytes | T19 sweeps by age **and** size, plus an explicit command |
 | Phase 3/4 contracts drift from what 1–2 build | Amended against the tree before breakdown — a starting position, not a commitment |
 | Orphaned dev servers (Phase 4) | Process-group kill; teardown wired to all six exit paths |
@@ -984,7 +992,7 @@ every run; a drop is a blocker until explained.
 
 - [ ] Gate green, test count recorded and up
 - [ ] `npx tsc --noEmit` clean
-- [ ] `sonar-analyze` clean on every non-trivial diff
+- [ ] IDE analyser diagnostics fixed on every non-trivial diff; **no-taint-analysis ceiling recorded** (§3.1)
 - [ ] F5 passes recorded for T9 and T21
 - [ ] `ARTIFACT_LEETCODE_FILE_FORMAT.md` updated in the same change as any format change
 - [ ] `CLAUDE.md` invariants from §0 rewritten

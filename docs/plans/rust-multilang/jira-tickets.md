@@ -128,8 +128,9 @@ First user data in this codebase to reach a subprocess as anything but file cont
 validator: `^@?[a-zA-Z0-9][a-zA-Z0-9._/-]*(@[a-zA-Z0-9.^~*+-]+)?$`.
 
 **AC** — Pure, `vscode`-free; rejections name the entry. Hostile inputs covered: `;rm -rf /`,
-`../../etc/passwd`, `-rf`, `--target=/etc`, empty string. `sonar-analyze` clean. Wiring into the
-parser belongs to T11, not here.
+`../../etc/passwd`, `-rf`, `--target=/etc`, empty string. Reviewer's manual security trace is
+the gate (this task *is* the trust boundary); the repo runs no taint analysis, so no tool will
+vouch for it. Wiring into the parser belongs to T11, not here.
 
 ### `<KEY>` · T11 Parse `libs:`, reserve `test.runtime` · 3
 
@@ -179,7 +180,8 @@ writing a POM resolver).
 **AC** — With `libDir`, `require('lodash')` resolves via `module.createRequire()` rooted at the
 env; without, emit is byte-identical to Phase 1. Sandbox gains `require` **only** — no `process`,
 `fs`, `child_process`. The sharp edge of the phase: today's env deliberately has no `require` at
-all. `sonar-analyze` on this diff specifically, clean. TypeScript inherits unchanged.
+all. Reviewer's manual security trace on this diff specifically — a widened `vm` sandbox is
+exactly what no local rule set detects. TypeScript inherits unchanged.
 
 ### `<KEY>` · T17 Python libraries via venv · 3
 

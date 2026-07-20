@@ -372,10 +372,10 @@ every setup/solution block whose `data-language` ≠ the selection; `data-langua
 > **Planning a multi-agent feature? Read [CREATING_A_PLAN.md](CREATING_A_PLAN.md) first.** It
 > owns the process: where plan files live (`docs/plans/<feature>/`, branch-local, deleted
 > before the PR merges — `develop` and `main` never carry them), the orchestrator/worker
-> topology, the skills every agent loads (`caveman`, `ponytail`, `mastering-typescript`,
-> `sonar-analyze`), the six-field task format, and the ledger. This section stays the
-> authority on *how to write the code*; that file is the authority on *how a plan is
-> structured and executed*.
+> topology, the skills every agent loads (`caveman`, `ponytail`, `mastering-typescript`), the
+> static-analysis rule (§3.1 — the IDE extension, **not** `sonar-analyze`), the six-field task
+> format, and the ledger. This section stays the authority on *how to write the code*; that
+> file is the authority on *how a plan is structured and executed*.
 
 - **TDD — test first, where it makes sense.** For any pure, `vscode`-free unit (parsers,
   codegen, env `emit`/`validate`, suite selection, helpers) write the failing test **before**
@@ -484,11 +484,25 @@ diff of the removed set.
 
 ### Tooling in the loop
 
-Verify with `npx tsc --noEmit` + `pnpm lint` + the mocha gate before calling a change done;
-`sonarqube:sonar-analyze` for a quality/security pass on non-trivial edits. **Trust the tree
-over any plan or ledger** — verify claimed state (grep the literals, run the gate) before
-acting on a document; tasks here have turned out already done, or deliberately done
-differently, by the time their plan was read.
+Verify with `npx tsc --noEmit` + `pnpm lint` + the mocha gate before calling a change done.
+**Trust the tree over any plan or ledger** — verify claimed state (grep the literals, run the
+gate) before acting on a document; tasks here have turned out already done, or deliberately
+done differently, by the time their plan was read.
+
+**Static analysis is the *SonarQube for IDE* (SonarLint) extension, not `sonar-analyze`.** Its
+findings arrive on their own as `<ide_diagnostics>` after every edit, rule-tagged
+(`typescript:S3776`), and are **fixed, not filed**. Do **not** invoke or install
+`sonar-analyze`, `mcp__sonarqube__*`, or the `sonar` CLI: each needs a SonarQube server or Cloud
+org, and taint analysis is a Developer Edition feature — there is no free path for a private
+repo.
+
+**The ceiling this leaves, and it is load-bearing.** Standalone IDE analysis runs local rules
+only — **no taint/dataflow analysis**, so no tool in this repo will ever catch an injection or
+path-traversal defect. The threat model in the Security section above is therefore held by
+construction alone: argv arrays via `execFile` (never command strings), normalise-and-assert
+every user-influenced path before a write, `escHtml` every webview interpolation, guard every
+parse. On those surfaces a human or reviewer read is not a second opinion — it is the only
+check. If the extension is ever absent, say so rather than reporting a clean pass.
 
 ---
 
