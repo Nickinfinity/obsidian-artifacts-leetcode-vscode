@@ -8,6 +8,7 @@ import type {
 	TimerTick,
 } from '../../types/leetcode.types.js';
 import { escHtml } from '../../utils/html.helpers.js';
+import { renderMarkdownLite } from '../../utils/markdown-lite.js';
 import {
 	renderControls,
 	renderNavHeader,
@@ -189,10 +190,16 @@ function renderBadgesRow(p: ParsedLeetCode): string {
 	return `<div class="badges">${parts.join('')}</div>`;
 }
 
-/** Render the description block (omitted when empty). */
+/**
+ * Render the description block (omitted when empty).
+ *
+ * The description is authored Markdown, so it goes through `renderMarkdownLite`
+ * — a whitelist renderer that escapes first and only adds markup for the subset
+ * it supports, so an artifact cannot inject HTML through its own prose.
+ */
 function renderDescription(p: ParsedLeetCode): string {
 	if (!p.description.trim()) { return ''; }
-	return `<div class="desc">${escHtml(p.description)}</div>`;
+	return `<div class="desc">${renderMarkdownLite(p.description)}</div>`;
 }
 
 /** Render the `## Examples` cards section. */

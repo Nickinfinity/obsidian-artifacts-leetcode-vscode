@@ -375,6 +375,14 @@ screen: nav header, title, difficulty/status/algorithm badges, description, exam
 test-count line, `# Setup` starter blocks, reference solutions collapsed behind a `<details>`
 (spoilers), state-gated controls, and the `<div id="results">` sink.
 
+The **description is Markdown** and renders through `renderMarkdownLite`
+([utils/markdown-lite.ts](src/utils/markdown-lite.ts)) — paragraphs, headings, lists,
+blockquotes, inline code, bold/italic, `http(s)` links, and nothing else. It is a *whitelist*
+renderer, not a parser with an HTML passthrough: the source is `escHtml`'d **first** and markup
+is only ever added by those rules, so an artifact's own prose cannot inject HTML, and a
+`javascript:`/`data:`/relative link renders as its bare label. Everywhere else in the panel
+still interpolates through plain `escHtml`.
+
 Controls are **phase-driven, not `disabled`-gated**: `renderControls(state, parsed)` and
 `renderNavHeader(state, …)` ([leetcodePreview.controls.ts](src/ui/panels/leetcodePreview.controls.ts))
 switch wholesale on `ChallengeState['phase']` — `running` gives the close-✕, timer, Run Tests
@@ -448,8 +456,8 @@ every setup/solution block whose `data-language` ≠ the selection; `data-langua
   happen; this repo was already bitten (codegen knew `rust`, the runner table did not).
   **Never hardcode a language or test-type list inline** — derive it (`LANGUAGES`,
   `languagesForType`, `VALID_*`). Reuse `src/utils/` before writing a helper: `escapeRe`,
-  `safeJsonParse`, `canonicalJson`, `escHtml`, `getNonce`, `splitMs`/`formatClock`/
-  `formatDuration`, plus `sectionBounds` (shared by the section *reader* and the attempts
+  `safeJsonParse`, `canonicalJson`, `escHtml`, `renderMarkdownLite`, `getNonce`,
+  `splitMs`/`formatClock`/`formatDuration`, plus `sectionBounds` (shared by the section *reader* and the attempts
   *writer*, which used to mirror each other and drift).
 - **KISS / YAGNI** — the simplest thing that works. No interface with one implementation, no
   factory for one product, no config for a value that never changes. Don't extract a one-line
