@@ -41,8 +41,8 @@ artifact-type machinery, no parser/render/varset pipeline — the only shared co
 a trimmed vault-folder picker.
 
 User flow: **Settings** (first run) picks the vault root holding `.obsidian/` and
-auto-creates `LeetCode/` → **Open LeetCode Exercise** `QuickPick`s the `.md` files there and
-renders the challenge screen → **Solve It** writes starter code to a fresh temp file under
+auto-creates `LeetCode/` → **Open LeetCode Exercise** browses `LeetCode/` in a `QuickPick`
+(see *Exercise picker* below) and renders the challenge screen → **Solve It** writes starter code to a fresh temp file under
 `globalStorageUri/attempts/`, applies the editor restrictions and starts the clock → **Run
 Tests** grades the live buffer against the *public* suite (writes nothing, clock and
 restrictions stay — the iteration loop) → **Submit** grades *public + hidden* and ends the
@@ -106,6 +106,26 @@ clock ends the run and restores the editor settings.
   **create-only** ensures `LeetCode/` exists (never deletes — no data loss).
 - [vault.service.ts](src/services/vault.service.ts) — `validateObsidianVault()` (requires
   `.obsidian/`, toasts on failure — both callers want the toast) and `createVaultDirectory()`.
+
+### Exercise picker — folder-tree browsing
+
+`LeetCode/` is a **tree**, not a flat drop: solvers classify exercises into topic folders
+(`Arrays/`, `Strings/`, …). `pickLeetCodeExercise` → `pickLeetCodeFile`
+([leetcode.command.ts](src/commands/leetcode.command.ts)) browses it **one level at a time**
+in a loop, never a full-tree walk:
+
+- Each level does exactly **one** `readDirectory`; `splitDirEntries(entries)`
+  ([quickpick-item.helpers.ts](src/commands/quickpick-item.helpers.ts)) returns
+  `{ dirs, files }` — subfolders alphabetical, `.md` files for `buildQuickPickItems` to sort.
+- Row order is **`..` → folders → exercises**. The `$(arrow-left) ..` row appears only below
+  the root and targets `parentPath(cwd)`. Picking a folder sets `cwd` and re-renders; picking
+  an exercise returns its URI. Esc cancels the whole browse.
+- Only the *current* level's frontmatter is read (`parseFrontmatterOnly`), so a deep vault
+  costs one directory read per step instead of parsing every `.md` in the tree.
+- Exercise rows carry the **bare** file name, so `buildQuickPickItems`' category label stays
+  empty and the folder shows once — in the picker title (`LeetCode artifacts · Arrays`).
+- **SECURITY:** a symlinked directory is never emitted as a row, so it can never be entered —
+  containment lives in `splitDirEntries` (pure, unit-tested), not in the `vscode` layer.
 
 ### Ported couplings
 

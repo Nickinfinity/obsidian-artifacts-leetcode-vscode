@@ -13,45 +13,58 @@ export const FILE_TYPE_SYMBOLIC_LINK = 64;
 /** One `[name, type]` pair as returned by `vscode.workspace.fs.readDirectory`. */
 export type DirEntry = readonly [name: string, type: number];
 
-/**
- * Lists one directory's entries by its path relative to the walk root (`''` for the root
- * itself). The only I/O seam `collectMdFilePaths` uses — production wraps
- * `vscode.workspace.fs.readDirectory`, tests supply a fixed in-memory table.
- */
-export type DirReader = (relPath: string) => PromiseLike<readonly DirEntry[]>;
+/** One browsable directory level — subfolder names and `.md` file names, nothing else. */
+export interface DirLevel {
+	/** Subfolder names, alphabetical. Symlinked directories are excluded entirely. */
+	dirs: string[];
+	/** `.md` file names at this level, in `readDirectory` order (the picker sorts them). */
+	files: string[];
+}
 
 /**
- * Recursively walks a directory tree via `readDir`, collecting every `.md` file's path
- * relative to the walk root.
+ * Splits one directory listing into the folders and `.md` files the picker shows.
  *
- * Symlinked directories are never descended into — `readDir` is simply never called for
- * one — so a symlink planted under `LeetCode/` cannot walk the recursion outside the
- * validated vault root (path-containment, security-critical). A flat, single-level vault
- * (no subfolders) walks exactly as it did before this function existed.
+ * Symlinked directories are dropped rather than listed, so the browser can never be
+ * navigated outside the validated vault root (path-containment, security-critical).
+ * Folders come back alphabetical because the picker renders them above the files.
  *
- * @param readDir  - Lists one directory's entries by relative path.
- * @param basePath - Path already descended, relative to the walk root (`''` at the top).
- * @returns Vault-relative `.md` paths, e.g. `['two-sum.md', 'function/arrays/three-sum.md']`.
+ * @param entries - One directory's `[name, type]` pairs, as `readDirectory` returns them.
+ * @returns Alphabetical subfolder names plus the level's `.md` file names.
  *
  * @example
- * await collectMdFilePaths(readDir); // flat vault → ['two-sum.md']
+ * splitDirEntries([['Strings', 2], ['Arrays', 2], ['two-sum.md', 1]]);
+ * // → { dirs: ['Arrays', 'Strings'], files: ['two-sum.md'] }
  */
-export async function collectMdFilePaths(readDir: DirReader, basePath = ''): Promise<string[]> {
-	const entries = await readDir(basePath);
-	const mdFiles: string[] = [];
-	const subdirs: string[] = [];
+export function splitDirEntries(entries: readonly DirEntry[]): DirLevel {
+	const dirs: string[] = [];
+	const files: string[] = [];
 
 	for (const [name, type] of entries) {
-		const relPath = basePath ? `${basePath}/${name}` : name;
 		if ((type & FILE_TYPE_DIRECTORY) !== 0) {
-			if ((type & FILE_TYPE_SYMBOLIC_LINK) === 0) { subdirs.push(relPath); }
+			if ((type & FILE_TYPE_SYMBOLIC_LINK) === 0) { dirs.push(name); }
 		} else if (name.endsWith('.md')) {
-			mdFiles.push(relPath);
+			files.push(name);
 		}
 	}
 
-	const nested = await Promise.all(subdirs.map(sub => collectMdFilePaths(readDir, sub)));
-	return [...mdFiles, ...nested.flat()];
+	dirs.sort((a, b) => a.localeCompare(b));
+	return { dirs, files };
+}
+
+/**
+ * Folder path of a vault-relative path — `''` when it sits at the root.
+ *
+ * Shared by the picker's "go up one level" step and the item builder's category label.
+ *
+ * @param relPath - Vault-relative path, e.g. `'function/arrays/two-sum.md'`.
+ * @returns Everything before the last `/`, or `''` when there is none.
+ *
+ * @example
+ * parentPath('function/arrays/two-sum.md'); // → 'function/arrays'
+ */
+export function parentPath(relPath: string): string {
+	const slashIndex = relPath.lastIndexOf('/');
+	return slashIndex === -1 ? '' : relPath.slice(0, slashIndex);
 }
 
 /** One `{ fileName, parsed }` pair the picker maps into a `QuickPickItemData`. */
@@ -134,19 +147,13 @@ export function buildQuickPickItems(entries: QuickPickEntry[]): QuickPickItemDat
 function buildQuickPickItem(entry: QuickPickEntry): QuickPickItemData {
 	const { parsed } = entry;
 	const status = `${DIFFICULTY_LABEL[parsed.difficulty]} · ${STATUS_LABEL[parsed.status]}`;
-	const category = categoryOf(entry.fileName);
+	const category = parentPath(entry.fileName);
 	return {
 		label: `$(${STATUS_ICON[parsed.status]}) ${parsed.title}`,
 		description: category ? `${category} · ${status}` : status,
 		detail: buildDetail(parsed),
 		fileName: entry.fileName,
 	};
-}
-
-/** Folder path of a vault-relative `.md` path — `''` for a root-level file (flat vault). */
-function categoryOf(fileName: string): string {
-	const slashIndex = fileName.lastIndexOf('/');
-	return slashIndex === -1 ? '' : fileName.slice(0, slashIndex);
 }
 
 /** Build the detail line — `"algorithm · #tag #tag"`, omitting whichever half is absent. */

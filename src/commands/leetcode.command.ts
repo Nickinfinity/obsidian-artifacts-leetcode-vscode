@@ -3,8 +3,8 @@ import { parseFrontmatterOnly, parseLeetCode } from '../services/leetcode-parser
 import { validateObsidianVault } from '../services/vault.service.js';
 import { getVaultPath } from '../services/vault-path.store.js';
 import type { ParsedLeetCode } from '../types/leetcode.types.js';
-import { buildQuickPickItems, collectMdFilePaths } from './quickpick-item.helpers.js';
-import type { DirReader, QuickPickEntry } from './quickpick-item.helpers.js';
+import { buildQuickPickItems, parentPath, splitDirEntries } from './quickpick-item.helpers.js';
+import type { QuickPickEntry } from './quickpick-item.helpers.js';
 
 /** Result of a successful pick — the file that was chosen plus its parsed contents. */
 export interface PickedExercise {
@@ -45,68 +45,113 @@ export async function pickLeetCodeExercise(
 	return { fileUri: file, parsed: parseLeetCode(content) };
 }
 
+/** One picker row — either a folder to descend into or an exercise to open. */
+interface BrowseItem extends vscode.QuickPickItem {
+	/** `'enter'` navigates to `path`; `'open'` returns it as the picked file. */
+	action: 'enter' | 'open';
+	/** Vault-relative path of the folder (`'enter'`) or `.md` file (`'open'`). */
+	path: string;
+}
+
 /**
- * Recursively walks `rootUri` and lets the user pick a `.md` file at any depth.
+ * Browses `rootUri` one folder at a time and lets the user pick a `.md` file.
  *
- * Each candidate's frontmatter is parsed (via `parseFrontmatterOnly` — the
- * body is never touched, so a large `# Solutions` tree costs nothing here)
- * to enrich the picker with difficulty, solve status, algorithm, and tags.
+ * Each level lists its subfolders first (alphabetical), then its exercises sorted by
+ * `buildQuickPickItems`; picking a folder descends, and a `..` row (below the root)
+ * goes back up. Each exercise's frontmatter is parsed for its row via
+ * `parseFrontmatterOnly` — only the current level is read, so a deep vault costs one
+ * `readDirectory` per step, not a full-tree walk.
  *
- * A symlinked subdirectory is never descended into — `readDirectory` is never
- * called for one — so recursion stays contained under the validated vault root
- * (path-containment, security-critical). See `collectMdFilePaths`, the pure,
- * unit-tested helper that owns this rule.
+ * Symlinked subfolders never appear as rows (`splitDirEntries` drops them) and the
+ * `..` row is computed from the already-descended path, so browsing cannot leave the
+ * validated vault root (path-containment, security-critical).
  *
- * @param rootUri - Folder URI to walk.
+ * @param rootUri - Folder URI to browse from.
  * @returns Selected file URI, or `null` when the picker is dismissed.
  *
  * @example
  * await pickLeetCodeFile(vscode.Uri.file('/vault/LeetCode'));
  */
 async function pickLeetCodeFile(rootUri: vscode.Uri): Promise<vscode.Uri | null> {
-	const readDir: DirReader = relPath => {
-		const dirUri = relPath ? vscode.Uri.joinPath(rootUri, relPath) : rootUri;
-		return vscode.workspace.fs.readDirectory(dirUri);
-	};
+	let cwd = '';
 
-	let fileNames: string[];
-	try {
-		fileNames = await collectMdFilePaths(readDir);
-	} catch {
-		void vscode.window.showErrorMessage('LeetCode directory is missing from the vault.');
-		return null;
+	for (;;) {
+		const dirUri = cwd ? vscode.Uri.joinPath(rootUri, cwd) : rootUri;
+
+		let listing: readonly (readonly [string, vscode.FileType])[];
+		try {
+			listing = await vscode.workspace.fs.readDirectory(dirUri);
+		} catch {
+			void vscode.window.showErrorMessage('LeetCode directory is missing from the vault.');
+			return null;
+		}
+
+		const { dirs, files } = splitDirEntries(listing);
+		if (dirs.length === 0 && files.length === 0 && !cwd) {
+			void vscode.window.showInformationMessage('No LeetCode artifacts found.');
+			return null;
+		}
+
+		const items = await buildBrowseItems(rootUri, cwd, dirs, files);
+		const pick = await vscode.window.showQuickPick(items, {
+			title: cwd ? `LeetCode artifacts · ${cwd}` : 'LeetCode artifacts',
+			placeHolder: 'Pick a folder or a problem',
+			matchOnDescription: true,
+			matchOnDetail: true,
+		});
+		if (!pick) { return null; }
+
+		if (pick.action === 'open') { return vscode.Uri.joinPath(rootUri, pick.path); }
+		cwd = pick.path;
 	}
-	if (fileNames.length === 0) {
-		void vscode.window.showInformationMessage('No LeetCode artifacts found.');
-		return null;
+}
+
+/**
+ * Builds one level's picker rows: `..` (below the root), then folders, then exercises.
+ *
+ * @param rootUri - Browse root, used to read each exercise's frontmatter.
+ * @param cwd     - Current folder, relative to the root (`''` at the top).
+ * @param dirs    - Subfolder names at this level, already alphabetical.
+ * @param files   - `.md` file names at this level.
+ * @returns Rows in display order, folders above files.
+ *
+ * @example
+ * await buildBrowseItems(rootUri, 'Arrays', [], ['two-sum.md']);
+ */
+async function buildBrowseItems(
+	rootUri: vscode.Uri, cwd: string, dirs: string[], files: string[],
+): Promise<BrowseItem[]> {
+	const items: BrowseItem[] = [];
+	if (cwd) {
+		items.push({ label: '$(arrow-left) ..', description: parentPath(cwd) || 'LeetCode', action: 'enter', path: parentPath(cwd) });
 	}
 
-	const entries = await Promise.all(fileNames.map(fileName => summarizeExercise(rootUri, fileName)));
-	const items = buildQuickPickItems(entries);
+	for (const name of dirs) {
+		items.push({ label: `$(folder) ${name}`, description: '', detail: '', action: 'enter', path: cwd ? `${cwd}/${name}` : name });
+	}
 
-	const pick = await vscode.window.showQuickPick(items, {
-		title: 'LeetCode artifacts',
-		placeHolder: 'Pick a problem',
-		matchOnDescription: true,
-		matchOnDetail: true,
-	});
-	if (!pick) { return null; }
-	return vscode.Uri.joinPath(rootUri, pick.fileName);
+	const dirUri = cwd ? vscode.Uri.joinPath(rootUri, cwd) : rootUri;
+	const entries = await Promise.all(files.map(name => summarizeExercise(dirUri, name)));
+	for (const item of buildQuickPickItems(entries)) {
+		items.push({ ...item, action: 'open', path: cwd ? `${cwd}/${item.fileName}` : item.fileName });
+	}
+
+	return items;
 }
 
 /**
  * Reads and frontmatter-parses one candidate file for the picker.
  *
- * @param rootUri  - LeetCode directory URI.
- * @param fileName - Path of the `.md` file relative to it, e.g. `'two-sum.md'` or
- *   `'function/arrays/two-sum.md'`.
+ * @param dirUri   - URI of the folder currently being browsed.
+ * @param fileName - Name of the `.md` file inside it, e.g. `'two-sum.md'`. Bare, not
+ *   vault-relative, so the row shows no redundant category (the title carries the folder).
  * @returns A `QuickPickEntry` ready for `buildQuickPickItems`.
  *
  * @example
- * await summarizeExercise(rootUri, 'two-sum.md');
+ * await summarizeExercise(dirUri, 'two-sum.md');
  */
-async function summarizeExercise(rootUri: vscode.Uri, fileName: string): Promise<QuickPickEntry> {
-	const bytes = await vscode.workspace.fs.readFile(vscode.Uri.joinPath(rootUri, fileName));
+async function summarizeExercise(dirUri: vscode.Uri, fileName: string): Promise<QuickPickEntry> {
+	const bytes = await vscode.workspace.fs.readFile(vscode.Uri.joinPath(dirUri, fileName));
 	const content = new TextDecoder().decode(bytes);
 	return { fileName, parsed: parseFrontmatterOnly(content) };
 }

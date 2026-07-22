@@ -1,98 +1,72 @@
 import * as assert from 'node:assert';
 import {
     buildQuickPickItems,
-    collectMdFilePaths,
     FILE_TYPE_DIRECTORY,
     FILE_TYPE_SYMBOLIC_LINK,
+    parentPath,
+    splitDirEntries,
 } from '../src/commands/quickpick-item.helpers.js';
-import type { DirEntry, DirReader } from '../src/commands/quickpick-item.helpers.js';
 import type { LeetCodeSummary } from '../src/types/leetcode.types.js';
 
 const FILE = 1;
 
 /**
- * Unit tests for collectMdFilePaths(readDir): string[].
+ * Unit tests for splitDirEntries(entries): DirLevel and parentPath(relPath): string.
  *
- * Pure, vscode-free recursive walk driven entirely through the injected
- * `readDir` seam — a fixed in-memory table stands in for
- * `vscode.workspace.fs.readDirectory`, so multi-level trees and the
- * symlink-containment rule are testable without touching vscode or a real
- * filesystem.
+ * Pure, vscode-free: the picker browses one level at a time, so these two decide
+ * what a level shows (folders alphabetical, then `.md` files, symlinks dropped) and
+ * where its `..` row goes.
  */
-suite('collectMdFilePaths', () => {
+suite('splitDirEntries', () => {
 
-    /** Builds a DirReader from a `{ path: entries }` table and counts calls per path. */
-    function tableReader(table: Record<string, DirEntry[]>): { readDir: DirReader; calls: string[] } {
-        const calls: string[] = [];
-        const readDir: DirReader = relPath => {
-            calls.push(relPath);
-            return Promise.resolve(table[relPath] ?? []);
-        };
-        return { readDir, calls };
-    }
-
-    test('flat vault: single level of .md files, byte-identical to the old filter/map', async () => {
-        const { readDir } = tableReader({
-            '': [
-                ['two-sum.md', FILE],
-                ['notes.txt', FILE],
-                ['three-sum.md', FILE],
-            ],
-        });
-        const paths = await collectMdFilePaths(readDir);
-        assert.deepStrictEqual(paths, ['two-sum.md', 'three-sum.md']);
+    test('flat level: keeps .md files, drops other extensions', () => {
+        const { dirs, files } = splitDirEntries([
+            ['two-sum.md', FILE],
+            ['notes.txt', FILE],
+            ['three-sum.md', FILE],
+        ]);
+        assert.deepStrictEqual(dirs, []);
+        assert.deepStrictEqual(files, ['two-sum.md', 'three-sum.md']);
     });
 
-    test('empty vault: no entries → empty result', async () => {
-        const { readDir } = tableReader({ '': [] });
-        assert.deepStrictEqual(await collectMdFilePaths(readDir), []);
+    test('empty level: no entries → empty dirs and files', () => {
+        assert.deepStrictEqual(splitDirEntries([]), { dirs: [], files: [] });
     });
 
-    test('nested: descends into subfolders and returns vault-relative paths', async () => {
-        const { readDir } = tableReader({
-            '': [['function', FILE_TYPE_DIRECTORY]],
-            function: [['arrays', FILE_TYPE_DIRECTORY]],
-            'function/arrays': [['two-sum.md', FILE]],
-        });
-        const paths = await collectMdFilePaths(readDir);
-        assert.deepStrictEqual(paths, ['function/arrays/two-sum.md']);
+    test('folders come back alphabetical, independent of listing order', () => {
+        const { dirs, files } = splitDirEntries([
+            ['Strings', FILE_TYPE_DIRECTORY],
+            ['two-sum.md', FILE],
+            ['Arrays', FILE_TYPE_DIRECTORY],
+        ]);
+        assert.deepStrictEqual(dirs, ['Arrays', 'Strings']);
+        assert.deepStrictEqual(files, ['two-sum.md']);
     });
 
-    test('mixes root-level and nested files in one result', async () => {
-        const { readDir } = tableReader({
-            '': [
-                ['readme.md', FILE],
-                ['function', FILE_TYPE_DIRECTORY],
-            ],
-            function: [['two-sum.md', FILE]],
-        });
-        const paths = await collectMdFilePaths(readDir);
-        assert.deepStrictEqual(paths.sort(), ['function/two-sum.md', 'readme.md']);
-    });
-
-    test('SECURITY: a symlinked directory is never followed — readDir is never called for it', async () => {
+    test('SECURITY: a symlinked directory is never listed, so it can never be entered', () => {
         const symlinkedDir = FILE_TYPE_DIRECTORY | FILE_TYPE_SYMBOLIC_LINK;
-        const { readDir, calls } = tableReader({
-            '': [
-                ['escape', symlinkedDir],
-                ['safe.md', FILE],
-            ],
-            // If containment ever breaks and the walker descends anyway, this proves the leak:
-            // secrets.md would appear in the result.
-            escape: [['secrets.md', FILE]],
-        });
-        const paths = await collectMdFilePaths(readDir);
-        assert.deepStrictEqual(paths, ['safe.md']);
-        assert.ok(!calls.includes('escape'), 'readDir must never be called for a symlinked directory');
+        const { dirs, files } = splitDirEntries([
+            ['escape', symlinkedDir],
+            ['safe.md', FILE],
+        ]);
+        assert.deepStrictEqual(dirs, [], 'a symlinked directory must not become a navigable row');
+        assert.deepStrictEqual(files, ['safe.md']);
     });
 
-    test('a plain (non-symlinked) directory is still recursed into', async () => {
-        const { readDir, calls } = tableReader({
-            '': [['function', FILE_TYPE_DIRECTORY]],
-            function: [['two-sum.md', FILE]],
-        });
-        await collectMdFilePaths(readDir);
-        assert.ok(calls.includes('function'), 'a plain subdirectory must be descended into');
+});
+
+suite('parentPath', () => {
+
+    test('root-level path has no parent', () => {
+        assert.strictEqual(parentPath('two-sum.md'), '');
+    });
+
+    test('nested path drops its last segment', () => {
+        assert.strictEqual(parentPath('function/arrays/two-sum.md'), 'function/arrays');
+    });
+
+    test('a one-level folder goes back to the root', () => {
+        assert.strictEqual(parentPath('Arrays'), '');
     });
 
 });
