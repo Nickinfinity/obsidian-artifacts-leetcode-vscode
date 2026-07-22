@@ -185,6 +185,16 @@ export const TEST_TYPES: readonly TestType[] = [
 		status: 'reserved',
 		description: 'Compare a mutated argument rather than the return value (removeDuplicates).',
 	},
+	{
+		id: 'project',
+		status: 'reserved',
+		description: 'Multi-file exercise graded by declared checks (function, build) rather than one return value.',
+	},
+	{
+		id: 'service',
+		status: 'reserved',
+		description: 'Project whose checks run against locally booted servers (http checks against a live API).',
+	},
 ];
 
 /** Test type assumed when the artifact declares no `test:` block. */

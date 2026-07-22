@@ -1,6 +1,6 @@
 # LeetCode example artifacts
 
-Runnable reference examples of the `type: leetcode` vault `.md` format —
+Reference examples of the `type: leetcode` vault `.md` format —
 see [`ARTIFACT_LEETCODE_FILE_FORMAT.md`](../../ARTIFACT_LEETCODE_FILE_FORMAT.md)
 for the authoritative on-disk spec. Copy any file under this tree into your
 vault's `LeetCode/` folder to try it. Every reference solution shipped here
@@ -22,14 +22,36 @@ language.
 
 ```
 examples/leetcode/
-└── function/                    # test.type: function
-    ├── arrays/
-    │   └── two-sum.md            # java · python · javascript · rust · typescript
-    └── strings/
-        ├── is-anagram.md         # java · python · javascript · rust · typescript
-        └── leetcode-ab-check.md  # java · python · javascript
+├── function/                    # test.type: function — RUNNABLE
+│   ├── arrays/
+│   │   └── two-sum.md            # java · python · javascript · rust · typescript
+│   └── strings/
+│       ├── is-anagram.md         # java · python · javascript · rust · typescript
+│       └── leetcode-ab-check.md  # java · python · javascript
+├── project/                     # test.type: project — CONTRACT ONLY
+│   └── typescript/
+│       └── nextjs-object-list.md # multi-file, one runtime; function + build checks
+└── service/                     # test.type: service — CONTRACT ONLY
+    ├── multi/
+    │   └── fastapi-react.md      # python + typescript, two booted services
+    └── typescript/
+        └── node-react-fullstack.md  # express + react, single-language
 ```
 
 `class`, `stdin-stdout`, and `in-place` are reserved `test.type` values with
 no registered environment yet (see the capability matrix in the format spec)
 — no examples exist for them until an environment does.
+
+## ⚠️ `project/` and `service/` do not run
+
+Those two types are **reserved** as well: the artifacts parse, list in the
+picker, and explain themselves in the panel — they grade nothing, boot no
+server, and install no library. They are spike deliverables for §9 of the
+format spec (multi-file / running-server contract), written against the real
+parser precisely to find what the contract is missing; the findings live in
+`docs/plans/rust-multilang/spike-findings.md` (branch-local). Their `libs:`,
+`## Files`, `checks:`, and `services:` blocks are ignored by today's parser.
+
+The `function/` examples are the runnable set: every reference solution there
+was executed to green against public **and** hidden cases with the real
+toolchain before being committed.

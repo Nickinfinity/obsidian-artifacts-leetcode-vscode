@@ -59,7 +59,11 @@ function collectMarkdownFiles(dir: string): string[] {
 function collectWarnings(parsed: ParsedLeetCode): string[] {
 	const warnings: string[] = [];
 	if (parsed.title === '') { warnings.push('empty title'); }
-	if (parsed.functionName === '') { warnings.push('empty function name'); }
+	// A `project`/`service` artifact grades declared checks, not one free function,
+	// so `function:` is only mandatory for the `function` type.
+	if (parsed.test.type === 'function' && parsed.functionName === '') {
+		warnings.push('empty function name');
+	}
 	return warnings;
 }
 

@@ -112,7 +112,7 @@ values are dropped, leaving the default.
 | `type` | `'leetcode'` | yes | — | Discriminator. |
 | `title` | string | yes | `''` | Single line. |
 | `difficulty` | `easy`\|`medium`\|`hard` | no | `easy` | Any other value → `easy`. |
-| `function` | string | yes | `''` | Default/fallback function name to implement. Parsed onto `functionName`. |
+| `function` | string | yes¹ | `''` | Default/fallback function name to implement. Parsed onto `functionName`. ¹Required for `test.type: function`; a `project`/`service` artifact names its targets in `checks:` instead (§9). |
 | `functions` | map `<lang>: <name>` | no | — | Per-language override of `function`. Keys resolve through the language-alias table (`py:` → `python`). Read via `functionNameFor(parsed, langId)`, never `functionName` directly, for language-specific code. |
 | `algorithm` | string | no | — | Category tag (e.g. `hash-map`). |
 | `status` | `unsolved`\|`attempted`\|`solved` | no | `unsolved` | **Extension-owned** — auto-written by Submit. Any other value → `unsolved`. |
@@ -132,8 +132,10 @@ Indented sub-keys, both optional:
 | `timeoutMs` | number | `5000` | Per case. Clamped to `[100, 60000]`. Suite budget = `cases × timeoutMs`, capped at 60 s. |
 
 `TestTypeId` ∈ `function` (**implemented**) · `class` · `stdin-stdout` ·
-`in-place` (reserved — parse and validate, but no environment is registered, so
-the language selector renders empty and the panel says why).
+`in-place` · `project` · `service` (all reserved — they parse and validate, but no
+environment is registered, so the language selector renders empty and the panel
+says why). `project` and `service` are the multi-file / running-server types; the
+frontmatter they add is **contract only** — see §9.
 
 ### 2.3 `practice:` block
 
@@ -331,7 +333,7 @@ How a test executes is data, not a branch. A **test environment** is a
 | `test.type` | Languages with an environment |
 |---|---|
 | `function` | `java`, `javascript`, `python`, `rust`, `typescript` |
-| `class`, `stdin-stdout`, `in-place` | *(none — reserved; selector renders empty)* |
+| `class`, `stdin-stdout`, `in-place`, `project`, `service` | *(none — reserved; selector renders empty)* |
 
 The five `function` environments are self-contained (the extension ships zero
 runtime dependencies). The solver's code is written verbatim as its own file and
@@ -372,3 +374,117 @@ canonical name when in doubt: `JavaScript`, `Python`, `Java`.
 `status` + the solved `meta` + the attempt entry are applied in **one**
 read-patch-write per Submit, so a manual edit made between a run's start and its
 Submit is preserved everywhere except those three writer-owned spots.
+
+---
+
+## 9. `project` and `service` — multi-file exercises (**contract only**)
+
+> **Nothing in this section is implemented.** `project` and `service` are reserved
+> `test.type` values: the parser accepts them, `languagesForType()` returns `[]`, and
+> the panel explains that no environment exists. Every field below is **ignored** by
+> today's parser — an artifact using them parses clean and simply grades nothing.
+> Reference artifacts live under
+> [`examples/leetcode/project/`](examples/leetcode/project/) and
+> [`examples/leetcode/service/`](examples/leetcode/service/); the gaps found while
+> writing them are in `docs/plans/rust-multilang/spike-findings.md` (branch-local).
+
+- **`project`** — the exercise is a file *tree*, opened as several editor tabs and graded
+  by declared **checks** rather than one return value.
+- **`service`** — a `project` whose checks run against servers the extension boots on
+  ports it assigns.
+
+### 9.1 `## Files`
+
+One fenced block per file, the info-string carrying the language then attributes:
+
+````markdown
+```typescript path=src/lib/catalogue.ts role=editable
+export function filterInStock() { /* … */ }
+```
+````
+
+| Attribute | Values | Meaning |
+|---|---|---|
+| `path` | POSIX-relative | Location inside the run directory. Never absolute, never `..`. |
+| `role` | `editable` | Written and opened — the solver's work. |
+| | `readonly` | Written and opened, not to be edited (a contract to read). |
+| | `hidden` | Written, never opened — scaffolding the solver should not see. |
+
+A file **no check references is ungraded scaffolding, explicitly** (the CSS tab exists
+for the solver, not the grader).
+
+### 9.2 `checks:` — how a project is graded
+
+```yaml
+test:
+  type: project
+  checks:
+    - name: catalogue filter     # unique; results group by it
+      kind: function             # runs on the existing function environments
+      file: src/lib/catalogue.ts
+      function: filterInStock
+    - name: app builds
+      kind: build                # declared argv must exit 0
+      dir: client                # optional, relative to the run directory
+      argv: ["npx", "tsc", "--noEmit"]
+```
+
+| `kind` | Compares | Status |
+|---|---|---|
+| `function` | one file's export, through the five `function` environments | planned |
+| `build` | a declared argv exits 0 | planned |
+| `http` | in-host `fetch` against a booted service (`service: <name>`) | planned (`service` only) |
+| `css-assert`, `dom-assert` | static / DOM assertions | reserved — a declared limit beats a fake grade |
+
+**Solved = every check green.** Cases in `## Tests` are meant to bind to a check by a
+`check=<name>` fence attribute; today's `JSON_FENCE` regex forbids attributes, so the
+shipped examples carry cases for exactly one check and say so in prose.
+
+### 9.3 `services:` (`test.type: service`)
+
+```yaml
+test:
+  type: service
+  runtime: local          # 'docker' reserved
+services:
+  - name: api
+    dir: server
+    install: ["pip", "install", "-r", "requirements.txt"]
+    start:   ["uvicorn", "main:app", "--host", "127.0.0.1", "--port", "${PORT}"]
+    ready:   "Uvicorn running"
+    exposeAs:
+      VITE_API_URL: "http://127.0.0.1:${PORT}"
+  - name: web
+    dir: client
+    install: ["npm", "ci"]
+    start:   ["npm", "run", "dev", "--", "--port", "${PORT}"]
+    ready:   "ready in"
+    envFile: .env.local     # written role:hidden — the solver never sees it
+    dependsOn: [api]
+```
+
+- `install` / `start` are **argv arrays**, never command strings.
+- `${PORT}` is the **only** substitution, templated into argv and injected as a `PORT`
+  env var. The port is one the OS assigned (bind `:0`, read it back), never a guess.
+- `exposeAs` maps *variable name → value template*; the author names what their framework
+  wants (`VITE_*`, `NEXT_PUBLIC_*`) — **the extension encodes no framework knowledge**.
+- `dependsOn` orders the boot; a cycle is a parse error.
+
+**Trust class, stated plainly:** a `service` artifact executes declared commands and
+package scripts from the `.md` — arbitrary code by design, the same trust class as running
+the solver's own candidate locally. The argv rules and the library-name allowlist bound the
+*shape* of what runs; they do not make artifact-authored code safe.
+
+### 9.4 `libs:` (Phase 2, also unimplemented)
+
+```yaml
+libs:
+  python: [fastapi@^0.115.0, uvicorn@^0.32.0]
+  typescript: [react@^19.0.0, vite@^7.0.0]
+```
+
+Per-language dependency lists. Every entry must pass the npm-style allowlist already
+shipped in `validateLibNames` ([lib-spec.helpers.ts](src/services/lib-spec.helpers.ts)) —
+a bare scoped/unscoped package name with an optional `@version`, no `..` anywhere — before
+it can reach an install subprocess. Java is out of scope (no transitive resolver in a stock
+JDK).

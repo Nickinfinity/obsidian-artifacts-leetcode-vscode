@@ -35,8 +35,11 @@ export interface ParamDef {
  * - `class`         — instantiate, invoke a method sequence, compare the returns
  * - `stdin-stdout`  — feed raw stdin, compare trimmed stdout
  * - `in-place`      — compare a mutated argument rather than the return value
+ * - `project`       — a multi-file exercise graded by declared `checks:`
+ * - `service`       — a `project` whose checks run against booted local servers
  */
-export type TestTypeId = 'function' | 'class' | 'stdin-stdout' | 'in-place';
+export type TestTypeId =
+	| 'function' | 'class' | 'stdin-stdout' | 'in-place' | 'project' | 'service';
 
 /** One entry in the `TEST_TYPES` capability table. */
 export interface TestType {
