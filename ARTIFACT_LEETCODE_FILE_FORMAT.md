@@ -341,6 +341,19 @@ a generated driver links to it — the candidate is **never** spliced into a
 wrapper, and must be a bare declaration of the function, never a program that
 reads stdin.
 
+**Candidate contract — pure per call.** A suite runs as **one process (one
+module/`vm` context) per suite**, not one per case: the driver loads the
+candidate once and calls it for every case in order, emitting one `__LEET__`
+sentinel line each. So module-level and global state **persists across the cases
+of a suite** — a memo table, a counter, a mutated module array survives into the
+next case, and the same candidate graded case-by-case would behave differently.
+A candidate must therefore be **pure per call**: its answer for a case may depend
+only on that case's arguments, never on state left behind by an earlier one.
+Authors must not write an exercise whose expected values require cross-case
+state, and must not rely on per-case isolation to reset a global. (This is
+by design — one process per suite is what makes a compiled language pay `javac`
+once instead of once per case.)
+
 **Per-language ceilings.** Rust serialises results through a local `LeetJson`
 trait (compact, key-sorted JSON) rather than serde or `{:?}` Debug — neither
 reliably matches `canonicalJson`'s formatting — so structs and enums are not

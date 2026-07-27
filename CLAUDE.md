@@ -27,6 +27,27 @@ pnpm compile && pnpm lint && \
 `rm -rf dist` first or stale compiled tests keep running and inflate the pass count.
 Press **F5** for the Extension Development Host — the only check for `vscode`-coupled code.
 
+### Artifact harnesses (grade the `.md`, not the code)
+
+```bash
+node scripts/verify-exercise.mjs "<file.md>"                      # conformance + own solutions green
+node scripts/verify-exercise.mjs "<file.md>" --expecteds <r.json> # diff stored vs recomputed expecteds
+node scripts/grade-candidate.mjs "<file.md>" <lang> <candidate>   # grade an EXTERNAL candidate
+```
+
+Both import from `dist/` — `pnpm compile` first; both fail loud if the build is missing.
+`grade-candidate` exits `0` solved · `1` not solved · `2` bad input · `3` no environment
+(reserved type, unknown language, runtime absent), and masks a failing **final** case as
+`hidden` so grading against it cannot leak the hidden suite.
+
+**A blind independent solve is an oracle for the stored `expecteds`.** The harness only
+proves an artifact is self-consistent — its reference solution reproduces its own expected
+values, which a wrong expected value trivially satisfies if the reference is wrong the same
+way. One independent solver (a fresh agent given the statement with `# Solutions` and
+`## Final Tests` stripped) whose candidate grades **solved** through `grade-candidate.mjs`
+is strong evidence the expecteds are actually correct — the cheaper cousin of a full
+recompute cross-check, and cheap enough to run per exercise.
+
 ---
 
 ## What This Extension Does
