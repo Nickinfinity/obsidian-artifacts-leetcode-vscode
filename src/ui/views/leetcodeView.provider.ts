@@ -74,7 +74,7 @@ interface WebviewMsg {
  * do that.
  *
  * @example
- * const provider = new LeetCodeViewProvider(context, 'LeetCode');
+ * const provider = new LeetCodeViewProvider(context);
  * context.subscriptions.push(
  *   vscode.window.registerWebviewViewProvider('obsidian-leetcode.view', provider),
  * );
@@ -85,11 +85,9 @@ export class LeetCodeViewProvider implements vscode.WebviewViewProvider {
 
 	/**
 	 * @param context - Extension context owning the vault path and temp storage.
-	 * @param dir     - Artifact directory name (always `'LeetCode'`).
 	 */
 	constructor(
 		private readonly context: vscode.ExtensionContext,
-		private readonly dir: string,
 	) {
 		context.subscriptions.push(
 			vscode.window.tabGroups.onDidChangeTabs(() => this.onTabsChanged()),
@@ -141,7 +139,7 @@ export class LeetCodeViewProvider implements vscode.WebviewViewProvider {
 	 * await provider.openPicker();
 	 */
 	async openPicker(): Promise<void> {
-		const picked = await pickLeetCodeExercise(this.context, this.dir);
+		const picked = await pickLeetCodeExercise(this.context);
 		if (!picked) { return; }
 		this.showExercise(picked.fileUri, picked.parsed);
 	}

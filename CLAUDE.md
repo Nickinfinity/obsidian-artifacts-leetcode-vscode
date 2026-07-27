@@ -40,8 +40,10 @@ preview panel. No
 artifact-type machinery, no parser/render/varset pipeline — the only shared concept kept is
 a trimmed vault-folder picker.
 
-User flow: **Settings** (first run) picks the vault root holding `.obsidian/` and
-auto-creates `LeetCode/` → **Open LeetCode Exercise** browses `LeetCode/` in a `QuickPick`
+User flow: **Settings** (first run) picks the vault root holding `.obsidian/` and, by
+default, auto-creates a `LeetCode/` subfolder — a `useVaultRoot` toggle in Settings switches
+to browsing/storing exercises at the vault root instead, creating no subfolder — → **Open
+LeetCode Exercise** browses the resolved exercises directory in a `QuickPick`
 (see *Exercise picker* below) and renders the challenge screen → **Solve It** writes starter code to a fresh temp file under
 `globalStorageUri/attempts/`, applies the editor restrictions and starts the clock → **Run
 Tests** grades the live buffer against the *public* suite (writes nothing, clock and
@@ -95,24 +97,35 @@ clock ends the run and restores the editor settings.
 
 ### Vault path storage (per-installation)
 
-- **Storage:** `context.globalState` key `vaultPath`, machine-local. `setKeysForSync` is
-  **never** called — a synced absolute path caused `ENOENT` across macOS/Linux.
-- [vault-path.store.ts](src/services/vault-path.store.ts) — `getVaultPath()` /
-  `setVaultPath()` / `migrateLegacyVaultPath()` (one-time: copies any legacy synced
-  `obsidianLeetcodeTrainer.vaultPath` into `globalState`, then clears the synced setting).
-  The `obsidianLeetcodeTrainer.*` configuration contribution is gone from `package.json`.
+- **Storage:** `context.globalState` keys `vaultPath` and `useVaultRoot`, both machine-local.
+  `setKeysForSync` is **never** called — a synced absolute path caused `ENOENT` across
+  macOS/Linux, and the boolean stays unsynced beside it for consistency.
+- [vault-path.store.ts](src/services/vault-path.store.ts) — `getVaultPath()` / `setVaultPath()`
+  / `getUseVaultRoot()` / `setUseVaultRoot()` / `migrateLegacyVaultPath()` (one-time: copies any
+  legacy synced `obsidianLeetcodeTrainer.vaultPath` into `globalState`, then clears the synced
+  setting). The `obsidianLeetcodeTrainer.*` configuration contribution is gone from
+  `package.json`. `getExercisesSubdir(context)` also lives here — the thin, `vscode`-coupled
+  wrapper both `refreshVaultContext` and the picker call to resolve where exercises live,
+  never re-hardcoding `'LeetCode'`.
+- [vault.helpers.ts](src/services/vault.helpers.ts) — pure `exercisesSubdir(useVaultRoot)`:
+  `false` → `LEETCODE_DIR`, `true` → `''` (vault root, no subfolder). The one unit-tested
+  authority `getExercisesSubdir` wraps.
 - [context.service.ts](src/services/context.service.ts) — `refreshVaultContext(context)` sets
-  `obsidian-leetcode.vaultConfigured` (the single `when` gate in `package.json`) and
-  **create-only** ensures `LeetCode/` exists (never deletes — no data loss).
+  `obsidian-leetcode.vaultConfigured` (the single `when` gate in `package.json`) and, only when
+  `getExercisesSubdir` resolves to a non-empty subdir, **create-only** ensures it exists (never
+  deletes — no data loss). `useVaultRoot: true` creates and deletes nothing — flipping the
+  toggle only changes where the picker looks.
 - [vault.service.ts](src/services/vault.service.ts) — `validateObsidianVault()` (requires
   `.obsidian/`, toasts on failure — both callers want the toast) and `createVaultDirectory()`.
 
 ### Exercise picker — folder-tree browsing
 
-`LeetCode/` is a **tree**, not a flat drop: solvers classify exercises into topic folders
-(`Arrays/`, `Strings/`, …). `pickLeetCodeExercise` → `pickLeetCodeFile`
-([leetcode.command.ts](src/commands/leetcode.command.ts)) browses it **one level at a time**
-in a loop, never a full-tree walk:
+The exercises directory (`LeetCode/` by default, the vault root when `useVaultRoot` is on) is
+a **tree**, not a flat drop: solvers classify exercises into topic folders (`Arrays/`,
+`Strings/`, …). `pickLeetCodeExercise` → `pickLeetCodeFile`
+([leetcode.command.ts](src/commands/leetcode.command.ts)) resolves `getExercisesSubdir(context)`
+**at open time** (never cached from activation, so a toggle flipped in Settings takes effect
+on the very next open) and browses it **one level at a time** in a loop, never a full-tree walk:
 
 - Each level does exactly **one** `readDirectory`; `splitDirEntries(entries)`
   ([quickpick-item.helpers.ts](src/commands/quickpick-item.helpers.ts)) returns
@@ -126,6 +139,10 @@ in a loop, never a full-tree walk:
   empty and the folder shows once — in the picker title (`LeetCode artifacts · Arrays`).
 - **SECURITY:** a symlinked directory is never emitted as a row, so it can never be entered —
   containment lives in `splitDirEntries` (pure, unit-tested), not in the `vscode` layer.
+- **Dotfile hygiene:** `splitDirEntries` also drops any entry (folder or file) whose name
+  starts with `.` — harmless in `LeetCode/` subfolder mode, essential when `useVaultRoot`
+  browses the vault root directly, where `.obsidian/` (and any `.git/`, `.trash/`, …) must
+  never appear as a browsable row.
 
 ### Ported couplings
 

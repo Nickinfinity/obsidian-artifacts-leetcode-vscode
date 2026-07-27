@@ -53,6 +53,25 @@ suite('splitDirEntries', () => {
         assert.deepStrictEqual(files, ['safe.md']);
     });
 
+    test('dotfile hygiene: a leading-dot directory (e.g. .obsidian) never becomes a row', () => {
+        const { dirs, files } = splitDirEntries([
+            ['.obsidian', FILE_TYPE_DIRECTORY],
+            ['Arrays', FILE_TYPE_DIRECTORY],
+            ['two-sum.md', FILE],
+        ]);
+        assert.deepStrictEqual(dirs, ['Arrays'], '.obsidian must be excluded when browsing the vault root');
+        assert.deepStrictEqual(files, ['two-sum.md']);
+    });
+
+    test('dotfile hygiene: a leading-dot .md file never becomes a row', () => {
+        const { dirs, files } = splitDirEntries([
+            ['.hidden.md', FILE],
+            ['two-sum.md', FILE],
+        ]);
+        assert.deepStrictEqual(files, ['two-sum.md'], '.hidden.md must be excluded from the browse level');
+        assert.deepStrictEqual(dirs, []);
+    });
+
 });
 
 suite('parentPath', () => {

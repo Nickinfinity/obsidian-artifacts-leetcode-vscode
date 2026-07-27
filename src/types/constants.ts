@@ -252,6 +252,12 @@ export const CONFIG_NS = 'obsidianLeetcodeTrainer';
 /** `globalState` key holding the vault path. Machine-local — never registered for Settings Sync. */
 export const VAULT_PATH_KEY = 'vaultPath';
 
+/**
+ * `globalState` key holding the "use vault root" toggle. Machine-local — same
+ * policy as `VAULT_PATH_KEY`, never registered for Settings Sync.
+ */
+export const USE_VAULT_ROOT_KEY = 'useVaultRoot';
+
 /** Context key used by `package.json` `when` clauses to gate the open command. */
 export const VAULT_CONFIGURED_KEY = 'obsidian-leetcode.vaultConfigured';
 

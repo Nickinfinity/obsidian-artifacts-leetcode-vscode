@@ -26,7 +26,10 @@ export interface DirLevel {
  *
  * Symlinked directories are dropped rather than listed, so the browser can never be
  * navigated outside the validated vault root (path-containment, security-critical).
- * Folders come back alphabetical because the picker renders them above the files.
+ * A leading-dot name (either kind) is dropped too — harmless in `LeetCode/` subfolder
+ * mode, essential when the picker browses the vault root directly, where `.obsidian/`
+ * (and any other dotfile/dotfolder) must never appear as a row. Folders come back
+ * alphabetical because the picker renders them above the files.
  *
  * @param entries - One directory's `[name, type]` pairs, as `readDirectory` returns them.
  * @returns Alphabetical subfolder names plus the level's `.md` file names.
@@ -34,12 +37,14 @@ export interface DirLevel {
  * @example
  * splitDirEntries([['Strings', 2], ['Arrays', 2], ['two-sum.md', 1]]);
  * // → { dirs: ['Arrays', 'Strings'], files: ['two-sum.md'] }
+ * splitDirEntries([['.obsidian', 2]]); // → { dirs: [], files: [] }
  */
 export function splitDirEntries(entries: readonly DirEntry[]): DirLevel {
 	const dirs: string[] = [];
 	const files: string[] = [];
 
 	for (const [name, type] of entries) {
+		if (name.startsWith('.')) { continue; }
 		if ((type & FILE_TYPE_DIRECTORY) !== 0) {
 			if ((type & FILE_TYPE_SYMBOLIC_LINK) === 0) { dirs.push(name); }
 		} else if (name.endsWith('.md')) {

@@ -4,7 +4,7 @@ import { registerCreateExerciseCommand } from './commands/createExercise.command
 import { endChallenge } from './services/leetcode-challenge.service.js';
 import { refreshVaultContext } from './services/context.service.js';
 import { getVaultPath, migrateLegacyVaultPath } from './services/vault-path.store.js';
-import { END_CHALLENGE_COMMAND, LEETCODE_DIR } from './types/constants.js';
+import { END_CHALLENGE_COMMAND } from './types/constants.js';
 import { LeetCodeViewProvider } from './ui/views/leetcodeView.provider.js';
 
 /**
@@ -25,7 +25,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 	registerOpenSettingsCommand(context);
 	registerCreateExerciseCommand(context);
 
-	const viewProvider = new LeetCodeViewProvider(context, LEETCODE_DIR);
+	const viewProvider = new LeetCodeViewProvider(context);
 
 	context.subscriptions.push(
 		vscode.window.registerWebviewViewProvider('obsidian-leetcode.view', viewProvider, {

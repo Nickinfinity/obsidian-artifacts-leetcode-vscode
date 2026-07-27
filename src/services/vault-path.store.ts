@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
-import { CONFIG_NS, VAULT_PATH_KEY } from '../types/constants.js';
+import { CONFIG_NS, USE_VAULT_ROOT_KEY, VAULT_PATH_KEY } from '../types/constants.js';
+import { exercisesSubdir } from './vault.helpers.js';
 
 /**
  * Reads the configured Obsidian vault root path for *this* installation.
@@ -36,6 +37,58 @@ export async function setVaultPath(
 	vaultPath: string,
 ): Promise<void> {
 	await context.globalState.update(VAULT_PATH_KEY, vaultPath.trim());
+}
+
+/**
+ * Reads the "use vault root" preference for *this* installation.
+ *
+ * Machine-local, same rationale as `getVaultPath`: `globalState` is excluded
+ * from Settings Sync (`setKeysForSync` is never called), so a boolean that is
+ * harmless to sync still lives beside the vault path for consistency.
+ *
+ * @param context - Extension context owning the per-machine `globalState`.
+ * @returns `true` when exercises live at the vault root; `false` (default,
+ *   unchanged behaviour) when they live under the `LeetCode/` subfolder.
+ *
+ * @example
+ * const useRoot = getUseVaultRoot(context); // → false on a fresh install
+ */
+export function getUseVaultRoot(context: vscode.ExtensionContext): boolean {
+	return context.globalState.get<boolean>(USE_VAULT_ROOT_KEY, false);
+}
+
+/**
+ * Persists the "use vault root" preference for this installation only.
+ *
+ * @param context - Extension context owning the per-machine `globalState`.
+ * @param value - `true` to browse/create exercises at the vault root, `false`
+ *   for the default `LeetCode/` subfolder.
+ * @returns Resolves once the value has been written.
+ *
+ * @example
+ * await setUseVaultRoot(context, true);
+ */
+export async function setUseVaultRoot(
+	context: vscode.ExtensionContext,
+	value: boolean,
+): Promise<void> {
+	await context.globalState.update(USE_VAULT_ROOT_KEY, value);
+}
+
+/**
+ * Thin `vscode`-coupled wrapper resolving the vault-relative exercises
+ * directory from the stored preference — the one call site both
+ * `refreshVaultContext` and the exercise picker import, so neither
+ * re-hardcodes `'LeetCode'`.
+ *
+ * @param context - Extension context owning the per-machine `globalState`.
+ * @returns `''` at vault-root mode, else `LEETCODE_DIR`.
+ *
+ * @example
+ * const subdir = getExercisesSubdir(context); // → 'LeetCode' by default
+ */
+export function getExercisesSubdir(context: vscode.ExtensionContext): string {
+	return exercisesSubdir(getUseVaultRoot(context));
 }
 
 /**

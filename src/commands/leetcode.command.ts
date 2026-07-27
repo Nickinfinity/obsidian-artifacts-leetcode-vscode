@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { parseFrontmatterOnly, parseLeetCode } from '../services/leetcode-parser.service.js';
 import { validateObsidianVault } from '../services/vault.service.js';
-import { getVaultPath } from '../services/vault-path.store.js';
+import { getExercisesSubdir, getVaultPath } from '../services/vault-path.store.js';
 import type { ParsedLeetCode } from '../types/leetcode.types.js';
 import { buildQuickPickItems, parentPath, splitDirEntries } from './quickpick-item.helpers.js';
 import type { QuickPickEntry } from './quickpick-item.helpers.js';
@@ -13,22 +13,25 @@ export interface PickedExercise {
 }
 
 /**
- * Validates the vault, lets the user pick a `.md` file under `dir`, and parses it.
+ * Validates the vault, lets the user pick a `.md` file under the resolved
+ * exercises directory, and parses it.
  *
  * The single entry point for "open an exercise" — both the `obsidian-leetcode.open`
  * command (palette / view-title button) and the sidebar view's empty-state button
- * call this so the two triggers can never drift out of sync.
+ * call this so the two triggers can never drift out of sync. The exercises
+ * directory is resolved via `getExercisesSubdir` **at open time** (not cached
+ * at activation), so a `useVaultRoot` toggle flipped in Settings takes effect
+ * on the very next open.
  *
- * @param context - Extension context owning the vault path.
- * @param dir     - Artifact directory name (always `'LeetCode'`).
+ * @param context - Extension context owning the vault path and `useVaultRoot`.
  * @returns The picked file and its parsed contents, or `null` when the vault is
  *   unconfigured, the directory is missing, or the picker was dismissed.
  *
  * @example
- * const picked = await pickLeetCodeExercise(context, 'LeetCode');
+ * const picked = await pickLeetCodeExercise(context);
  */
 export async function pickLeetCodeExercise(
-	context: vscode.ExtensionContext, dir: string,
+	context: vscode.ExtensionContext,
 ): Promise<PickedExercise | null> {
 	const vaultPath = getVaultPath(context);
 	if (!vaultPath || !validateObsidianVault(vaultPath)) {
@@ -36,7 +39,9 @@ export async function pickLeetCodeExercise(
 		return null;
 	}
 
-	const rootUri = vscode.Uri.joinPath(vscode.Uri.file(vaultPath), dir);
+	const subdir = getExercisesSubdir(context);
+	const vaultUri = vscode.Uri.file(vaultPath);
+	const rootUri = subdir === '' ? vaultUri : vscode.Uri.joinPath(vaultUri, subdir);
 	const file = await pickLeetCodeFile(rootUri);
 	if (!file) { return null; }
 
@@ -123,7 +128,7 @@ async function buildBrowseItems(
 ): Promise<BrowseItem[]> {
 	const items: BrowseItem[] = [];
 	if (cwd) {
-		items.push({ label: '$(arrow-left) ..', description: parentPath(cwd) || 'LeetCode', action: 'enter', path: parentPath(cwd) });
+		items.push({ label: '$(arrow-left) ..', description: parentPath(cwd), action: 'enter', path: parentPath(cwd) });
 	}
 
 	for (const name of dirs) {
