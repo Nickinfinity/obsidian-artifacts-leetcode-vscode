@@ -1,0 +1,250 @@
+import { canonicalJson } from '../utils/canonical-json.js';
+import { safeJsonParse } from '../utils/safe-json.js';
+import type { ParsedLeetCode, TestCase } from '../types/leetcode.types.js';
+import { buildExecutable } from './leetcode-candidate.helpers.js';
+import { parseLeetCode } from './leetcode-parser.service.js';
+import { runSuite } from './leetcode-runner.service.js';
+import { submitSuite } from './leetcode-suite.helpers.js';
+import { languagesForType, testEnvFor } from './test-envs/env.registry.js';
+
+/** Structural floors from §D.2 — relaxed for a reserved (no-env) `test.type`. */
+const MIN_EXAMPLES = 2;
+const MIN_PUBLIC_TESTS = 6;
+const MIN_FINAL_TESTS = 3;
+const MIN_RESERVED_TESTS = 1;
+
+/** `verifyExercise` succeeded — the exercise conforms and (if runnable) every declared language is green. */
+export interface VerifyOk { ok: true }
+
+/** `verifyExercise` failed — `reason` names the first rule that broke. */
+export interface VerifyFail { ok: false; reason: string }
+
+export type VerifyResult = VerifyOk | VerifyFail;
+
+/** One case where the artifact's `expected` disagrees with an independently recomputed value. */
+export interface ExpectedMismatch {
+	/** Zero-based index into the compared case list */
+	index: number;
+	/** The case's input map, carried through for the reviewer's diff */
+	input: Record<string, unknown>;
+	/** `expected` as stored in the artifact */
+	artifact: unknown;
+	/** `expected` as recomputed independently (e.g. by the §D.7 recompute worker) */
+	recomputed: unknown;
+}
+
+/**
+ * Verifies a `type: leetcode` artifact conforms to the on-disk format and, for a
+ * runnable `test.type`, that every language carrying both a `# Setup` and a
+ * `# Solutions` entry passes its full (public + final) suite.
+ *
+ * This is the uniform harness described in the CoderByte migration plan §D: it
+ * does not judge whether the exercise's algorithm is *interesting* — only that
+ * the file is well-formed and its own reference solution(s) actually run green.
+ * Checks run in order and the first failure is reported (never accumulated),
+ * matching the rule numbering in §D:
+ *
+ * 1. Parses — non-empty `title`, and (for a runnable `test.type`) non-empty
+ *    `functionName`.
+ * 2. Structural shape — example/test/final-test count floors, `params`/
+ *    `returns` present, and every test/final-test input's keys set-equal the
+ *    declared `params` names.
+ * 3. Runnable languages green — every language present in both `# Setup` and
+ *    `# Solutions` passes `runSuite` against public + final.
+ * 4. Reserved `test.type` (`languagesForType` empty) — the run step (3) is
+ *    skipped and the public-test floor relaxes to `MIN_RESERVED_TESTS`.
+ * 5. Ground-truth pin — every `## Examples` pair must also appear as a public
+ *    `## Tests` case (set-equal input keys, equal `expected`).
+ *
+ * @param md   - Full `.md` artifact content.
+ * @param path - Optional file path, prefixed onto a failure's `reason` for a
+ *   caller (the T0.2 CLI) walking many files.
+ * @returns `{ ok: true }`, or `{ ok: false, reason }` naming the first broken rule.
+ *
+ * @example
+ * await verifyExercise(fs.readFileSync('CoderByte/Strings/AB Check.md', 'utf-8'));
+ * // → { ok: true }
+ */
+export async function verifyExercise(md: string, path?: string): Promise<VerifyResult> {
+	const parsed = parseLeetCode(md);
+	const fail = (reason: string): VerifyFail => ({ ok: false, reason: path ? `${path}: ${reason}` : reason });
+	const reserved = languagesForType(parsed.test.type).length === 0;
+
+	const parseReason = checkParses(parsed, reserved);
+	if (parseReason) { return fail(parseReason); }
+
+	const structuralReason = checkStructure(parsed, reserved);
+	if (structuralReason) { return fail(structuralReason); }
+
+	if (!reserved) {
+		const runReason = await checkSolutionsGreen(parsed);
+		if (runReason) { return fail(runReason); }
+	}
+
+	const pinReason = checkExamplesPinned(parsed);
+	if (pinReason) { return fail(pinReason); }
+
+	return { ok: true };
+}
+
+/**
+ * Compares an artifact's stored `expected` values against an independently
+ * recomputed list, by shared index (the §D.7 recompute cross-check).
+ *
+ * @param artifactCases - The artifact's own cases (`## Tests` + `## Final Tests`, in order).
+ * @param recomputed    - Independently recomputed `expected` values, same order.
+ * @returns Rows where the two disagree; `[]` when every index agrees.
+ *
+ * @example
+ * compareExpecteds([{ input: { a: 1 }, expected: 2 }], [2]); // → []
+ * compareExpecteds([{ input: { a: 1 }, expected: 2 }], [3]);
+ * // → [{ index: 0, input: { a: 1 }, artifact: 2, recomputed: 3 }]
+ */
+export function compareExpecteds(artifactCases: TestCase[], recomputed: unknown[]): ExpectedMismatch[] {
+	const mismatches: ExpectedMismatch[] = [];
+	artifactCases.forEach((c, index) => {
+		const theirs = recomputed[index];
+		if (canonicalJson(c.expected) !== canonicalJson(theirs)) {
+			mismatches.push({ index, input: c.input, artifact: c.expected, recomputed: theirs });
+		}
+	});
+	return mismatches;
+}
+
+// ── Rule 1: parses ────────────────────────────────────────────────────────────
+
+/** Rule 1 — non-empty title, and (when runnable) a non-empty function name. */
+function checkParses(parsed: ParsedLeetCode, reserved: boolean): string | null {
+	if (!parsed.title) { return 'parse: missing title'; }
+	if (!reserved && !parsed.functionName) { return 'parse: missing function name'; }
+	return null;
+}
+
+// ── Rule 2: structural shape ──────────────────────────────────────────────────
+
+/** Rule 2 — example/test/final-test floors, params/returns presence, input-key match. */
+function checkStructure(parsed: ParsedLeetCode, reserved: boolean): string | null {
+	if (parsed.examples.length < MIN_EXAMPLES) {
+		return `structural: need >= ${MIN_EXAMPLES} examples, got ${parsed.examples.length}`;
+	}
+
+	const testsFloor = reserved ? MIN_RESERVED_TESTS : MIN_PUBLIC_TESTS;
+	if (parsed.tests.length < testsFloor) {
+		return `structural: need >= ${testsFloor} public tests, got ${parsed.tests.length}`;
+	}
+	if (!reserved && parsed.finalTests.length < MIN_FINAL_TESTS) {
+		return `structural: need >= ${MIN_FINAL_TESTS} final tests, got ${parsed.finalTests.length}`;
+	}
+	if (parsed.params.length === 0) { return 'structural: missing params'; }
+	if (!parsed.returns) { return 'structural: missing returns'; }
+
+	return checkInputKeysMatchParams(parsed);
+}
+
+/** Every `## Tests` / `## Final Tests` case's input keys must set-equal the declared `params` names. */
+function checkInputKeysMatchParams(parsed: ParsedLeetCode): string | null {
+	const paramNames = new Set(parsed.params.map(p => p.name));
+	const allCases = [...parsed.tests, ...parsed.finalTests];
+	for (const [index, c] of allCases.entries()) {
+		if (!sameKeys(new Set(Object.keys(c.input)), paramNames)) {
+			return `structural: test[${index}] input keys do not match params`;
+		}
+	}
+	return null;
+}
+
+// ── Rule 3/4: runnable languages green (skipped for a reserved test.type) ────
+
+/**
+ * Rule 3 — every language present in both `# Setup` and `# Solutions` must
+ * pass its full (public + final) suite via `runSuite`.
+ */
+async function checkSolutionsGreen(parsed: ParsedLeetCode): Promise<string | null> {
+	const setupLangs = new Set(parsed.setups.map(s => s.language));
+	const languages = [...new Set(parsed.solutions.map(s => s.language))].filter(l => setupLangs.has(l));
+	const suite = submitSuite(parsed);
+
+	for (const lang of languages) {
+		const env = testEnvFor(parsed.test.type, lang);
+		const solution = parsed.solutions.find(s => s.language === lang);
+		if (!env || !solution) { continue; }
+
+		const candidate = buildExecutable(parsed, lang, solution.code);
+		const results = await runSuite(candidate, suite, parsed, env);
+		const bad = results.find(r => !r.passed);
+		if (bad) {
+			return `run: ${lang} failed case ${bad.index}: ${bad.error ?? `expected ${canonicalJson(bad.expected)}, got ${bad.actual}`}`;
+		}
+	}
+	return null;
+}
+
+// ── Rule 5: ## Examples ⊆ ## Tests pin ────────────────────────────────────────
+
+/** Rule 5 — every example's input/output pair must reappear as a public test case. */
+function checkExamplesPinned(parsed: ParsedLeetCode): string | null {
+	for (const [index, example] of parsed.examples.entries()) {
+		const input = parseExampleInput(example.input);
+		if (input === null) { return `pin: example[${index}] input is not parseable`; }
+
+		const output = safeJsonParse(example.output);
+		const reproduced = parsed.tests.some(t =>
+			canonicalJson(t.input) === canonicalJson(input) && canonicalJson(t.expected) === canonicalJson(output));
+		if (!reproduced) { return `pin: example[${index}] not mirrored in ## Tests`; }
+	}
+	return null;
+}
+
+/**
+ * Parses an example's free-form `input:` line (`"a = 1, b = [2,7]"`) into a
+ * key → value map, splitting on top-level commas only (a comma inside
+ * `[...]` / `{...}` does not separate pairs).
+ *
+ * @param raw - The example's raw input string, as returned by `extractExamples`.
+ * @returns The parsed map, or `null` when any pair is not `key=value` or its
+ *   value is not valid JSON.
+ *
+ * @example
+ * parseExampleInput('nums = [2,7,11,15], target = 9');
+ * // → { nums: [2, 7, 11, 15], target: 9 }
+ */
+function parseExampleInput(raw: string): Record<string, unknown> | null {
+	const out: Record<string, unknown> = {};
+	for (const pair of splitTopLevel(raw, ',')) {
+		const eq = pair.indexOf('=');
+		if (eq === -1) { return null; }
+		const key = pair.slice(0, eq).trim();
+		const rawVal = pair.slice(eq + 1).trim();
+		const val = safeJsonParse(rawVal);
+		if (val === null && rawVal !== 'null') { return null; }
+		out[key] = val;
+	}
+	return out;
+}
+
+/** Split `s` on `sep` at bracket-depth 0 only — a `[` / `{` suspends splitting until its match closes. */
+function splitTopLevel(s: string, sep: string): string[] {
+	const parts: string[] = [];
+	let depth = 0;
+	let current = '';
+	for (const ch of s) {
+		if (ch === '[' || ch === '{') { depth++; }
+		else if (ch === ']' || ch === '}') { depth--; }
+
+		if (ch === sep && depth === 0) {
+			parts.push(current);
+			current = '';
+		} else {
+			current += ch;
+		}
+	}
+	parts.push(current);
+	return parts;
+}
+
+/** Set equality — same size, every member of `a` present in `b`. */
+function sameKeys(a: Set<string>, b: Set<string>): boolean {
+	if (a.size !== b.size) { return false; }
+	for (const k of a) { if (!b.has(k)) { return false; } }
+	return true;
+}
