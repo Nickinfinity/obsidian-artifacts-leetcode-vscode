@@ -434,6 +434,12 @@ export interface ParsedLeetCode {
 	libs?: LibSpec;
 	/** `checks:` grading rules — `project` / `service` only. **Solved = every check green.** */
 	checks?: ProjectCheck[];
+	/**
+	 * Author-facing parse problems that degraded to a default (an unknown `role`,
+	 * a rejected lib, a near-miss frontmatter key). Populated for a multi-file
+	 * artifact; a silent drop is indistinguishable from an absent declaration.
+	 */
+	warnings?: string[];
 }
 
 /**

@@ -292,6 +292,74 @@ suite('parseLeetCode', () => {
         assert.deepStrictEqual(parsed.tests, []);
     });
 
+    // ── Widened json fence — the function grammar under the project change ────
+    // The fence regex now accepts an info-string attribute (`check=<name>`) and
+    // takes EVERY json fence in a case section, not just the first, so a
+    // `project`'s cases can bind to named checks. These pin what that did to the
+    // function grammar: the single-fence artifact — every shipped exercise — is
+    // untouched, and a second fence, previously dropped in silence, now counts.
+
+    const FENCE_FM = [
+        'type: leetcode',
+        'title: Demo',
+        'function: demo',
+        'params: []',
+        'returns: int',
+    ].join('\n');
+
+    test('a single bare json fence parses exactly as before', () => {
+        const body = [
+            '## Tests',
+            FENCE + 'json',
+            '[{ "input": { "x": 1 }, "expected": 2 }]',
+            FENCE,
+        ].join('\n');
+        assert.deepStrictEqual(parseLeetCode(build(FENCE_FM, body)).tests,
+            [{ input: { x: 1 }, expected: 2 }]);
+    });
+
+    test('a second json fence in the section is appended, no longer ignored', () => {
+        const body = [
+            '## Tests',
+            FENCE + 'json',
+            '[{ "input": { "x": 1 }, "expected": 2 }]',
+            FENCE,
+            '',
+            FENCE + 'json',
+            '[{ "input": { "x": 3 }, "expected": 4 }]',
+            FENCE,
+        ].join('\n');
+        assert.deepStrictEqual(parseLeetCode(build(FENCE_FM, body)).tests, [
+            { input: { x: 1 }, expected: 2 },
+            { input: { x: 3 }, expected: 4 },
+        ]);
+    });
+
+    test('one malformed fence costs only its own cases', () => {
+        const body = [
+            '## Tests',
+            FENCE + 'json',
+            '[not, valid, json',
+            FENCE,
+            '',
+            FENCE + 'json',
+            '[{ "input": { "x": 3 }, "expected": 4 }]',
+            FENCE,
+        ].join('\n');
+        assert.deepStrictEqual(parseLeetCode(build(FENCE_FM, body)).tests,
+            [{ input: { x: 3 }, expected: 4 }]);
+    });
+
+    test('a check= attribute does not stop a function artifact parsing its cases', () => {
+        const body = [
+            '## Tests',
+            FENCE + 'json check=whatever',
+            '[{ "input": { "x": 1 }, "expected": 2 }]',
+            FENCE,
+        ].join('\n');
+        assert.strictEqual(parseLeetCode(build(FENCE_FM, body)).tests.length, 1);
+    });
+
     // ── Solutions ─────────────────────────────────────────────────────────────
 
     test('# Solutions → ## Java → ### Brute Force → labelled solution', () => {

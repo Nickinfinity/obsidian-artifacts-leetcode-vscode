@@ -1,6 +1,7 @@
 import type {
 	LeetCodeSummary,
 	ParsedLeetCode,
+	TestTypeId,
 } from '../types/leetcode.types.js';
 import {
 	extractAttempts,
@@ -12,10 +13,14 @@ import {
 	extractTests,
 } from './leetcode-sections.helpers.js';
 import { parseFrontmatter } from './leetcode-parser.helpers.js';
+import { parseProjectArtifact } from './project-parser.helpers.js';
 
 export { defaultPracticeConfig, defaultTestConfig } from './leetcode-parser.helpers.js';
 
 const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/;
+
+/** Test types whose artifacts declare a file tree, dependencies and checks. */
+const MULTI_FILE_TYPES = new Set<TestTypeId>(['project', 'service']);
 
 /**
  * Parses a LeetCode-flavoured vault `.md` file into a `ParsedLeetCode` structure.
@@ -41,6 +46,9 @@ export function parseLeetCode(content: string): ParsedLeetCode {
 	const body    = fmMatch ? content.slice(fmMatch[0].length) : content;
 
 	const fm = parseFrontmatter(fmRaw);
+	// Multi-file grammar is its own concern and its own file — a `function`
+	// artifact never pays for it, and gets none of its fields.
+	const project = MULTI_FILE_TYPES.has(fm.test.type) ? parseProjectArtifact(fmRaw, body) : null;
 
 	return {
 		title:        fm.title ?? '',
@@ -61,6 +69,10 @@ export function parseLeetCode(content: string): ParsedLeetCode {
 		solutions:    extractSolutions(body),
 		attempts:     extractAttempts(body),
 		tags:         fm.tags ?? [],
+		files:        project?.files,
+		libs:         project?.libs,
+		checks:       project?.checks,
+		warnings:     project?.warnings,
 	};
 }
 

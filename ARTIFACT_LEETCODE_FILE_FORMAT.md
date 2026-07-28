@@ -131,11 +131,11 @@ Indented sub-keys, both optional:
 | `type` | `TestTypeId` | `function` | Unknown value → `function` (a typo must not make the exercise unrunnable). |
 | `timeoutMs` | number | `5000` | Per case. Clamped to `[100, 60000]`. Suite budget = `cases × timeoutMs`, capped at 60 s. |
 
-`TestTypeId` ∈ `function` (**implemented**) · `class` · `stdin-stdout` ·
-`in-place` · `project` · `service` (all reserved — they parse and validate, but no
-environment is registered, so the language selector renders empty and the panel
-says why). `project` and `service` are the multi-file / running-server types; the
-frontmatter they add is **contract only** — see §9.
+`TestTypeId` ∈ `function` (**implemented**) · `project` (**implemented**, parsed and
+registered for `javascript` + `typescript`, not yet runnable — see §9) · `class` ·
+`stdin-stdout` · `in-place` · `service` (reserved — they parse and validate, but no
+environment is registered, so the language selector renders empty and the panel says why).
+`project` and `service` are the multi-file / running-server types.
 
 ### 2.3 `practice:` block
 
@@ -390,12 +390,14 @@ Submit is preserved everywhere except those three writer-owned spots.
 
 ---
 
-## 9. `project` and `service` — multi-file exercises (**contract only**)
+## 9. `project` and `service` — multi-file exercises
 
-> **Nothing in this section is implemented.** `project` and `service` are reserved
-> `test.type` values: the parser accepts them, `languagesForType()` returns `[]`, and
-> the panel explains that no environment exists. Every field below is **ignored** by
-> today's parser — an artifact using them parses clean and simply grades nothing.
+> **Status, precisely.** `project` is **parsed** — `## Files`, `libs:`, `checks:` and the
+> `check=<name>` case binding all land on the parsed artifact, and `project` is
+> `implemented` in `TEST_TYPES`, registered for `javascript` + `typescript`. It is **not yet
+> runnable**: the environment refuses every candidate with one sentence until the render
+> driver and check kinds ship. `service` remains reserved — its fields below parse (it shares
+> the `project` grammar) and nothing executes them.
 > Reference artifacts live under
 > [`examples/leetcode/project/`](examples/leetcode/project/) and
 > [`examples/leetcode/service/`](examples/leetcode/service/); the gaps found while
@@ -419,9 +421,18 @@ export function filterInStock() { /* … */ }
 | Attribute | Values | Meaning |
 |---|---|---|
 | `path` | POSIX-relative | Location inside the run directory. Never absolute, never `..`. |
-| `role` | `editable` | Written and opened — the solver's work. |
-| | `readonly` | Written and opened, not to be edited (a contract to read). |
+| `role` | `editable` | Written and opened — the solver's work. **The default** when `role=` is absent. |
+| | `readonly` | Written and opened with a **read-only file mode**, not to be edited. VS Code has no per-editor config scope, so file mode is the mechanism. |
 | | `hidden` | Written, never opened — scaffolding the solver should not see. |
+
+A fence with **no** `path=` is prose, not a file, and is skipped. An unrecognised `role=`
+degrades to `editable` **with a warning** — a silent drop reads exactly like an artifact
+that never declared the role. The language is the info-string's first token, resolved
+through the usual alias table (`tsx` → `typescriptreact`, `css` → `css`).
+
+Paths are reported by the parser exactly as written and are normalised and
+containment-asserted by the **writer**, immediately before it writes — one authority, at
+the point of use, rather than a check the parser could be bypassed around.
 
 A file **no check references is ungraded scaffolding, explicitly** (the CSS tab exists
 for the solver, not the grader).
@@ -444,14 +455,49 @@ test:
 
 | `kind` | Compares | Status |
 |---|---|---|
-| `function` | one file's export, through the five `function` environments | planned |
-| `build` | a declared argv exits 0 | planned |
+| `function` | one file's export, through the five `function` environments | parsed |
+| `build` | a declared argv **array** exits 0; optional `dir:` runs it in a contained subtree | parsed |
 | `http` | in-host `fetch` against a booted service (`service: <name>`) | planned (`service` only) |
-| `css-assert`, `dom-assert` | static / DOM assertions | reserved — a declared limit beats a fake grade |
+| `css-assert` | **declared** style: inline/`style` properties and class presence | parsed |
+| `dom-assert` | DOM after mounting the component and firing events | parsed |
 
-**Solved = every check green.** Cases in `## Tests` are meant to bind to a check by a
-`check=<name>` fence attribute; today's `JSON_FENCE` regex forbids attributes, so the
-shipped examples carry cases for exactly one check and say so in prose.
+`css-assert` never asserts layout geometry — the render environment is jsdom, which
+computes no layout, so a width-from-box-model assertion is refused rather than silently
+passed.
+
+**Zero or one `function` check per project.** `params:` / `returns:` are artifact-level
+singletons, so a second function check would have nowhere to declare its own types; a
+project may equally have **none** (graded entirely by `dom-assert` / `css-assert` /
+`build`), in which case `params:` and `returns:` are optional and the function structural
+floor — the 6-public / 3-final case counts — does not apply to it.
+
+**Solved = every check green.**
+
+#### Binding cases to a check
+
+A ` ```json ` fence in `## Tests` / `## Final Tests` carries a `check=<name>` attribute, and
+**every** fence in the section is read (not just the first):
+
+````markdown
+## Tests
+
+```json check="catalogue filter"
+[ { "input": { "minStock": 3 }, "expected": ["keyboard"] } ]
+```
+
+```json check=alternates
+[ { "input": {}, "expected": "X" } ]
+```
+````
+
+Quote a name containing spaces. A bare fence with no attribute binds to the **sole** check
+when the artifact has exactly one — the common single-check project — and warns otherwise
+rather than guessing. A fence naming a check that does not exist warns too. Public fences
+bind before final ones, so a check's cases keep public-then-final order.
+
+This widened fence applies to **every** artifact, `function` included: a second json fence
+under `## Tests`, previously ignored in silence, is now appended to the suite, and one
+malformed fence costs only its own cases.
 
 ### 9.3 `services:` (`test.type: service`)
 
@@ -495,6 +541,10 @@ libs:
   python: [fastapi@^0.115.0, uvicorn@^0.32.0]
   typescript: [react@^19.0.0, vite@^7.0.0]
 ```
+
+Both the block form above and an inline `python: [fastapi@^0.115.0, uvicorn@^0.32.0]` parse.
+An entry the allowlist refuses is **dropped with a warning** before it can reach an install
+subprocess; the rest of that language's list still installs.
 
 Per-language dependency lists. Every entry must pass the npm-style allowlist already
 shipped in `validateLibNames` ([lib-spec.helpers.ts](src/services/lib-spec.helpers.ts)) —

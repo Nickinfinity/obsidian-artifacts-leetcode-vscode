@@ -14,15 +14,24 @@ const SAFE_EXT_RE = /^[a-z0-9]+$/;
  * @param fenceLang - Fence info-string or language heading, any casing.
  * @returns Canonical `languageId`, or `'plaintext'` for an empty input.
  *
+ * The lookup is **own-property only**. A fence info-string is untrusted text, so
+ * a plain `LANG_ALIAS[key]` would reach through the prototype chain and hand
+ * back `Object.prototype` itself for `` ```__proto__ `` — an object where every
+ * caller has been promised a string.
+ *
+ * @param fenceLang - Fence info-string or language heading, any casing.
+ * @returns Canonical `languageId`, or `'plaintext'` for an empty input.
+ *
  * @example
  * resolveLangId('JavaScript'); // → 'javascript'
  * resolveLangId('py');         // → 'python'
  * resolveLangId('c#');         // → 'csharp'
+ * resolveLangId('__proto__');  // → '__proto__' (never Object.prototype)
  */
 export function resolveLangId(fenceLang: string): string {
 	const key = fenceLang.trim().toLowerCase();
 	if (key === '') { return 'plaintext'; }
-	return LANG_ALIAS[key] ?? key;
+	return Object.hasOwn(LANG_ALIAS, key) ? LANG_ALIAS[key] : key;
 }
 
 /**
@@ -42,7 +51,10 @@ export function resolveLangId(fenceLang: string): string {
  * extForLang('c#');         // → 'txt'  (unsafe — should have been aliased)
  */
 export function extForLang(langId: string): string {
-	const known = LANG_EXT[langId];
+	// Own-property only — `LANG_EXT['__proto__']` would otherwise return
+	// `Object.prototype`, which is truthy and lands in a filename as
+	// "[object Object]". Same hazard as `resolveLangId`.
+	const known = Object.hasOwn(LANG_EXT, langId) ? LANG_EXT[langId] : undefined;
 	if (known) { return known; }
 	return SAFE_EXT_RE.test(langId) ? langId : 'txt';
 }

@@ -34,12 +34,12 @@ practice:
 tags: [nextjs, react, typescript, multi-file, project, spike]
 ---
 
-> ⚠️ **Contract-only spike artifact.** `test.type: project` is a **reserved** type — no
-> environment is registered, so this exercise parses, lists, and explains itself in the
-> panel, but cannot be run yet. It exists to prove the multi-file contract
-> ([plan §6](../../../../docs/plans/rust-multilang/plan.md)) against a real artifact; the
-> gaps it exposes are recorded in
-> [spike-findings.md](../../../../docs/plans/rust-multilang/spike-findings.md).
+> ⚠️ **Parsed, not yet runnable.** `test.type: project` now parses in full — this file's
+> `## Files` tree, `libs:`, `checks:` and `check=<name>` case binding all land on the parsed
+> artifact — and an environment is registered for `javascript` + `typescript`. It cannot be
+> **run** yet: the environment refuses every candidate until the render driver and the check
+> kinds ship. Written first as a contract spike; the gaps it exposed are what the
+> implementation follows.
 
 A Next.js App Router page lists a product catalogue served by its own route handler
 (`GET /api/products`) — one process, one language, several files.
@@ -71,7 +71,7 @@ output: []
 
 ## Tests
 
-```json
+```json check="catalogue filter"
 [
   { "input": { "catalogue": { "keyboard": 12, "mouse": 0, "monitor": 3 }, "minStock": 3 }, "expected": ["keyboard", "monitor"] },
   { "input": { "catalogue": { "cable": 1 }, "minStock": 5 }, "expected": [] }
@@ -80,7 +80,7 @@ output: []
 
 ## Final Tests
 
-```json
+```json check="catalogue filter"
 [
   { "input": { "catalogue": {}, "minStock": 0 }, "expected": [] },
   { "input": { "catalogue": { "b": 4, "a": 4, "c": 4 }, "minStock": 4 }, "expected": ["a", "b", "c"] },

@@ -14,7 +14,6 @@ const EXAMPLES_RE      = /^## Examples\s*$/m;
 const TESTS_RE         = /^## Tests\s*$/m;
 const FINAL_TESTS_RE   = /^## Final Tests\s*$/m;
 const EXAMPLE_FENCE    = /```example\r?\n([\s\S]*?)```/g;
-const JSON_FENCE       = /```json\r?\n([\s\S]*?)```/;
 const META_RE          = /<!-- meta:\s*(\{[\s\S]*?\})\s*-->/;
 const FENCE_W_META_RE  = /(?:<!-- meta:\s*(\{[\s\S]*?\})\s*-->\s*\r?\n)?```\w+\r?\n([\s\S]*?)```/g;
 const FENCE_W_ATTEMPT_RE = /(?:<!-- attempt:\s*(\{[\s\S]*?\})\s*-->\s*\r?\n)?```\w+\r?\n([\s\S]*?)```/g;
@@ -105,13 +104,72 @@ export function extractFinalTests(body: string): TestCase[] {
 
 /** Shared slice-then-parse for the two `TestCase[]` sections. Never throws. */
 function extractJsonCases(body: string, headingRe: RegExp): TestCase[] {
+	return extractCaseFences(body, headingRe).flatMap(f => f.cases);
+}
+
+/**
+ * One ` ```json ` fence of a case section, with the check it names (if any).
+ *
+ * A `project` exercise grades several checks from one section, so each fence
+ * carries `check=<name>`; a `function` exercise writes a single bare fence and
+ * leaves `check` undefined.
+ */
+export interface CaseFence {
+	/** Value of the `check=<name>` info-string attribute; `undefined` on a bare fence */
+	check?: string;
+	/** Cases in this fence; `[]` when its JSON is malformed */
+	cases: TestCase[];
+}
+
+/**
+ * Every ` ```json ` fence under a case section, in document order.
+ *
+ * The info-string is **attribute-bearing** (`` ```json check="app builds" ``) and
+ * *all* fences in the section are taken, not just the first — that is what lets
+ * a `project`'s cases bind to named checks. For a `function` artifact, whose
+ * sections carry exactly one bare fence, the result is the single fence it
+ * always was; a second fence, previously ignored, is now appended.
+ *
+ * Malformed JSON in one fence yields `cases: []` for that fence alone and never
+ * throws — one broken suite must not take the others down with it.
+ *
+ * @param body      - Content after the frontmatter.
+ * @param headingRe - Anchored heading regex (`TESTS_RE` / `FINAL_TESTS_RE`).
+ * @returns One entry per json fence in the section; `[]` when the section is absent.
+ *
+ * @example
+ * extractCaseFences('## Tests\n```json check=api\n[]\n```', /^## Tests\s*$/m);
+ * // → [{ check: 'api', cases: [] }]
+ */
+export function extractCaseFences(body: string, headingRe: RegExp): CaseFence[] {
 	const section = extractSection(body, headingRe);
 	if (!section) { return []; }
-	const fence = JSON_FENCE.exec(section);
-	if (!fence) { return []; }
-	const parsed = safeJsonParse(fence[1]);
-	return Array.isArray(parsed) ? parsed as TestCase[] : [];
+
+	const out: CaseFence[] = [];
+	// Fresh regex per call — a `g` flag at module scope carries `lastIndex`
+	// between calls and would silently skip fences on the second read.
+	const fences = /```json([^\n]*)\r?\n([\s\S]*?)```/g;
+	let match = fences.exec(section);
+	while (match !== null) {
+		const parsed = safeJsonParse(match[2]);
+		out.push({
+			check: checkAttr(match[1]),
+			cases: Array.isArray(parsed) ? parsed as TestCase[] : [],
+		});
+		match = fences.exec(section);
+	}
+	return out;
 }
+
+/** Read `check=<name>` (quoted or bare) out of a fence info-string. */
+function checkAttr(infoString: string): string | undefined {
+	const attr = /check=(?:"([^"]*)"|(\S+))/.exec(infoString);
+	if (!attr) { return undefined; }
+	return attr[1] ?? attr[2];
+}
+
+/** The two case sections, exposed for the `project` parser's check binding. */
+export const CASE_SECTIONS = { tests: TESTS_RE, final: FINAL_TESTS_RE } as const;
 
 /**
  * Parses the `# Setup` tree into per-language starter stubs.
