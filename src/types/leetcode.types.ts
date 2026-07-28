@@ -386,7 +386,9 @@ export type RenderStep =
 	| { op: 'change'; selector: string; value: string }
 	| { op: 'text'; selector: string }
 	| { op: 'count'; selector: string }
-	| { op: 'attr'; selector: string; name: string };
+	| { op: 'attr'; selector: string; name: string }
+	/** **Declared** style only — `element.style[property]`, never a computed box. */
+	| { op: 'style'; selector: string; property: string };
 
 /**
  * Verdict for one `ProjectCheck`.

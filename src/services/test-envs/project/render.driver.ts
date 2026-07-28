@@ -174,6 +174,11 @@ function perform(root, step, win, act) {
 			return root.querySelectorAll(step.selector).length;
 		case 'attr':
 			return required(root, step.selector).getAttribute(step.name);
+		case 'style':
+			// Declared/inline value only. \`getComputedStyle\` is deliberately not
+			// used: jsdom computes no layout, so a box-model read would be a
+			// confident zero rather than an answer.
+			return required(root, step.selector).style[step.property] || null;
 		default:
 			throw new Error('unknown step ' + JSON.stringify(step.op));
 	}
