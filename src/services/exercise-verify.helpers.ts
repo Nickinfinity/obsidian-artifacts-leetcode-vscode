@@ -6,6 +6,7 @@ import { parseLeetCode } from './leetcode-parser.service.js';
 import { runSuite } from './leetcode-runner.service.js';
 import { submitSuite } from './leetcode-suite.helpers.js';
 import { languagesForType, testEnvFor } from './test-envs/env.registry.js';
+import { runProjectChecks } from './test-envs/project/project.runner.js';
 
 /** Structural floors from §D.2 — relaxed for a reserved (no-env) `test.type`. */
 const MIN_EXAMPLES = 2;
@@ -75,7 +76,7 @@ export async function verifyExercise(md: string, path?: string): Promise<VerifyR
 	// `project` is now `implemented` — without it, `reserved` computes false and
 	// every project artifact is mis-graded against the function floor.
 	if (parsed.test.type === 'project') {
-		const projectReason = verifyProjectExercise(parsed);
+		const projectReason = await verifyProjectExercise(parsed);
 		return projectReason ? fail(projectReason) : { ok: true };
 	}
 
@@ -130,18 +131,32 @@ export function compareExpecteds(artifactCases: TestCase[], recomputed: unknown[
  *
  * A project declares a file tree and a list of checks; it has no `params` /
  * `returns` and no 6-public / 3-final case counts, because "solved" means
- * *every check green*, not "one function returned the expected value". This is
- * deliberately **structural only**: it reads the parsed shape and runs nothing.
- * TB.8 replaces the body with real check-grading once the render driver and the
- * check kinds exist.
+ * *every check green*, not "one function returned the expected value".
+ *
+ * Structure is checked first and cheaply — a malformed artifact is reported
+ * without materialising a tree or installing a toolchain — then every check is
+ * actually run.
  *
  * @param parsed - Parsed artifact whose `test.type` is `project`.
- * @returns The first broken rule, or `null` when the shape conforms.
+ * @returns The first broken rule or failing check, or `null` when it grades green.
  *
  * @example
- * verifyProjectExercise({ ...parsed, files: [f], checks: [c] }); // → null
+ * await verifyProjectExercise({ ...parsed, files: [f], checks: [c] }); // → null
  */
-function verifyProjectExercise(parsed: ParsedLeetCode): string | null {
+async function verifyProjectExercise(parsed: ParsedLeetCode): Promise<string | null> {
+	const structural = checkProjectStructure(parsed);
+	if (structural) { return structural; }
+
+	const outcomes = await runProjectChecks(parsed);
+	const failed = outcomes.find(o => !o.passed);
+	if (failed) {
+		return `project: check '${failed.name}' failed${failed.detail ? `: ${failed.detail}` : ''}`;
+	}
+	return null;
+}
+
+/** Shape rules that need no execution — checked before anything is written or installed. */
+function checkProjectStructure(parsed: ParsedLeetCode): string | null {
 	if (!parsed.title) { return 'parse: missing title'; }
 	if (!parsed.files?.length) { return 'project: no ## Files declared'; }
 	if (!parsed.checks?.length) { return 'project: no checks declared — solved means every check green'; }
@@ -149,6 +164,10 @@ function verifyProjectExercise(parsed: ParsedLeetCode): string | null {
 	const names = parsed.checks.map(c => c.name);
 	if (new Set(names).size !== names.length) { return 'project: check names are not unique'; }
 
+	const unbound = parsed.checks.filter(c => c.kind !== 'build' && c.cases.length === 0);
+	if (unbound.length > 0) {
+		return `project: check '${unbound[0].name}' has no cases — bind them with a \`check=\` fence attribute`;
+	}
 	return null;
 }
 

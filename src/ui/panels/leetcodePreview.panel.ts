@@ -4,6 +4,7 @@ import type {
 	BigOEstimate,
 	ChallengePhase,
 	ParsedLeetCode,
+	ProjectCheckOutcome,
 	TestResult,
 	TimerTick,
 } from '../../types/leetcode.types.js';
@@ -98,6 +99,44 @@ export function renderTestResultsHtml(results: TestResult[]): string {
 	const summary = `<div class="results-summary ${summaryCls}">${passed} / ${total} passed</div>`;
 
 	const rows = results.map(renderResultRow).join('\n');
+	return `${summary}\n${rows}`;
+}
+
+/**
+ * Renders the results table for a `project` exercise — one row per **check**,
+ * not per test case.
+ *
+ * A project's verdict is "every check green", and its checks are heterogeneous:
+ * a build's evidence is a compiler's output, a dom-assert's is a failed
+ * assertion. So each row is name + verdict + whatever the check had to say,
+ * rather than the function table's input/expected/actual columns, which a build
+ * check has nothing to put in.
+ *
+ * Reuses the function table's `test-pass` / `test-fail` classes so both look
+ * like one results surface — no new CSS for a second table.
+ *
+ * @param outcomes - One outcome per declared check, in declaration order.
+ * @returns HTML fragment ready to inject into the results sink.
+ *
+ * @example
+ * renderProjectResultsHtml([{ name: 'app builds', passed: true }]);
+ */
+export function renderProjectResultsHtml(outcomes: ProjectCheckOutcome[]): string {
+	const total = outcomes.length;
+	const passed = outcomes.filter(o => o.passed).length;
+	const summary = `<div class="results-summary ${computeSummaryClass(passed, total)}">`
+		+ `${passed} / ${total} checks passed</div>`;
+
+	const rows = outcomes.map(outcome => {
+		const cls = outcome.passed ? 'test-pass' : 'test-fail';
+		const verdict = outcome.passed ? 'pass' : 'fail';
+		const detail = outcome.detail
+			? `<div class="hint"><pre>${escHtml(outcome.detail)}</pre></div>`
+			: '';
+		return `<div class="test-result ${cls}"><div><strong>${escHtml(outcome.name)}</strong>`
+			+ ` &middot; ${verdict}</div>${detail}</div>`;
+	}).join('\n');
+
 	return `${summary}\n${rows}`;
 }
 

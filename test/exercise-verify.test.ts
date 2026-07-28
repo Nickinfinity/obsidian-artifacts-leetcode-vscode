@@ -249,4 +249,122 @@ suite('exercise-verify', () => {
             ]);
         });
     });
+
+    // ── test.type: project — checks, not the function floor ──────────────────
+    //
+    // Every fixture here grades with `build` checks only. That is deliberate: a
+    // build check runs a node one-liner and needs no toolchain install, so the
+    // project branch is exercised deterministically and offline. The render
+    // kinds have their own end-to-end coverage in `project-checks.test.ts`.
+
+    suite('project exercises', () => {
+
+        interface ProjectOpts {
+            title?: string;
+            files?: string;
+            checks?: string;
+            tests?: string;
+        }
+
+        const EXIT_OK = '["' + process.execPath.replace(/\\/g, '\\\\') + '", "-e", "process.exit(0)"]';
+        const EXIT_BAD = '["' + process.execPath.replace(/\\/g, '\\\\') + '", "-e", "process.exit(1)"]';
+
+        function buildProjectMd(opts: ProjectOpts = {}): string {
+            const {
+                title = 'Widget',
+                files = '```javascript path=src/App.jsx role=editable\nexport default function App() { return null; }\n```',
+                checks = `    - name: app builds\n      kind: build\n      argv: ${EXIT_OK}`,
+                tests = '',
+            } = opts;
+
+            return [
+                '---',
+                'type: leetcode',
+                `title: ${title}`,
+                'difficulty: medium',
+                'test:',
+                '  type: project',
+                '  checks:',
+                checks,
+                '---',
+                '',
+                'A multi-file exercise.',
+                '',
+                tests,
+                '## Files',
+                '',
+                files,
+                '',
+            ].join('\n');
+        }
+
+        test('a project whose every check passes is ok', async () => {
+            const result = await verifyExercise(buildProjectMd());
+            assert.strictEqual(result.ok, true, !result.ok ? result.reason : '');
+        });
+
+        test('the function floor is not applied — no params, returns, or 6/3 case counts needed', async () => {
+            // The same artifact would fail `checkStructure` on every count.
+            const parsedFree = buildProjectMd();
+            assert.ok(!parsedFree.includes('params:'), 'fixture must declare no params');
+            assert.strictEqual((await verifyExercise(parsedFree)).ok, true);
+        });
+
+        test('a failing check fails the exercise and names the check', async () => {
+            const result = await verifyExercise(buildProjectMd({
+                checks: `    - name: app builds\n      kind: build\n      argv: ${EXIT_BAD}`,
+            }));
+
+            assert.strictEqual(result.ok, false);
+            assert.ok(!result.ok && result.reason.includes('app builds'), !result.ok ? result.reason : '');
+        });
+
+        test('one red check among several fails the whole exercise', async () => {
+            const result = await verifyExercise(buildProjectMd({
+                checks: [
+                    `    - name: first\n      kind: build\n      argv: ${EXIT_OK}`,
+                    `    - name: second\n      kind: build\n      argv: ${EXIT_BAD}`,
+                ].join('\n'),
+            }));
+
+            assert.strictEqual(result.ok, false);
+            assert.ok(!result.ok && result.reason.includes('second'), !result.ok ? result.reason : '');
+        });
+
+        test('a project with no ## Files is refused before anything runs', async () => {
+            const result = await verifyExercise(buildProjectMd({ files: '' }));
+            assert.strictEqual(result.ok, false);
+            assert.ok(!result.ok && /## Files/.test(result.reason), !result.ok ? result.reason : '');
+        });
+
+        test('duplicate check names are refused', async () => {
+            const result = await verifyExercise(buildProjectMd({
+                checks: [
+                    `    - name: same\n      kind: build\n      argv: ${EXIT_OK}`,
+                    `    - name: same\n      kind: build\n      argv: ${EXIT_OK}`,
+                ].join('\n'),
+            }));
+
+            assert.strictEqual(result.ok, false);
+            assert.ok(!result.ok && /unique/.test(result.reason), !result.ok ? result.reason : '');
+        });
+
+        test('a render check with no bound cases is refused rather than passing empty', async () => {
+            const result = await verifyExercise(buildProjectMd({
+                checks: '    - name: renders\n      kind: dom-assert\n      file: src/App.jsx',
+            }));
+
+            assert.strictEqual(result.ok, false);
+            assert.ok(!result.ok && /no cases/.test(result.reason), !result.ok ? result.reason : '');
+        });
+
+        test('a traversal path in ## Files fails every check, and writes nothing', async () => {
+            const result = await verifyExercise(buildProjectMd({
+                files: '```javascript path=../../escape.js role=editable\nx\n```',
+            }));
+
+            assert.strictEqual(result.ok, false);
+            assert.ok(!result.ok && /path/i.test(result.reason), !result.ok ? result.reason : '');
+        });
+    });
 });

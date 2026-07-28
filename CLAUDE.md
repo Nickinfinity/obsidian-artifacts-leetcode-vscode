@@ -83,7 +83,8 @@ src/
 ├── commands/           # VS Code command handlers + run orchestration (picker, solveIt, submit)
 ├── services/           # Domain logic: parse, codegen, runner, challenge/timer, vault, attempts
 │   └── test-envs/      # (test type × language) environments — validate/emit/parse a suite
-│       └── function/   # The five `function` envs, all built by makeFunctionEnv(spec)
+│       ├── function/   # The five `function` envs, all built by makeFunctionEnv(spec)
+│       └── project/    # Multi-file, check-graded: files writer, installer, render driver, check kinds
 ├── ui/
 │   ├── panels/         # Webview HTML renderers + message handling (settings, preview)
 │   ├── views/          # Activity-Bar WebviewView providers (sidebar)
@@ -322,6 +323,45 @@ wrote their own `import`, `class Main`, or `main()`.) Commands run with the temp
 returns a plain user-facing message (or `null`) — a Java method wrapped in the solver's own
 `class`, a Python `def` nested in a class, a JS buffer that never names the function — so the
 panel shows *"Java setup must be a bare method, not a class"* instead of a compiler dump.
+
+### The `project` test type — checks, not one return value
+
+A `project` artifact is a **file tree graded by declared checks**
+([`test-envs/project/`](src/services/test-envs/project/)); *solved = every check green*. It
+is parsed and graded today, registered for `javascript` + `typescript` — the runnable ids;
+`javascriptreact`/`typescriptreact` are display ids with no runtime, and a `.jsx`/`.tsx` file
+maps onto the runnable pair at bundle time.
+
+| Piece | File | Owns |
+|---|---|---|
+| Grammar | [project-parser.helpers.ts](src/services/project-parser.helpers.ts) | `## Files`, `libs:`, `checks:`, `check=<name>` case binding, warnings |
+| Containment | [files.writer.ts](src/services/test-envs/project/files.writer.ts) | `resolveContained` — **the** path authority; writes the tree, `role: readonly` → mode `0o444` |
+| Toolchain | [lib-installer.ts](src/services/test-envs/project/lib-installer.ts) | allowlist → argv `npm install` → shared cache under `os.tmpdir()` |
+| Render | [render.driver.ts](src/services/test-envs/project/render.driver.ts) | esbuild bundle + jsdom mount, one `__LEET__` line per case |
+| Check kinds | [checks.ts](src/services/test-envs/project/checks.ts) · [build.check.ts](src/services/test-envs/project/build.check.ts) | `dom-assert` / `css-assert` / `build` |
+| Orchestration | [project.runner.ts](src/services/test-envs/project/project.runner.ts) | temp run dir → write tree → dispatch every check |
+
+Rules that are load-bearing, not stylistic:
+
+- **`verifyExercise` branches on `project` before the function rules.** `project` is
+  `implemented`, so `languagesForType` is non-empty and `reserved` computes `false`; without
+  that branch a check-graded exercise is measured against `params`/`returns` and the 6/3 case
+  floors it does not have.
+- **Nothing artifact-authored becomes code.** The render driver embeds the entry path, cache
+  dir and every case as JSON literals; a case is a declarative `RenderStep[]`
+  (`click`/`change`/`text`/`count`/`attr`/`style`), never a snippet to eval.
+- **React is `external` to the bundle.** Bundling it gives the component a second React and
+  every hook throws `Invalid hook call`.
+- **`css-assert` refuses layout geometry.** jsdom computes no layout, so `width`/`height`/
+  `margin`/… are rejected at validation rather than answered from whatever is declared inline.
+- **A case with no sentinel line fails.** A killed driver must never read as an empty, and
+  therefore green, suite.
+- **Zero runtime dependencies still holds.** esbuild/jsdom install into the shared cache at
+  run time, never into `package.json`. The end-to-end render tests are therefore opt-in
+  (`LEET_PROJECT_E2E=1`) and `pending` otherwise — the gate stays deterministic offline.
+
+`examples/leetcode/project/javascript/react-counter.md` is the smoke artifact: the smallest
+`project` that grades green through `verify-exercise.mjs`, and the file to open for an F5 pass.
 
 **Rust has no serde.** Results serialise through a local `LeetJson` trait (compact, key-sorted
 JSON — `i32`/`f64`/`bool`/`String`/`Vec<T>`/`Option<T>`/`HashMap<String, T>`), not `{:?}` Debug:
