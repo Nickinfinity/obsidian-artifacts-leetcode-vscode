@@ -373,6 +373,22 @@ export interface CssAssertCheck extends ProjectCheckBase {
 export type ProjectCheck = FunctionCheck | BuildCheck | DomAssertCheck | CssAssertCheck;
 
 /**
+ * One instruction the render driver performs against a mounted component.
+ *
+ * Deliberately a small declarative union rather than a snippet of JavaScript the
+ * artifact supplies: a case describes *what to do and read*, and the driver — not
+ * the artifact — decides how. Reading steps produce the case's observed value,
+ * which is compared against `expected` through the same canonical-JSON path every
+ * other test type uses.
+ */
+export type RenderStep =
+	| { op: 'click'; selector: string }
+	| { op: 'change'; selector: string; value: string }
+	| { op: 'text'; selector: string }
+	| { op: 'count'; selector: string }
+	| { op: 'attr'; selector: string; name: string };
+
+/**
  * Verdict for one `ProjectCheck`.
  *
  * Every kind reduces to the same three fields, so the panel renders one results
