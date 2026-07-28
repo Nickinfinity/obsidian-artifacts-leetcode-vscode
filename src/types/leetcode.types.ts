@@ -373,6 +373,23 @@ export interface CssAssertCheck extends ProjectCheckBase {
 export type ProjectCheck = FunctionCheck | BuildCheck | DomAssertCheck | CssAssertCheck;
 
 /**
+ * Verdict for one `ProjectCheck`.
+ *
+ * Every kind reduces to the same three fields, so the panel renders one results
+ * table whether the check compiled a project or asserted a DOM node. `detail`
+ * is the child's output, a failed assertion, or the reason the check was refused
+ * before it ran.
+ */
+export interface ProjectCheckOutcome {
+	/** The check's declared name — results group by it */
+	name: string;
+	/** True when the check's condition held */
+	passed: boolean;
+	/** Output or reason, trimmed for display; omitted when there is nothing to say */
+	detail?: string;
+}
+
+/**
  * The fully parsed representation of a LeetCode `.md` artifact.
  *
  * Built by the LeetCode parser from frontmatter, the problem description, the
