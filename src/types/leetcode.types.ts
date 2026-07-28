@@ -277,6 +277,101 @@ export interface ExerciseSetup {
 	code: string;
 }
 
+// ── `test.type: project` — multi-file, check-graded exercises ────────────────
+
+/**
+ * What the solver may do with a `## Files` entry.
+ *
+ * `readonly` is enforced by writing the file with a read-only file mode:
+ * VS Code has no per-editor config scope, so "this tab edits, that one does
+ * not" cannot be expressed through settings (spike §7).
+ */
+export type FileRole = 'editable' | 'readonly' | 'hidden';
+
+/**
+ * One file of a `project` exercise's tree, from a `## Files` fence.
+ *
+ * `path` is untrusted author input — it is normalised and containment-asserted
+ * against the run directory before any write, never joined blindly.
+ */
+export interface FileSpec {
+	/** POSIX-relative location inside the run directory; never absolute, never `..` */
+	path: string;
+	/** Canonical `languageId` resolved from the fence info-string */
+	language: string;
+	/** Whether the file is opened, and whether it is writable */
+	role: FileRole;
+	/** Verbatim file contents */
+	content: string;
+}
+
+/**
+ * Per-language dependency lists from `libs:`, keyed by canonical `languageId`.
+ *
+ * Every entry must pass `validateLibNames` before it reaches an install
+ * subprocess — the shared install cache is a performance layer, never an
+ * allowlist bypass.
+ */
+export type LibSpec = Record<string, string[]>;
+
+/** Fields every `checks:` entry carries, whatever its `kind`. */
+interface ProjectCheckBase {
+	/** Unique within the artifact — results group by it, and cases bind to it by name */
+	name: string;
+	/** Cases bound to this check by a `check=<name>` fence attribute in `## Tests` */
+	cases: TestCase[];
+}
+
+/**
+ * Grades one exported function through the existing `function` machinery.
+ *
+ * At most **one** per project (HG-B decision 2): a project's `params` /
+ * `returns` are the artifact-level singletons, so a second function check would
+ * have nowhere to declare its own types.
+ */
+export interface FunctionCheck extends ProjectCheckBase {
+	kind: 'function';
+	/** File within the run directory holding the export */
+	file: string;
+	/** Name of the export to call */
+	function: string;
+}
+
+/** Passes when a declared argv exits 0. */
+export interface BuildCheck extends ProjectCheckBase {
+	kind: 'build';
+	/** Command as an argv **array** — never a command string */
+	argv: string[];
+	/** Optional subtree to run in, relative to the run directory; containment-asserted */
+	dir?: string;
+}
+
+/** Mounts a component in jsdom, fires events, asserts the resulting DOM. */
+export interface DomAssertCheck extends ProjectCheckBase {
+	kind: 'dom-assert';
+	/** Component entry file within the run directory */
+	file: string;
+}
+
+/**
+ * Asserts **declared** style: inline/style-attribute properties and class
+ * presence only. jsdom computes no layout, so geometry is out of scope by
+ * construction rather than silently wrong (HG-B decision 8).
+ */
+export interface CssAssertCheck extends ProjectCheckBase {
+	kind: 'css-assert';
+	/** Component entry file within the run directory */
+	file: string;
+}
+
+/**
+ * How a `project` exercise is graded. **Solved = every check green.**
+ *
+ * Discriminated on `kind` so a consumer narrows to exactly the fields that
+ * kind owns — a `build` check has an `argv`, a `dom-assert` has a component.
+ */
+export type ProjectCheck = FunctionCheck | BuildCheck | DomAssertCheck | CssAssertCheck;
+
 /**
  * The fully parsed representation of a LeetCode `.md` artifact.
  *
@@ -329,6 +424,16 @@ export interface ParsedLeetCode {
 	attempts: Attempt[];
 	/** Organisational tags from frontmatter (e.g. `['arrays', 'hash-map']`); `[]` when absent */
 	tags: string[];
+	/**
+	 * `## Files` tree — `test.type: project` only, absent for a `function`
+	 * artifact. Optional rather than `[]`-defaulted because a single-function
+	 * exercise has no file tree, and an empty array would imply it does.
+	 */
+	files?: FileSpec[];
+	/** `libs:` dependency lists — `project` / `service` only */
+	libs?: LibSpec;
+	/** `checks:` grading rules — `project` / `service` only. **Solved = every check green.** */
+	checks?: ProjectCheck[];
 }
 
 /**

@@ -5,6 +5,7 @@ import { javascriptFunctionEnv } from './function/javascript.env.js';
 import { pythonFunctionEnv } from './function/python.env.js';
 import { rustFunctionEnv } from './function/rust.env.js';
 import { typescriptFunctionEnv } from './function/typescript.env.js';
+import { projectEnvs } from './project/project.env.js';
 
 /** `"<type>::<language>"` → env. The absence of a key *is* the capability matrix. */
 const registry = new Map<string, TestEnv>();
@@ -75,3 +76,7 @@ register(pythonFunctionEnv);
 register(javaFunctionEnv);
 register(rustFunctionEnv);
 register(typescriptFunctionEnv);
+
+// `project` grades by declared checks, not one return value; it registers under
+// the runnable ids only — `javascriptreact`/`typescriptreact` have no runtime.
+projectEnvs.forEach(register);

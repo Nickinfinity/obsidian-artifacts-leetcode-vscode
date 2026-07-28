@@ -68,6 +68,17 @@ export interface ExpectedMismatch {
 export async function verifyExercise(md: string, path?: string): Promise<VerifyResult> {
 	const parsed = parseLeetCode(md);
 	const fail = (reason: string): VerifyFail => ({ ok: false, reason: path ? `${path}: ${reason}` : reason });
+
+	// A `project` is graded by declared checks, not by one function's return
+	// value: it has no `params` / `returns` and no public/final case floors, so
+	// it must never reach the function rules below. This branch exists because
+	// `project` is now `implemented` — without it, `reserved` computes false and
+	// every project artifact is mis-graded against the function floor.
+	if (parsed.test.type === 'project') {
+		const projectReason = verifyProjectExercise(parsed);
+		return projectReason ? fail(projectReason) : { ok: true };
+	}
+
 	const reserved = languagesForType(parsed.test.type).length === 0;
 
 	const parseReason = checkParses(parsed, reserved);
@@ -109,6 +120,36 @@ export function compareExpecteds(artifactCases: TestCase[], recomputed: unknown[
 		}
 	});
 	return mismatches;
+}
+
+// ── project: structural rules only (no function floor, nothing executed) ─────
+
+/**
+ * Structural rules for a `test.type: project` artifact — the branch that keeps
+ * a check-graded exercise away from the function floor.
+ *
+ * A project declares a file tree and a list of checks; it has no `params` /
+ * `returns` and no 6-public / 3-final case counts, because "solved" means
+ * *every check green*, not "one function returned the expected value". This is
+ * deliberately **structural only**: it reads the parsed shape and runs nothing.
+ * TB.8 replaces the body with real check-grading once the render driver and the
+ * check kinds exist.
+ *
+ * @param parsed - Parsed artifact whose `test.type` is `project`.
+ * @returns The first broken rule, or `null` when the shape conforms.
+ *
+ * @example
+ * verifyProjectExercise({ ...parsed, files: [f], checks: [c] }); // → null
+ */
+function verifyProjectExercise(parsed: ParsedLeetCode): string | null {
+	if (!parsed.title) { return 'parse: missing title'; }
+	if (!parsed.files?.length) { return 'project: no ## Files declared'; }
+	if (!parsed.checks?.length) { return 'project: no checks declared — solved means every check green'; }
+
+	const names = parsed.checks.map(c => c.name);
+	if (new Set(names).size !== names.length) { return 'project: check names are not unique'; }
+
+	return null;
 }
 
 // ── Rule 1: parses ────────────────────────────────────────────────────────────

@@ -187,7 +187,7 @@ export const TEST_TYPES: readonly TestType[] = [
 	},
 	{
 		id: 'project',
-		status: 'reserved',
+		status: 'implemented',
 		description: 'Multi-file exercise graded by declared checks (function, build) rather than one return value.',
 	},
 	{
