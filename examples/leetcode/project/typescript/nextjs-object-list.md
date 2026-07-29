@@ -34,12 +34,15 @@ practice:
 tags: [nextjs, react, typescript, multi-file, project, spike]
 ---
 
-> ⚠️ **Parsed, not yet runnable.** `test.type: project` now parses in full — this file's
-> `## Files` tree, `libs:`, `checks:` and `check=<name>` case binding all land on the parsed
-> artifact — and an environment is registered for `javascript` + `typescript`. It cannot be
-> **run** yet: the environment refuses every candidate until the render driver and the check
-> kinds ship. Written first as a contract spike; the gaps it exposed are what the
-> implementation follows.
+> ✅ **Runnable and green.** Written first as a contract spike, before `test.type: project`
+> could execute anything; the gaps it exposed are what the implementation followed. Both
+> checks now pass through `node scripts/verify-exercise.mjs`. The `build` check
+> (`npx tsc --noEmit`) was the last to work: it spawns its toolchain with the run directory as
+> `cwd`, and a compiler resolves `node_modules` by walking **up** from there, so nothing
+> resolved until the run directory got its own `node_modules` of symlinks into the shared
+> library cache. Expect a 300–500 MB cold install the first time this artifact is graded —
+> `next` plus React and the type packages — and a fast run on every grading after that, since
+> the cache is keyed on the lib set and shared.
 
 A Next.js App Router page lists a product catalogue served by its own route handler
 (`GET /api/products`) — one process, one language, several files.
@@ -191,7 +194,26 @@ ul {
 
 ### Object.entries + sort
 
-```typescript
+The fence carries `path=` so it **overlays** `## Files` — `runProjectChecks(…, { withSolutions:
+true })` grades this file instead of the starter. An overlay replaces the whole file, so
+`Product` is repeated here: `src/app/api/products/route.ts` and `src/components/ProductList.tsx`
+both `import type { Product } from '../lib/catalogue'`, and dropping it would fail the `build`
+check.
+
+```typescript path=src/lib/catalogue.ts
+/** One product as the route handler serves it. */
+export interface Product {
+  name: string;
+  stock: number;
+}
+
+/**
+ * Names of every product with at least `minStock` units, alphabetical.
+ *
+ * @param catalogue - Product name → units in stock.
+ * @param minStock  - Inclusive lower bound.
+ * @returns Sorted product names.
+ */
 export function filterInStock(catalogue: Record<string, number>, minStock: number): string[] {
   return Object.entries(catalogue)
     .filter(([, stock]) => stock >= minStock)

@@ -337,6 +337,7 @@ maps onto the runnable pair at bundle time.
 | Grammar | [project-parser.helpers.ts](src/services/project-parser.helpers.ts) | `## Files`, `libs:`, `checks:`, `check=<name>` case binding, warnings |
 | Containment | [files.writer.ts](src/services/test-envs/project/files.writer.ts) | `resolveContained` — **the** path authority; writes the tree, `role: readonly` → mode `0o444` |
 | Toolchain | [lib-installer.ts](src/services/test-envs/project/lib-installer.ts) | allowlist → argv `npm install` → shared cache under `os.tmpdir()` |
+| Linking | [modules.linker.ts](src/services/test-envs/project/modules.linker.ts) | per-run `node_modules` of symlinks into that cache — pnpm's layout |
 | Render | [render.driver.ts](src/services/test-envs/project/render.driver.ts) | esbuild bundle + jsdom mount, one `__LEET__` line per case |
 | Check kinds | [checks.ts](src/services/test-envs/project/checks.ts) · [build.check.ts](src/services/test-envs/project/build.check.ts) | `dom-assert` / `css-assert` / `build` |
 | Orchestration | [project.runner.ts](src/services/test-envs/project/project.runner.ts) | temp run dir → write tree → dispatch every check |
@@ -359,6 +360,47 @@ Rules that are load-bearing, not stylistic:
 - **Zero runtime dependencies still holds.** esbuild/jsdom install into the shared cache at
   run time, never into `package.json`. The end-to-end render tests are therefore opt-in
   (`LEET_PROJECT_E2E=1`) and `pending` otherwise — the gate stays deterministic offline.
+- **The run directory gets its own `node_modules` — pnpm's layout, not one big symlink.**
+  A `build` check spawns its toolchain with `cwd = runDir`, and a compiler resolves by walking
+  **up** from there; the shared cache is not an ancestor, so a bare `argv: ['tsc']` used to
+  resolve nothing. `linkModules` therefore makes `runDir/node_modules` a **real** directory
+  whose entries are symlinks into the cache (`@scope` and `.bin` likewise real, holding links
+  one level down). Symlinking the whole tree instead would let a tool's own writes —
+  `node_modules/.vite`, `.cache` — mutate what every other exercise resolves from; a cache per
+  exercise would isolate them but lose the dedup the lib-set key already buys. Resolution works
+  because Node realpaths a symlink *before* walking up for transitive deps.
+- **`node_modules` is a reserved first path segment, matched case-insensitively.** No
+  artifact-declared path — `## Files` `path=`, a `build` check's `dir:`, a `function` or render
+  check's `file:` — may resolve inside it, because a write through a link escapes into the
+  shared cache. The rule lives in `resolveContained` so all four inputs inherit it. The case
+  fold is load-bearing, not tidiness: APFS and NTFS fold case, so `NODE_MODULES/react/index.js`
+  reached the same directory on disk and was a live cache-poisoning vector. Linux consequently
+  over-refuses a directory genuinely named `NODE_MODULES` — the deliberate trade, since a guard
+  whose safety depends on which machine graded the artifact is worse than a uniform one.
+- **One install per grading run, under one cache key.** `gradeProjectDir` installs the union of
+  **every** `parsed.libs[lang]` (all languages — a `libs.python` project must not silently
+  install nothing), widened to `renderLibsFor(...)` **only** when a `dom-assert`/`css-assert`
+  check is declared, then links once and passes the cache dir down to `runRenderCheck` as its
+  fourth argument. `runRenderCheck` installs only when not given one, so direct/E2E callers
+  still work. Without that hand-off the render check installed its own superset under a
+  *different* key — two cold installs per React exercise, and a linked tree the render driver
+  did not resolve from. An empty set installs nothing, links nothing, and leaves no
+  `node_modules` in the solver's folder.
+- **`linkModules` never trusts `fs.mkdir(…, { recursive: true })`.** It succeeds silently when
+  `runDir/node_modules` is already a symlink to a directory, and every later write then lands in
+  the link target. Unreachable in the harness (a fresh `mkdtemp`), but the solve flow keeps its
+  attempt directory across Run Tests and Submit and a `build` check's argv is arbitrary code by
+  design, so that subprocess can swap the directory between two gradings. It `lstat`s and throws.
+- **A `build` check sees the run's own `.bin` first.** `runBuildCheck` prepends
+  `runDir/node_modules/.bin` to the child's `PATH` (via `path.delimiter`, prepended not
+  replaced), so the artifact's declared toolchain version is what runs. **Never `shell: true`** —
+  that would hand artifact-authored argv to a command interpreter. POSIX-only: Windows resolves
+  from the parent's environment block and the winning spelling between `Path` and `PATH` after an
+  object spread is unspecified.
+- **The links land in the solver's live attempt tree too, deliberately** — their editor then
+  resolves their imports. Discard deletes that tree through `vscode.workspace.fs.delete`, **not**
+  the Node `fs.rm` that is known link-safe, so whether VS Code's deleter follows symlinks into
+  the shared cache is **unverified**; nothing in `src/` may assume either answer.
 
 **The solve flow is a directory, not a buffer.** *Solve It* on a `project` materialises the
 starter tree into a fresh `globalStorageUri/attempts/project_<slug>_<run>/`
