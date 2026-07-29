@@ -13,10 +13,14 @@ How a multi-agent feature plan is written and executed in this repository. This 
 
 ```
 docs/plans/<feature-slug>/
-├── plan.md          # the plan: phases, tasks, contracts, gates
+├── plan.md          # the plan: phases, tasks, contracts, gates — SELF-CONTAINED (§1.1)
 ├── progress.md      # the ledger: one row per task, updated as work lands
-└── jira-tickets.md  # ready-to-create epic + story specs
+└── jira-tickets.md  # ready-to-create epic + story specs — OPTIONAL (§8)
 ```
+
+`jira-tickets.md` is written when the work is tracked as an epic of stories. Work tracked as
+**defect/gap corrections against shipped behaviour** omits it; the plan says so in one line so
+a reader knows the file's absence is a decision, not an oversight.
 
 `docs/` is a **working artifact of one feature branch**. It is not shipped documentation and
 it does not belong on `develop` or `main`.
@@ -34,6 +38,33 @@ it does not belong on `develop` or `main`.
 
 Rationale: plan documents rot faster than code and read as authority when they are actually
 stale. `CLAUDE.md`'s standing rule applies — **trust the tree over any plan or ledger.**
+
+### 1.1 A plan is self-contained — it never sends an agent back here
+
+**The plan files carry everything needed to execute them.** An orchestrator handed `plan.md`
+must be able to start with **no other document**, and must never be instructed to "read
+`CREATING_A_PLAN.md` first". That instruction is a bug in the plan.
+
+Concretely, `plan.md` **inlines**:
+
+- the three role templates from §2 (orchestrator · reviewer · worker), copied verbatim and
+  already carrying that plan's instance parameters,
+- the gate command (§6) and the `rm -rf dist` reason,
+- the mandatory-skills list (§3) and the static-analysis rule (§3.1), including the
+  no-taint-analysis ceiling,
+- the security standing gate (§4) and the task format it uses (§5),
+- the ledger format (§7) and the wave/review loop.
+
+This file's role is therefore **authoring-time only**: it is what a plan is written *from*,
+not what an agent is sent *to*. Once written, the plan is the sole authority for its own run.
+
+**The drift trade-off, stated plainly.** Copying the templates means a change here does not
+reach plans already written. That is accepted deliberately: plan files are branch-local and
+short-lived (§1), so a stale copy dies with its branch, whereas an agent that must chase a
+second document mid-run reads it late, partially, or not at all — and a plan whose meaning
+depends on a file that changed underneath it is worse than one carrying a slightly old copy.
+When this file changes, **new** plans pick it up; in-flight plans keep the copy they were
+written with.
 
 ---
 
@@ -333,15 +364,14 @@ service; give each concern its own test file (the repo's `function-env-<lang>.te
 pattern). And **no task may depend on a task in its own wave** — a same-wave dependency is a
 sequencing bug, not a scheduling detail.
 
-**The plan is the single entry point.** It must open by naming its companion files
-(`progress.md`, `jira-tickets.md`) and declaring itself the authority they derive from, and it
-must contain an **orchestrator protocol section** — read order, per-wave review loop, commit
-policy (orchestrator commits per wave; workers never commit), red-gate stop rule, human-gate
-stop-and-ask points — plus the **instance parameters** (repo path, branch, gate command,
-forbidden files, report caps) that get appended to this file's §2 role templates. The
-templates themselves live only here — a plan that re-copies them creates a second authority
-to drift. An orchestrator handed the plan alone must need nothing else to start beyond the
-one read of this file the protocol opens with.
+**The plan is the single entry point, and it is self-contained (§1.1).** It must open by
+naming its companion files (`progress.md`, and `jira-tickets.md` when there is one) and
+declaring itself the authority they derive from, and it must contain an **orchestrator
+protocol section** — read order, per-wave review loop, commit policy (orchestrator commits per
+wave; workers never commit), red-gate stop rule, human-gate stop-and-ask points — plus the
+**instance parameters** (repo path, branch, gate command, forbidden files, report caps)
+already merged into the **inlined copies** of §2's role templates. An orchestrator handed the
+plan alone must need nothing else to start — no read of this file, no follow-up lookup.
 
 ---
 
@@ -405,8 +435,11 @@ Before any agent is dispatched, the plan must satisfy:
 - [ ] Every wave's tasks own disjoint file sets — **test files and `package.json` included**.
 - [ ] No task depends on a task in its own wave.
 - [ ] The plan names its companion files, declares itself their authority, and contains the
-      orchestrator protocol + the instance parameters for §2's role templates (orchestrator ·
-      reviewer · worker) — never a re-copy of the templates themselves.
+      orchestrator protocol.
+- [ ] **The plan is self-contained (§1.1)** — §2's three role templates, the §6 gate, the §3
+      skills, the §3.1 static-analysis rule, the §4 security gate and the §7 ledger format are
+      **inlined**, carrying this instance's parameters. The plan nowhere instructs an agent to
+      read `CREATING_A_PLAN.md` or any other process document.
 - [ ] Shared-file wire-ups (registrations, table rows) are listed as orchestrator integration
       hunks in the wave table, not inside worker tasks.
 - [ ] Every task touching untrusted input (artifact `.md`, test JSON, solution buffer,
