@@ -72,6 +72,7 @@ export function parseLeetCode(content: string): ParsedLeetCode {
 		files:        project?.files,
 		libs:         project?.libs,
 		checks:       project?.checks,
+		solutionFiles: project?.solutionFiles,
 		warnings:     project?.warnings,
 	};
 }

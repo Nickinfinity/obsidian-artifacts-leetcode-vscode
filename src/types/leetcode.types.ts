@@ -467,6 +467,16 @@ export interface ParsedLeetCode {
 	files?: FileSpec[];
 	/** `libs:` dependency lists — `project` / `service` only */
 	libs?: LibSpec;
+	/**
+	 * Reference implementations for `## Files` entries, from `# Solutions` fences
+	 * carrying a `path=` attribute — `project` / `service` only.
+	 *
+	 * `## Files` ships the **starter** a solver begins from, so grading the tree
+	 * as authored would fail every exercise by design. The harness overlays these
+	 * by path to grade the reference; a solver's run never applies them, exactly
+	 * as `# Solutions` stays behind a spoiler in the panel.
+	 */
+	solutionFiles?: FileSpec[];
 	/** `checks:` grading rules — `project` / `service` only. **Solved = every check green.** */
 	checks?: ProjectCheck[];
 	/**

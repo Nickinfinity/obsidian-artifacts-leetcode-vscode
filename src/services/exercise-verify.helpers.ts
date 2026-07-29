@@ -147,7 +147,9 @@ async function verifyProjectExercise(parsed: ParsedLeetCode): Promise<string | n
 	const structural = checkProjectStructure(parsed);
 	if (structural) { return structural; }
 
-	const outcomes = await runProjectChecks(parsed);
+	// The harness grades the reference tree: `## Files` is the solver's starter,
+	// so grading it as authored would fail every exercise by design.
+	const outcomes = await runProjectChecks(parsed, { withSolutions: true });
 	const failed = outcomes.find(o => !o.passed);
 	if (failed) {
 		return `project: check '${failed.name}' failed${failed.detail ? `: ${failed.detail}` : ''}`;

@@ -20,12 +20,17 @@ export interface ProjectSections {
 	libs: LibSpec;
 	/** `checks:` entries with their bound cases */
 	checks: ProjectCheck[];
+	/** `# Solutions` fences carrying `path=` — reference overlays for `## Files` */
+	solutionFiles: FileSpec[];
 	/** Author-facing problems that degraded to a default instead of failing */
 	warnings: string[];
 }
 
 const FILES_RE = /^## Files\s*$/m;
+const SOLUTIONS_RE = /^# Solutions\s*$/m;
 const HEADING_RE = /^#{1,2} /m;
+/** `# Solutions` is a `#`-level section — its `##` language headings stay inside it. */
+const TOP_HEADING_RE = /^# /m;
 const FENCE_RE = /```([^\n]*)\r?\n([\s\S]*?)```/g;
 
 const VALID_ROLES = new Set<FileRole>(['editable', 'readonly', 'hidden']);
@@ -70,7 +75,15 @@ export function parseProjectArtifact(fmRaw: string, body: string): ProjectSectio
 	const checks = parseChecks(lines, warn);
 	bindCases(checks, body, warn);
 
-	return { files: parseFiles(body, warn), libs: parseLibs(lines, warn), checks, warnings };
+	return {
+		files: parseFiles(body, FILES_RE, HEADING_RE, warn),
+		libs: parseLibs(lines, warn),
+		checks,
+		// A `# Solutions` fence without `path=` is a plain reference solution for a
+		// function-type artifact; only path-bearing ones overlay a project's tree.
+		solutionFiles: parseFiles(body, SOLUTIONS_RE, TOP_HEADING_RE, warn),
+		warnings,
+	};
 }
 
 // ── ## Files ──────────────────────────────────────────────────────────────────
@@ -81,16 +94,23 @@ export function parseProjectArtifact(fmRaw: string, body: string): ProjectSectio
  * A fence without `path=` is prose, not a file, and is skipped silently — the
  * section may legitimately contain an illustrative snippet.
  *
- * @param body - Artifact content after the frontmatter.
- * @param warn - Sink for author-facing problems.
+ * Shared by `## Files` (the starter tree) and `# Solutions` (reference overlays),
+ * which differ only in their heading and where the section ends.
+ *
+ * @param body       - Artifact content after the frontmatter.
+ * @param headingRe  - The section's own heading.
+ * @param boundaryRe - Heading level that ends the section.
+ * @param warn       - Sink for author-facing problems.
  * @returns One spec per declared file, in document order.
  *
  * @example
- * parseFiles('## Files\n```css path=a.css role=hidden\nbody{}\n```', () => {});
+ * parseFiles('## Files\n```css path=a.css role=hidden\nbody{}\n```', FILES_RE, HEADING_RE, () => {});
  * // → [{ path: 'a.css', language: 'css', role: 'hidden', content: 'body{}\n' }]
  */
-function parseFiles(body: string, warn: (m: string) => void): FileSpec[] {
-	const bounds = sectionBounds(body, FILES_RE, HEADING_RE);
+function parseFiles(
+	body: string, headingRe: RegExp, boundaryRe: RegExp, warn: (m: string) => void,
+): FileSpec[] {
+	const bounds = sectionBounds(body, headingRe, boundaryRe);
 	if (!bounds) { return []; }
 
 	const section = body.slice(bounds.headingEnd, bounds.bodyEnd);

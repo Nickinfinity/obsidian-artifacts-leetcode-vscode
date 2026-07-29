@@ -358,6 +358,35 @@ suite('exercise-verify', () => {
             assert.ok(!result.ok && /no cases/.test(result.reason), !result.ok ? result.reason : '');
         });
 
+        test('# Solutions overlays the starter, so an exercise ships unsolved and still verifies', async () => {
+            // The starter exits 1; only the overlay's file makes the check pass, so a
+            // green result proves the overlay was applied rather than the starter graded.
+            const md = [
+                buildProjectMd({
+                    files: '```javascript path=probe.js role=editable\nprocess.exit(1);\n```',
+                    checks: `    - name: probe\n      kind: build\n      argv: ["${process.execPath.replace(/\\/g, '\\\\')}", "probe.js"]`,
+                }),
+                '# Solutions',
+                '',
+                '```javascript path=probe.js',
+                'process.exit(0);',
+                '```',
+                '',
+            ].join('\n');
+
+            const result = await verifyExercise(md);
+            assert.strictEqual(result.ok, true, !result.ok ? result.reason : '');
+        });
+
+        test('without an overlay the starter itself is graded', async () => {
+            const result = await verifyExercise(buildProjectMd({
+                files: '```javascript path=probe.js role=editable\nprocess.exit(1);\n```',
+                checks: `    - name: probe\n      kind: build\n      argv: ["${process.execPath.replace(/\\/g, '\\\\')}", "probe.js"]`,
+            }));
+
+            assert.strictEqual(result.ok, false);
+        });
+
         test('a traversal path in ## Files fails every check, and writes nothing', async () => {
             const result = await verifyExercise(buildProjectMd({
                 files: '```javascript path=../../escape.js role=editable\nx\n```',

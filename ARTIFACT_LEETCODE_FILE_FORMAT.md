@@ -437,6 +437,32 @@ the point of use, rather than a check the parser could be bypassed around.
 A file **no check references is ungraded scaffolding, explicitly** (the CSS tab exists
 for the solver, not the grader).
 
+### 9.1b `# Solutions` overlays — how a project ships unsolved *and* verifies
+
+`## Files` holds the **starter** a solver begins from, so grading the tree as authored would
+fail every well-formed exercise by design. A `project` therefore puts its reference
+implementations in `# Solutions`, as fences carrying the **same `path=`** as the starter they
+replace:
+
+````markdown
+# Solutions
+
+```javascript path=src/App.jsx
+export default function App() { /* the working component */ }
+```
+````
+
+- The verification harness (`verify-exercise.mjs`) grades the tree **with** the overlays
+  applied — so a green result means the reference works.
+- A solver's run uses `## Files` as authored; overlays are reference material, exactly as
+  `# Solutions` already sits behind a spoiler in the panel for a `function` exercise.
+- An overlay naming a path `## Files` does not declare is appended rather than dropped.
+- A `# Solutions` fence **without** `path=` is an ordinary function-type reference solution
+  and never touches a project's tree, so both grammars coexist in one section.
+
+**A starter that passes is a bug in the exercise**, not a convenience: check it by grading the
+tree without overlays and confirming it goes red.
+
 ### 9.2 `checks:` — how a project is graded
 
 ```yaml

@@ -360,6 +360,12 @@ Rules that are load-bearing, not stylistic:
   run time, never into `package.json`. The end-to-end render tests are therefore opt-in
   (`LEET_PROJECT_E2E=1`) and `pending` otherwise — the gate stays deterministic offline.
 
+**`## Files` is the starter; `# Solutions` fences carrying the same `path=` are the
+reference overlay.** The harness grades the overlaid tree (`runProjectChecks(parsed,
+{ withSolutions: true })`), a solver's run grades the starter — which is what lets an
+exercise ship unsolved and still verify green. An exercise whose *starter* passes is a bug:
+grade it without overlays and confirm it goes red.
+
 `examples/leetcode/project/javascript/react-counter.md` is the smoke artifact: the smallest
 `project` that grades green through `verify-exercise.mjs`, and the file to open for an F5 pass.
 

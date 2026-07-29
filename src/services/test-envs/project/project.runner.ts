@@ -2,6 +2,7 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import type {
+	FileSpec,
 	FunctionCheck,
 	ParsedLeetCode,
 	ProjectCheck,
@@ -21,26 +22,36 @@ const RENDER_LANGUAGES = ['javascript', 'typescript'];
 /**
  * Grade every declared check of a `project` artifact.
  *
- * Materialises the `## Files` tree into a fresh temp directory, runs each check
- * in it, and returns one outcome per check — **solved is every check green**.
- * The run directory is always removed, including when a check throws.
+ * Materialises the file tree into a fresh temp directory, runs each check in it,
+ * and returns one outcome per check — **solved is every check green**. The run
+ * directory is always removed, including when a check throws.
  *
  * The tree is written once and shared by every check: a `build` check compiling
  * what a `dom-assert` then mounts is the point of a multi-file exercise.
  *
- * @param parsed - Parsed `project` artifact.
+ * With `withSolutions`, the artifact's `# Solutions` overlays replace the
+ * starter files they name. That is what lets an exercise ship a starter *and*
+ * verify green: the harness grades the reference, a solver's run grades theirs.
+ *
+ * @param parsed  - Parsed `project` artifact.
+ * @param options - `withSolutions` grades the reference tree instead of the starter.
  * @returns One outcome per declared check, in declaration order.
  *
  * @example
- * await runProjectChecks(parsed); // → [{ name: 'alternates', passed: true }]
+ * await runProjectChecks(parsed, { withSolutions: true }); // → [{ name: 'alternates', passed: true }]
  */
-export async function runProjectChecks(parsed: ParsedLeetCode): Promise<ProjectCheckOutcome[]> {
+export async function runProjectChecks(
+	parsed: ParsedLeetCode, options: { withSolutions?: boolean } = {},
+): Promise<ProjectCheckOutcome[]> {
 	const checks = parsed.checks ?? [];
 	if (checks.length === 0) { return []; }
 
 	const runDir = await fs.mkdtemp(path.join(os.tmpdir(), 'leet-project-'));
 	try {
-		await writeProjectFiles(runDir, parsed.files ?? []);
+		const tree = options.withSolutions
+			? overlaySolutions(parsed.files ?? [], parsed.solutionFiles ?? [])
+			: parsed.files ?? [];
+		await writeProjectFiles(runDir, tree);
 
 		const outcomes: ProjectCheckOutcome[] = [];
 		for (const check of checks) {
@@ -80,6 +91,27 @@ async function runOneCheck(
 		case 'function':
 			return runFunctionCheck(check, parsed, runDir);
 	}
+}
+
+/**
+ * Replace each starter file with the `# Solutions` entry that names the same
+ * path; overlays naming a path the tree does not declare are appended.
+ *
+ * @param files     - The `## Files` starter tree.
+ * @param solutions - Reference overlays from `# Solutions`.
+ * @returns The tree to grade, in the starter's declaration order.
+ *
+ * @example
+ * overlaySolutions([{ path: 'a.jsx', content: 'todo', … }], [{ path: 'a.jsx', content: 'done', … }]);
+ * // → [{ path: 'a.jsx', content: 'done', … }]
+ */
+function overlaySolutions(files: FileSpec[], solutions: FileSpec[]): FileSpec[] {
+	if (solutions.length === 0) { return files; }
+
+	const byPath = new Map(solutions.map(s => [s.path, s]));
+	const merged = files.map(file => byPath.get(file.path) ?? file);
+	const extra = solutions.filter(s => !files.some(f => f.path === s.path));
+	return [...merged, ...extra];
 }
 
 /** The artifact's declared libs for the languages a render check can bundle. */
