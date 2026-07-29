@@ -54,6 +54,42 @@ suite('project files writer', () => {
 		test('rejects the run dir itself', () => {
 			assert.throws(() => resolveContained(runDir, '.'), /path/i);
 		});
+
+		// ── node_modules reservation (T1's shared-cache symlinks land here) ────
+
+		test('rejects node_modules/evil.js, naming node_modules as reserved', () => {
+			assert.throws(() => resolveContained(runDir, 'node_modules/evil.js'), /node_modules.*reserved/i);
+		});
+
+		test('rejects node_modules alone', () => {
+			assert.throws(() => resolveContained(runDir, 'node_modules'), /node_modules.*reserved/i);
+		});
+
+		test('rejects a path that only normalises into node_modules — not a raw-string check', () => {
+			assert.throws(() => resolveContained(runDir, 'src/lib/../../node_modules/x'), /node_modules.*reserved/i);
+		});
+
+		test('allows node_modules as a non-root segment', () => {
+			assert.strictEqual(resolveContained(runDir, 'src/node_modules/x'), path.join(runDir, 'src/node_modules/x'));
+		});
+
+		test('allows a root segment that merely contains node_modules as a substring', () => {
+			assert.strictEqual(resolveContained(runDir, 'my_node_modules/x'), path.join(runDir, 'my_node_modules/x'));
+		});
+
+		// ── case-insensitive filesystems (APFS, NTFS) — SEC round 1 ────────────
+
+		test('rejects NODE_MODULES/x — all-caps is the same directory on APFS/NTFS', () => {
+			assert.throws(() => resolveContained(runDir, 'NODE_MODULES/x'), /node_modules.*reserved/i);
+		});
+
+		test('rejects Node_Modules/x — mixed case', () => {
+			assert.throws(() => resolveContained(runDir, 'Node_Modules/x'), /node_modules.*reserved/i);
+		});
+
+		test('rejects a mixed-case path that only normalises into NODE_MODULES', () => {
+			assert.throws(() => resolveContained(runDir, 'src/../NODE_MODULES/x'), /node_modules.*reserved/i);
+		});
 	});
 
 	// ── writeProjectFiles ─────────────────────────────────────────────────────
@@ -95,6 +131,14 @@ suite('project files writer', () => {
 				writeProjectFiles(runDir, [spec('a.ts', 'editable', 'first'), spec('a.ts', 'editable', 'second')]),
 				/duplicate/i,
 			);
+		});
+
+		test('a node_modules path writes NOTHING — the all-or-nothing property still holds', async () => {
+			await assert.rejects(
+				writeProjectFiles(runDir, [spec('ok.ts'), spec('node_modules/evil.js')]),
+				/node_modules.*reserved/i,
+			);
+			assert.deepStrictEqual(fs.readdirSync(runDir), []);
 		});
 	});
 });

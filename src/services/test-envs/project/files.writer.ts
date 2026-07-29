@@ -6,18 +6,34 @@ import type { FileSpec } from '../../../types/leetcode.types.js';
 const READONLY_MODE = 0o444;
 
 /**
+ * Root segment reserved because a linked `node_modules` (T1's shared package
+ * cache) lives at exactly this depth — see {@link resolveContained}.
+ */
+const RESERVED_ROOT_SEGMENT = 'node_modules';
+
+/**
  * Resolve an artifact-declared relative path against the run directory,
  * **throwing** unless the result stays inside it.
  *
  * The single containment authority for the `project` type: the `## Files`
- * writer and the `build` check's optional `dir` both go through it, so there is
- * one rule to audit rather than one per call site. The check is done on the
- * *resolved* path, not the raw string — `src/../../escape.ts` contains no
- * leading `..` and would pass a textual test.
+ * writer, the `build` check's optional `dir`, and the `function` check's
+ * `file` all go through it, so there is one rule to audit rather than one per
+ * call site. The check is done on the *resolved* path, not the raw string —
+ * `src/../../escape.ts` contains no leading `..` and would pass a textual test.
  *
  * `..` **inside** a path is fine as long as it lands back inside the root;
  * what is refused is escaping it, an absolute path, an empty path, the root
- * itself, and a NUL byte (which truncates a path inside libc).
+ * itself, a NUL byte (which truncates a path inside libc), and — once a run
+ * directory can hold a `node_modules` populated with symlinks into a *shared*
+ * package cache — any path whose **first** resolved segment is `node_modules`.
+ * Without that reservation, a declared `path=node_modules/x` (or a `build`
+ * check's `dir: node_modules/react`) would write *through* the link into the
+ * cache and contaminate every other exercise sharing it. The check is on the
+ * first segment of the normalised path, never a substring, so `src/node_modules/x`
+ * and `my_node_modules/x` are unaffected. The comparison is case-insensitive —
+ * `NODE_MODULES` names the same directory as `node_modules` on the
+ * case-insensitive filesystems this extension actually ships on (APFS,
+ * NTFS), so refusing only the lowercase spelling would be a bypassable guard.
  *
  * @param runDir  - Absolute path of the run directory.
  * @param relPath - Artifact-declared path — untrusted.
@@ -25,8 +41,9 @@ const READONLY_MODE = 0o444;
  * @throws Error naming the offending path when containment fails.
  *
  * @example
- * resolveContained('/tmp/run', 'src/a.ts');   // → '/tmp/run/src/a.ts'
- * resolveContained('/tmp/run', '../etc/x');   // throws
+ * resolveContained('/tmp/run', 'src/a.ts');          // → '/tmp/run/src/a.ts'
+ * resolveContained('/tmp/run', '../etc/x');          // throws
+ * resolveContained('/tmp/run', 'node_modules/x');    // throws — reserved
  */
 export function resolveContained(runDir: string, relPath: string): string {
 	if (relPath === '' || relPath.includes('\0')) {
@@ -41,6 +58,16 @@ export function resolveContained(runDir: string, relPath: string): string {
 	const rel = path.relative(root, full);
 	if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) {
 		throw new Error(`unsafe path '${relPath}': escapes the run directory`);
+	}
+	const [firstSegment] = rel.split(path.sep);
+	// Case-insensitively: APFS (macOS) and NTFS (Windows) treat `NODE_MODULES`
+	// and `node_modules` as the same directory on disk, so a case-sensitive
+	// compare here would let `path=NODE_MODULES/x` walk straight past the
+	// guard and through the real (case-insensitive) symlink underneath.
+	if (firstSegment.toLowerCase() === RESERVED_ROOT_SEGMENT) {
+		throw new Error(
+			`unsafe path '${relPath}': '${RESERVED_ROOT_SEGMENT}' is reserved — it is a symlink into the shared package cache and a write through it would leak into every other exercise`,
+		);
 	}
 	return full;
 }

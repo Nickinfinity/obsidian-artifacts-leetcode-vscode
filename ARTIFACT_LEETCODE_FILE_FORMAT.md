@@ -420,7 +420,7 @@ export function filterInStock() { /* … */ }
 
 | Attribute | Values | Meaning |
 |---|---|---|
-| `path` | POSIX-relative | Location inside the run directory. Never absolute, never `..`. |
+| `path` | POSIX-relative | Location inside the run directory. Never absolute, never `..`, and never rooted at `node_modules/` — that name is **reserved**: the run directory's `node_modules` is a symlink into a package cache shared by every exercise, and a declared write through it would leak into all of them. |
 | `role` | `editable` | Written and opened — the solver's work. **The default** when `role=` is absent. |
 | | `readonly` | Written and opened with a **read-only file mode**, not to be edited. VS Code has no per-editor config scope, so file mode is the mechanism. |
 | | `hidden` | Written, never opened — scaffolding the solver should not see. |
@@ -432,7 +432,11 @@ through the usual alias table (`tsx` → `typescriptreact`, `css` → `css`).
 
 Paths are reported by the parser exactly as written and are normalised and
 containment-asserted by the **writer**, immediately before it writes — one authority, at
-the point of use, rather than a check the parser could be bypassed around.
+the point of use, rather than a check the parser could be bypassed around. That same
+authority (`resolveContained`) refuses **any** path whose first normalised segment is
+`node_modules`, not a raw-string check — `src/../../node_modules/x` is caught too — and it
+is the one rule shared by the `## Files` writer, a `build` check's `dir:`, and a `function`
+check's `file:`, so the reservation holds no matter which door a path arrives through.
 
 A file **no check references is ungraded scaffolding, explicitly** (the CSS tab exists
 for the solver, not the grader).
@@ -563,7 +567,7 @@ package scripts from the `.md` — arbitrary code by design, the same trust clas
 the solver's own candidate locally. The argv rules and the library-name allowlist bound the
 *shape* of what runs; they do not make artifact-authored code safe.
 
-### 9.4 `libs:` (Phase 2, also unimplemented)
+### 9.4 `libs:` — installed before checks run
 
 ```yaml
 libs:

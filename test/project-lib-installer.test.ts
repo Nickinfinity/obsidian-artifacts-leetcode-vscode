@@ -31,12 +31,19 @@ suite('project lib installer', () => {
 		fs.rmSync(cacheRoot, { recursive: true, force: true });
 	});
 
-	/** Records what would have been spawned, and never spawns it. */
-	function spy(): { calls: { file: string; args: string[] }[]; run: (file: string, args: string[]) => Promise<void> } {
+	/**
+	 * Records what would have been spawned, and never spawns it — but does
+	 * create `node_modules` in the target dir, the one side effect a real
+	 * `npm install` has that `isWarm` now depends on (T3).
+	 */
+	function spy(): { calls: { file: string; args: string[] }[]; run: (file: string, args: string[], cwd: string) => Promise<void> } {
 		const calls: { file: string; args: string[] }[] = [];
 		return {
 			calls,
-			run: async (file, args) => { calls.push({ file, args }); },
+			run: async (file, args, cwd) => {
+				calls.push({ file, args });
+				fs.mkdirSync(path.join(cwd, 'node_modules'), { recursive: true });
+			},
 		};
 	}
 
@@ -78,6 +85,52 @@ suite('project lib installer', () => {
 		});
 	});
 
+	// ── Warm requires node_modules, not just the marker (T3) ──────────────────
+
+	suite('warm cache requires node_modules', () => {
+
+		test('a marker with no node_modules is not warm — the install runs again', async () => {
+			const libs = ['left-pad@1.0.0'];
+			const dir = libCacheDir(libs);
+			fs.mkdirSync(dir, { recursive: true });
+			fs.writeFileSync(path.join(dir, '.leet-installed'), libs.join('\n'), 'utf-8');
+
+			const runner = spy();
+			const result = await installLibs(libs, { run: runner.run });
+
+			assert.strictEqual(runner.calls.length, 1, 'a marker-only cache must not read as warm');
+			assert.strictEqual(result.ok, true);
+		});
+
+		test('marker plus node_modules is warm — the install is skipped', async () => {
+			const libs = ['left-pad@2.0.0'];
+			const dir = libCacheDir(libs);
+			fs.mkdirSync(path.join(dir, 'node_modules'), { recursive: true });
+			fs.writeFileSync(path.join(dir, '.leet-installed'), libs.join('\n'), 'utf-8');
+
+			const runner = spy();
+			const result = await installLibs(libs, { run: runner.run });
+
+			assert.strictEqual(runner.calls.length, 0, 'a genuinely complete cache must skip the install');
+			assert.strictEqual(result.ok, true);
+		});
+
+		test('node_modules with no marker is not warm — a Ctrl-C-killed install runs again', async () => {
+			// Mirror of the marker-only poisoned entry: npm writes node_modules
+			// before this module writes the marker, so a kill mid-install leaves
+			// exactly this shape on disk.
+			const libs = ['left-pad@3.0.0'];
+			const dir = libCacheDir(libs);
+			fs.mkdirSync(path.join(dir, 'node_modules'), { recursive: true });
+
+			const runner = spy();
+			const result = await installLibs(libs, { run: runner.run });
+
+			assert.strictEqual(runner.calls.length, 1, 'node_modules alone (no marker) must not read as warm');
+			assert.strictEqual(result.ok, true);
+		});
+	});
+
 	// ── Allowlist gate: before any subprocess ─────────────────────────────────
 
 	suite('allowlist gate', () => {
@@ -104,10 +157,19 @@ suite('project lib installer', () => {
 		});
 
 		test('the cache is not an allowlist bypass — a bad name fails even for a warm key', async () => {
+			// Seed THIS exact set's own cache dir as genuinely warm (marker +
+			// node_modules) — a different set (e.g. just ['react@^19.0.0'])
+			// warms a different key and never exercises the warm path here at all.
+			const libs = ['react@^19.0.0', '--target=/etc'];
+			const dir = libCacheDir(libs);
+			fs.mkdirSync(path.join(dir, 'node_modules'), { recursive: true });
+			fs.writeFileSync(path.join(dir, '.leet-installed'), libs.join('\n'), 'utf-8');
+
 			const runner = spy();
-			await installLibs(['react@^19.0.0'], { run: runner.run });
-			const result = await installLibs(['react@^19.0.0', '--target=/etc'], { run: runner.run });
-			assert.strictEqual(result.ok, false);
+			const result = await installLibs(libs, { run: runner.run });
+
+			assert.strictEqual(result.ok, false, 'a warm cache must not skip the allowlist');
+			assert.deepStrictEqual(runner.calls, []);
 		});
 	});
 

@@ -101,6 +101,11 @@ export async function installLibs(libs: readonly string[], options: InstallOptio
 	const run = options.run ?? defaultRun;
 	try {
 		await fs.mkdir(dir, { recursive: true });
+		// ponytail: no lock around this install — two cold runs of the same lib
+		// set (e.g. two parallel `verify-exercise.mjs` invocations) both `npm
+		// install --prefix` this same dir at once. Upgrade path: install into
+		// `<key>.tmp-<pid>` then `fs.rename` into place, which also makes the
+		// warm marker atomic instead of merely self-healing (see isWarm below).
 		await run('npm', ['install', '--prefix', dir, '--no-audit', '--no-fund', '--loglevel', 'error', ...libs], dir);
 		await fs.writeFile(path.join(dir, WARM_MARKER), libs.join('\n'), 'utf-8');
 		return { ok: true, dir };
@@ -109,9 +114,21 @@ export async function installLibs(libs: readonly string[], options: InstallOptio
 	}
 }
 
-/** Whether a previous install of this exact set completed. */
+/**
+ * Whether a previous install of this exact set completed.
+ *
+ * Requires the marker **and** a `node_modules` directory. A marker with no
+ * `node_modules` is a poisoned entry — an install that never finished (this
+ * is exactly the shape of two real cache dirs found on disk pre-fix,
+ * `26cd6fc0919db386` / `acfe6d9ef8ec1555`, left behind by the installer's own
+ * unit tests before cache isolation existed). Checking both self-heals a
+ * poisoned entry on its very next resolve instead of skipping the install
+ * forever.
+ */
 async function isWarm(dir: string): Promise<boolean> {
-	return fs.access(path.join(dir, WARM_MARKER)).then(() => true, () => false);
+	const hasMarker = await fs.access(path.join(dir, WARM_MARKER)).then(() => true, () => false);
+	if (!hasMarker) { return false; }
+	return fs.access(path.join(dir, 'node_modules')).then(() => true, () => false);
 }
 
 /** Real runner: argv array via `execFile`, never a command string. */
