@@ -81,7 +81,17 @@ suite('examples/leetcode fixtures', () => {
 			const parsed = parseLeetCode(fs.readFileSync(file, 'utf-8'));
 
 			assert.deepStrictEqual(collectWarnings(parsed), [], `${rel}: parse warnings`);
-			assert.ok(parsed.tests.length > 0, `${rel}: empty public test suite`);
+
+			// A `build` check is graded by its argv's exit status and binds no
+			// cases — `checkProjectStructure` exempts it from exactly this rule
+			// (`c.kind !== 'build'`). An artifact whose every check is `build`
+			// therefore has no public suite by construction, so requiring one
+			// here would contradict the authority rather than guard anything.
+			const checks = parsed.checks ?? [];
+			const buildOnly = checks.length > 0 && checks.every(c => c.kind === 'build');
+			if (!buildOnly) {
+				assert.ok(parsed.tests.length > 0, `${rel}: empty public test suite`);
+			}
 			assert.ok(KNOWN_TEST_TYPES.has(parsed.test.type), `${rel}: unknown test.type "${parsed.test.type}"`);
 
 			if (parsed.test.type === 'function') {
