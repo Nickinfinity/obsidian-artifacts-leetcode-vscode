@@ -516,6 +516,9 @@ A ` ```json ` fence in `## Tests` / `## Final Tests` carries a `check=<name>` at
 ```
 ````
 
+The public/final split is therefore **per check**: a check's cases are its `## Tests` fences
+followed by its `## Final Tests` ones, and *Run Tests* grades only the public leading slice.
+
 Quote a name containing spaces. A bare fence with no attribute binds to the **sole** check
 when the artifact has exactly one — the common single-check project — and warns otherwise
 rather than guessing. A fence naming a check that does not exist warns too. Public fences

@@ -219,6 +219,20 @@ suite('project parser', () => {
 			assert.ok(warnings.some(w => w.includes('ghost')), warnings.join(' | '));
 		});
 
+		test('publicCount marks where the hidden cases begin, per check', () => {
+			const body = `${BODY}\n## Final Tests\n\n\`\`\`json check=alternates\n[{ "input": { "a": 9 }, "expected": 9 }]\n\`\`\`\n`;
+			const { checks } = parseProjectArtifact(CHECK_FM, body);
+
+			// 'catalogue filter': 2 public, no final. 'alternates': 1 public + 1 final.
+			assert.deepStrictEqual(checks.map(c => [c.cases.length, c.publicCount]), [[2, 2], [2, 1]]);
+		});
+
+		test('a check with only hidden cases has publicCount 0', () => {
+			const body = '## Final Tests\n\n```json check=alternates\n[{ "input": {}, "expected": 1 }]\n```\n';
+			const { checks } = parseProjectArtifact(CHECK_FM, body);
+			assert.strictEqual(checks.find(c => c.name === 'alternates')?.publicCount, 0);
+		});
+
 		test('## Final Tests fences bind by name too, appended after the public ones', () => {
 			const body = `${BODY}\n## Final Tests\n\n\`\`\`json check=alternates\n[{ "input": { "a": 9 }, "expected": 9 }]\n\`\`\`\n`;
 			const { checks } = parseProjectArtifact(CHECK_FM, body);

@@ -26,7 +26,7 @@ suite('project build check', () => {
 	});
 
 	function check(over: Partial<BuildCheck> = {}): BuildCheck {
-		return { name: 'app builds', kind: 'build', argv: [process.execPath, '-e', 'process.exit(0)'], cases: [], ...over };
+		return { name: 'app builds', kind: 'build', argv: [process.execPath, '-e', 'process.exit(0)'], cases: [], publicCount: 0, ...over };
 	}
 
 	// ── Containment, before any spawn ─────────────────────────────────────────

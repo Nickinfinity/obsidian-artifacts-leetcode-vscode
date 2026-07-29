@@ -41,7 +41,7 @@ const RENDER_LANGUAGES = ['javascript', 'typescript'];
  * await runProjectChecks(parsed, { withSolutions: true }); // → [{ name: 'alternates', passed: true }]
  */
 export async function runProjectChecks(
-	parsed: ParsedLeetCode, options: { withSolutions?: boolean } = {},
+	parsed: ParsedLeetCode, options: { withSolutions?: boolean; publicOnly?: boolean } = {},
 ): Promise<ProjectCheckOutcome[]> {
 	const checks = parsed.checks ?? [];
 	if (checks.length === 0) { return []; }
@@ -53,11 +53,7 @@ export async function runProjectChecks(
 			: parsed.files ?? [];
 		await writeProjectFiles(runDir, tree);
 
-		const outcomes: ProjectCheckOutcome[] = [];
-		for (const check of checks) {
-			outcomes.push(await runOneCheck(check, parsed, runDir));
-		}
-		return outcomes;
+		return await gradeProjectDir(parsed, runDir, options);
 	} catch (e) {
 		// A failure to materialise the tree (a traversal path, an unwritable
 		// location) is not one check's problem — it fails all of them.
@@ -66,6 +62,40 @@ export async function runProjectChecks(
 	} finally {
 		await fs.rm(runDir, { recursive: true, force: true }).catch(() => { /* ignore cleanup errors */ });
 	}
+}
+
+/**
+ * Grade an **existing** directory — the solver's own working tree during a live
+ * challenge, or the temp copy `runProjectChecks` just materialised.
+ *
+ * Nothing is written here, which is the point: a live run grades the files the
+ * solver is editing, in place, rather than a snapshot taken from the artifact.
+ *
+ * With `publicOnly`, each check is graded against `cases.slice(0, publicCount)`
+ * — the mid-challenge Run Tests loop, which must never touch the hidden suite.
+ *
+ * @param parsed  - Parsed `project` artifact.
+ * @param runDir  - Directory holding the tree to grade.
+ * @param options - `publicOnly` restricts every check to its public cases.
+ * @returns One outcome per declared check, in declaration order.
+ *
+ * @example
+ * await gradeProjectDir(parsed, session.projectDir.fsPath, { publicOnly: true });
+ */
+export async function gradeProjectDir(
+	parsed: ParsedLeetCode, runDir: string, options: { publicOnly?: boolean } = {},
+): Promise<ProjectCheckOutcome[]> {
+	const outcomes: ProjectCheckOutcome[] = [];
+	for (const check of parsed.checks ?? []) {
+		const graded = options.publicOnly ? publicCasesOf(check) : check;
+		outcomes.push(await runOneCheck(graded, parsed, runDir));
+	}
+	return outcomes;
+}
+
+/** The same check restricted to its public cases — the leading `publicCount` slice. */
+function publicCasesOf(check: ProjectCheck): ProjectCheck {
+	return { ...check, cases: check.cases.slice(0, check.publicCount) };
 }
 
 /**

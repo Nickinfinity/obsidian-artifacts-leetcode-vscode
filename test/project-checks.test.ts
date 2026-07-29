@@ -16,11 +16,11 @@ import { gradeRenderOutcomes, renderCasesFor, validateRenderCheck } from '../src
 suite('project checks', () => {
 
 	function domCheck(cases: TestCase[]): DomAssertCheck {
-		return { name: 'alternates', kind: 'dom-assert', file: 'src/App.jsx', cases };
+		return { name: 'alternates', kind: 'dom-assert', file: 'src/App.jsx', cases, publicCount: cases.length };
 	}
 
 	function cssCheck(cases: TestCase[]): CssAssertCheck {
-		return { name: 'styled', kind: 'css-assert', file: 'src/App.jsx', cases };
+		return { name: 'styled', kind: 'css-assert', file: 'src/App.jsx', cases, publicCount: cases.length };
 	}
 
 	const clickThenRead: TestCase = {

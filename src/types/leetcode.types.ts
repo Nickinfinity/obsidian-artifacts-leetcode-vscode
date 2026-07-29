@@ -320,6 +320,15 @@ interface ProjectCheckBase {
 	name: string;
 	/** Cases bound to this check by a `check=<name>` fence attribute in `## Tests` */
 	cases: TestCase[];
+	/**
+	 * How many leading entries of `cases` came from `## Tests` rather than
+	 * `## Final Tests`.
+	 *
+	 * The public/final boundary is per **check**, not per artifact, because each
+	 * check binds its own fences. Run Tests grades `cases.slice(0, publicCount)`
+	 * — without this the hidden suite would leak into the mid-challenge loop.
+	 */
+	publicCount: number;
 }
 
 /**

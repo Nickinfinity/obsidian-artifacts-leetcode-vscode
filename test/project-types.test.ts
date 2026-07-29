@@ -21,6 +21,7 @@ suite('project types', () => {
 			argv: ['npx', 'tsc', '--noEmit'],
 			dir: 'client',
 			cases: [],
+			publicCount: 0,
 		} satisfies BuildCheck;
 
 		const widened: ProjectCheck = check;
@@ -32,7 +33,7 @@ suite('project types', () => {
 	});
 
 	test('a build check may omit the optional dir', () => {
-		const check: BuildCheck = { name: 'builds', kind: 'build', argv: ['npm', 'run', 'build'], cases: [] };
+		const check: BuildCheck = { name: 'builds', kind: 'build', argv: ['npm', 'run', 'build'], cases: [], publicCount: 0 };
 		assert.strictEqual(check.dir, undefined);
 	});
 
@@ -43,6 +44,7 @@ suite('project types', () => {
 			file: 'src/lib/catalogue.ts',
 			function: 'filterInStock',
 			cases: [{ input: { stock: 1 }, expected: true }],
+			publicCount: 1,
 		};
 
 		if (check.kind !== 'function') { throw new Error('discriminant failed to narrow'); }
@@ -52,8 +54,8 @@ suite('project types', () => {
 
 	test('dom-assert and css-assert both carry a component file', () => {
 		const checks: ProjectCheck[] = [
-			{ name: 'alternates', kind: 'dom-assert', file: 'src/App.jsx', cases: [] },
-			{ name: 'styled', kind: 'css-assert', file: 'src/App.jsx', cases: [] },
+			{ name: 'alternates', kind: 'dom-assert', file: 'src/App.jsx', cases: [], publicCount: 0 },
+			{ name: 'styled', kind: 'css-assert', file: 'src/App.jsx', cases: [], publicCount: 0 },
 		];
 		assert.deepStrictEqual(checks.map(c => c.kind), ['dom-assert', 'css-assert']);
 	});

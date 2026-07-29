@@ -1,7 +1,9 @@
 import * as vscode from 'vscode';
-import { activeChallenge, claimSubmission, endChallenge, releaseSubmission } from '../services/leetcode-challenge.service.js';
+import { activeChallenge, type ChallengeSession, claimSubmission, endChallenge, releaseSubmission } from '../services/leetcode-challenge.service.js';
 import { buildExecutable, escapeRe } from '../services/leetcode-candidate.helpers.js';
 import { closeExerciseEditor, deleteExerciseFile } from '../services/exercise-file.service.js';
+import { discardProjectAttempt, saveProjectDocuments } from '../services/project-file.service.js';
+import { gradeProjectDir, runProjectChecks } from '../services/test-envs/project/project.runner.js';
 import { detectRuntime, runSuite } from '../services/leetcode-runner.service.js';
 import {
 	publicCount,
@@ -19,11 +21,12 @@ import type { TestEnv } from '../services/test-envs/env.types.js';
 import {
 	renderBigOEstimateHtml,
 	renderLeetCodePreviewHtml,
+	renderProjectResultsHtml,
 	renderTestResultsHtml,
 } from '../ui/panels/leetcodePreview.panel.js';
 import { FENCE } from '../types/constants.js';
 import { isLangId, LANGUAGES, type LanguageConfig } from '../types/languages.js';
-import type { AttemptEntry, BigOEstimate, ChallengePhase, LeetCodeStatus, TestResult } from '../types/leetcode.types.js';
+import type { AttemptEntry, BigOEstimate, ChallengePhase, LeetCodeStatus, ProjectCheckOutcome, TestResult } from '../types/leetcode.types.js';
 import type { PanelCtx } from '../ui/views/leetcodeView.provider.js';
 
 /**
@@ -51,6 +54,15 @@ export async function handleRunTests(ctx: PanelCtx): Promise<void> {
 	const session = activeChallenge();
 	if (!session) {
 		void vscode.window.showWarningMessage('Start the challenge with "Solve It" first.');
+		return;
+	}
+
+	if (session.projectDir) {
+		const outcomes = await gradeLiveProject(ctx, session.projectDir, { publicOnly: true });
+		postResultsHtml(ctx, renderProjectResultsHtml(outcomes));
+		if (outcomes.length > 0 && outcomes.every(o => o.passed)) {
+			void vscode.window.showInformationMessage('All public checks pass — Submit when ready.');
+		}
 		return;
 	}
 
@@ -103,6 +115,11 @@ export async function handleSubmit(ctx: PanelCtx, language: string | undefined):
 	// note above. `liveSession` (not a fresh `activeChallenge()` call) is what
 	// `wasLive` and `finishChallenge` both key off for the rest of this run.
 	const liveSession = activeChallenge();
+
+	if (ctx.parsed.test.type === 'project') {
+		await submitProject(ctx, liveSession);
+		return;
+	}
 	// A live run's language is authoritative — the panel offers no chooser
 	// mid-run, and there is only ever one session, so it is this exercise's.
 	// `language` (the webview's marker/choice) is the fallback for a dry-run
@@ -144,6 +161,67 @@ export async function handleSubmit(ctx: PanelCtx, language: string | undefined):
 	else                { postResultsHtml(ctx, html); }
 }
 
+// ── project: grade a directory, not a buffer ─────────────────────────────────
+
+/**
+ * Grade the solver's live project tree.
+ *
+ * Saves first: a project's checks bundle and execute **files on disk**, unlike
+ * the function types, which read the live buffer straight out of the editor. A
+ * missing save would silently grade the previous version of whatever is being
+ * typed.
+ *
+ * @param ctx     - Panel session state.
+ * @param dir     - The run's project directory.
+ * @param options - `publicOnly` for the mid-challenge Run Tests loop.
+ * @returns One outcome per declared check.
+ *
+ * @example
+ * await gradeLiveProject(ctx, session.projectDir, { publicOnly: true });
+ */
+async function gradeLiveProject(
+	ctx: PanelCtx, dir: vscode.Uri, options: { publicOnly?: boolean },
+): Promise<ProjectCheckOutcome[]> {
+	await saveProjectDocuments(dir);
+	return gradeProjectDir(ctx.parsed, dir.fsPath, options);
+}
+
+/**
+ * Submit a `project` exercise — every check, public **and** hidden.
+ *
+ * Mirrors the function-type Submit's outcomes (solved / attempted / dry run
+ * writes nothing) but grades a directory. A dry-run Submit with no live
+ * challenge grades the **reference** tree, which is the only tree that exists
+ * when nobody has pressed Solve It — the artifact's own `# Solutions` overlays,
+ * exactly what `verify-exercise.mjs` grades.
+ *
+ * No Big-O line: the heuristic reads one candidate function, and a project is a
+ * component tree. Reporting a complexity for it would be noise dressed as
+ * analysis.
+ *
+ * @param ctx         - Panel session state.
+ * @param liveSession - The in-flight session, or `null` for a dry run.
+ *
+ * @example
+ * await submitProject(ctx, activeChallenge());
+ */
+async function submitProject(ctx: PanelCtx, liveSession: ChallengeSession | null): Promise<void> {
+	const wasLive = liveSession !== null && liveSession.projectDir !== null;
+	if (wasLive && liveSession && !claimSubmission(liveSession)) { return; }
+
+	const outcomes = liveSession?.projectDir
+		? await gradeLiveProject(ctx, liveSession.projectDir, {})
+		: await runProjectChecks(ctx.parsed, { withSolutions: true });
+
+	const html = renderProjectResultsHtml(outcomes);
+	const allPassed = outcomes.length > 0 && outcomes.every(o => o.passed);
+	const args = { ctx, langId: ctx.parsed.files?.[0]?.language ?? 'javascript', html, wasLive, code: '', bigO: null };
+
+	if (allPassed)    { await finishChallenge({ ...args, status: 'solved' }); }
+	else if (wasLive) { await finishChallenge({ ...args, status: 'attempted' }); }
+	else              { postResultsHtml(ctx, html); }
+}
+
 /**
  * Discard the run tied to `tempFileUri`: end the challenge, close its editor
  * tab, and delete its temp file.
@@ -159,7 +237,15 @@ export async function handleSubmit(ctx: PanelCtx, language: string | undefined):
  * await discardChallenge(ctx.attemptUri);
  */
 export async function discardChallenge(tempFileUri: vscode.Uri | null): Promise<void> {
+	// Read before ending: `endChallenge` clears the session, and a project run's
+	// directory is the only handle on the rest of its tree.
+	const projectDir = activeChallenge()?.projectDir ?? null;
 	await endChallenge();
+
+	if (projectDir) {
+		await discardProjectAttempt(projectDir);
+		return;
+	}
 	if (!tempFileUri) { return; }
 	await closeExerciseEditor(tempFileUri);
 	await deleteExerciseFile(tempFileUri);
@@ -273,8 +359,14 @@ interface FinishArgs {
 	wasLive: boolean;
 	/** The submitted buffer, verbatim — recorded as the attempt's code when `wasLive`. */
 	code: string;
-	/** Big-O estimate for this run — recorded alongside the attempt when `wasLive`. */
-	bigO: BigOEstimate;
+	/**
+	 * Big-O estimate for this run — recorded alongside the attempt when `wasLive`.
+	 *
+	 * `null` for a `project` submit: the heuristic reads one candidate function,
+	 * and a project is a component tree, so a notation would be noise dressed as
+	 * analysis. `AttemptEntry` already treats it as optional.
+	 */
+	bigO: BigOEstimate | null;
 }
 
 /**
@@ -324,8 +416,8 @@ interface PersistOutcomeArgs {
 	wasLive: boolean;
 	/** The submitted buffer, verbatim — recorded as the attempt's code when `wasLive`. */
 	code: string;
-	/** Big-O estimate for this run — recorded alongside the attempt when `wasLive`. */
-	bigO: BigOEstimate;
+	/** Big-O estimate for this run, or `null` when the shape has none (a project). */
+	bigO: BigOEstimate | null;
 }
 
 /**
@@ -401,14 +493,14 @@ function insertSolvedMeta(raw: string, language: string, duration: string | null
  * buildAttemptEntry('8m22s', 'solved', code, bigO);
  */
 function buildAttemptEntry(
-	duration: string | null, status: LeetCodeStatus, code: string, bigO: BigOEstimate,
+	duration: string | null, status: LeetCodeStatus, code: string, bigO: BigOEstimate | null,
 ): AttemptEntry {
 	return {
 		at:         new Date().toISOString(),
 		duration:   duration ?? '0m0s',
 		passed:     status === 'solved',
-		bigO:       bigO.notation,
-		confidence: bigO.confidence,
+		// Omitted, not defaulted: a fabricated `O(1)` would read as a measurement.
+		...(bigO ? { bigO: bigO.notation, confidence: bigO.confidence } : {}),
 		code,
 	};
 }

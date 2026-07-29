@@ -360,6 +360,20 @@ Rules that are load-bearing, not stylistic:
   run time, never into `package.json`. The end-to-end render tests are therefore opt-in
   (`LEET_PROJECT_E2E=1`) and `pending` otherwise — the gate stays deterministic offline.
 
+**The solve flow is a directory, not a buffer.** *Solve It* on a `project` materialises the
+starter tree into a fresh `globalStorageUri/attempts/project_<slug>_<run>/`
+([project-file.service.ts](src/services/project-file.service.ts)) and opens every
+`editable`/`readonly` file as a tab (`hidden` files are written, never opened). The session
+carries `projectDir`, and `fileUri` points at the primary tab so every existing consumer —
+live buffer, close, delete — keeps working. **Run Tests / Submit save the dirty documents
+first and grade the directory in place** (`gradeProjectDir`): a project's checks bundle and
+execute real files, so grading an unsaved buffer would silently grade the previous version.
+Discard removes the whole directory. The public/final boundary is **per check**
+(`ProjectCheck.publicCount`), because each check binds its own fences — Run Tests grades
+`cases.slice(0, publicCount)` and the hidden suite never reaches the mid-challenge loop. A
+project Submit records no Big-O: the heuristic reads one candidate function, and a component
+tree has none, so the field is omitted rather than fabricated.
+
 **`## Files` is the starter; `# Solutions` fences carrying the same `path=` are the
 reference overlay.** The harness grades the overlaid tree (`runProjectChecks(parsed,
 { withSolutions: true })`), a solver's run grades the starter — which is what lets an

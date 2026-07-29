@@ -292,7 +292,7 @@ function buildCheck(fields: Map<string, string>, warn: (m: string) => void): Pro
 			return null;
 		}
 		const dir = fields.get('dir');
-		return { name, kind, argv, cases: [], ...(dir ? { dir: unquote(dir) } : {}) };
+		return { name, kind, argv, cases: [], publicCount: 0, ...(dir ? { dir: unquote(dir) } : {}) };
 	}
 
 	const file = unquote(fields.get('file') ?? '');
@@ -306,9 +306,9 @@ function buildCheck(fields: Map<string, string>, warn: (m: string) => void): Pro
 			warn(`checks: function check '${name}' needs a function — dropped`);
 			return null;
 		}
-		return { name, kind, file, function: fn, cases: [] };
+		return { name, kind, file, function: fn, cases: [], publicCount: 0 };
 	}
-	return { name, kind: kind as 'dom-assert' | 'css-assert', file, cases: [] };
+	return { name, kind: kind as 'dom-assert' | 'css-assert', file, cases: [], publicCount: 0 };
 }
 
 // ── case → check binding ──────────────────────────────────────────────────────
@@ -319,7 +319,8 @@ function buildCheck(fields: Map<string, string>, warn: (m: string) => void): Pro
  * A bare fence binds to the sole check when there is exactly one — the common
  * single-check project — and warns otherwise, since guessing would silently
  * grade the wrong thing. Public fences bind before final ones, so a check's
- * `cases` keep the public-then-final order the runner expects.
+ * `cases` keep the public-then-final order the runner expects and `publicCount`
+ * describes the boundary.
  *
  * @param checks - Checks to bind into (mutated in place).
  * @param body   - Artifact content after the frontmatter.
@@ -332,8 +333,8 @@ function bindCases(checks: ProjectCheck[], body: string, warn: (m: string) => vo
 	if (checks.length === 0) { return; }
 
 	const fences = [
-		...extractCaseFences(body, CASE_SECTIONS.tests),
-		...extractCaseFences(body, CASE_SECTIONS.final),
+		...extractCaseFences(body, CASE_SECTIONS.tests).map(f => ({ ...f, public: true })),
+		...extractCaseFences(body, CASE_SECTIONS.final).map(f => ({ ...f, public: false })),
 	];
 
 	for (const fence of fences) {
@@ -348,6 +349,9 @@ function bindCases(checks: ProjectCheck[], body: string, warn: (m: string) => vo
 			continue;
 		}
 		target.cases.push(...fence.cases as TestCase[]);
+		// Public fences are bound first, so the public cases are always the
+		// leading slice and one counter is enough to describe the split.
+		if (fence.public) { target.publicCount += fence.cases.length; }
 	}
 }
 

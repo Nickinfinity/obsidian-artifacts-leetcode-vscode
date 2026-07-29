@@ -3,6 +3,7 @@ import { END_CHALLENGE_COMMAND, TICK_MS } from '../types/constants.js';
 import type { ChallengeState, ParsedLeetCode, PracticeConfig, TimerTick } from '../types/leetcode.types.js';
 import { formatRemaining, timerTick } from './leetcode-challenge.helpers.js';
 import { openExerciseFile } from './exercise-file.service.js';
+import { openProjectFiles } from './project-file.service.js';
 import { LeetCodeTimer } from './leetcode-timer.service.js';
 import { PracticeMode } from './practice-mode.service.js';
 
@@ -17,8 +18,18 @@ import { PracticeMode } from './practice-mode.service.js';
 export interface ChallengeSession {
 	/** Canonical `languageId` the run was started in */
 	langId: string;
-	/** URI of the temp exercise file opened in the main editor group */
+	/** URI of the temp exercise file opened in the main editor group. For a
+	 * `project` run this is the **primary editable file** of the tree, so every
+	 * existing consumer (live buffer, close, delete) keeps working unchanged. */
 	fileUri: vscode.Uri;
+	/**
+	 * Run directory of a `project` attempt's file tree, or `null` for the
+	 * single-file types.
+	 *
+	 * Its presence is what tells the run handlers to grade a **directory** —
+	 * bundling and executing real files — rather than one candidate buffer.
+	 */
+	projectDir: vscode.Uri | null;
 	/** Stopwatch used to stamp `duration` into the solution metadata on Submit */
 	timer: LeetCodeTimer;
 	/** Snapshot-owning practice-mode applier */
@@ -102,7 +113,13 @@ export async function startChallenge(
 ): Promise<ChallengeSession> {
 	await endChallenge();
 
-	const fileUri = await openExerciseFile(context, parsed, langId);
+	// A project is a tree, not a buffer: materialise it and open its editable
+	// files, keeping `fileUri` pointed at the primary tab so nothing downstream
+	// needs to know which shape this run has.
+	const project = parsed.test.type === 'project'
+		? await openProjectFiles(context, parsed)
+		: null;
+	const fileUri = project ? project.primary : await openExerciseFile(context, parsed, langId);
 
 	const practice = new PracticeMode();
 	await practice.apply(config.options);
@@ -124,7 +141,7 @@ export async function startChallenge(
 	};
 
 	const session: ChallengeSession = {
-		langId, fileUri, timer, practice, finishing: false,
+		langId, fileUri, projectDir: project?.dir ?? null, timer, practice, finishing: false,
 		statusBar: null, ticker: null, deadline: null, state,
 	};
 
