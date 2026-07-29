@@ -3,7 +3,9 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import type { CssAssertCheck, DomAssertCheck, TestCase } from '../src/types/leetcode.types.js';
-import { gradeRenderOutcomes, renderCasesFor, validateRenderCheck } from '../src/services/test-envs/project/checks.js';
+import {
+	gradeRenderOutcomes, renderCasesFor, runRenderCheck, validateRenderCheck,
+} from '../src/services/test-envs/project/checks.js';
 
 /**
  * `dom-assert` / `css-assert` check kinds (eval-fixes TB.6).
@@ -17,6 +19,10 @@ suite('project checks', () => {
 
 	function domCheck(cases: TestCase[]): DomAssertCheck {
 		return { name: 'alternates', kind: 'dom-assert', file: 'src/App.jsx', cases, publicCount: cases.length };
+	}
+
+	function domCheckWithFile(file: string, cases: TestCase[]): DomAssertCheck {
+		return { name: 'alternates', kind: 'dom-assert', file, cases, publicCount: cases.length };
 	}
 
 	function cssCheck(cases: TestCase[]): CssAssertCheck {
@@ -150,6 +156,37 @@ suite('project checks', () => {
 
 		test('the outcome carries the check name', () => {
 			assert.strictEqual(gradeRenderOutcomes(domCheck([clickThenRead]), []).name, 'alternates');
+		});
+	});
+
+	// ── Containment: `file:` is a fourth artifact-declared path (Addition B) ──
+
+	suite('runRenderCheck refuses an escaping file: before installing or bundling anything', () => {
+
+		let runDir: string;
+
+		setup(() => {
+			runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'checks-escape-'));
+		});
+
+		teardown(() => {
+			fs.rmSync(runDir, { recursive: true, force: true });
+		});
+
+		test('a traversal path is refused, and no runner is ever written', async () => {
+			const outcome = await runRenderCheck(domCheckWithFile('../../../etc/passwd', [clickThenRead]), runDir);
+
+			assert.strictEqual(outcome.passed, false);
+			assert.ok(/escapes/.test(outcome.detail ?? ''), outcome.detail);
+			assert.strictEqual(fs.existsSync(path.join(runDir, 'leet-render-runner.js')), false);
+		});
+
+		test('an absolute path is refused the same way', async () => {
+			const outcome = await runRenderCheck(domCheckWithFile('/etc/passwd', [clickThenRead]), runDir);
+
+			assert.strictEqual(outcome.passed, false);
+			assert.ok(outcome.detail, outcome.detail);
+			assert.strictEqual(fs.existsSync(path.join(runDir, 'leet-render-runner.js')), false);
 		});
 	});
 

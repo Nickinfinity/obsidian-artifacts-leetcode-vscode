@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import * as path from 'node:path';
 import { promisify } from 'node:util';
 import type { BuildCheck, ProjectCheckOutcome } from '../../../types/leetcode.types.js';
 import { resolveContained } from './files.writer.js';
@@ -23,6 +24,11 @@ const MAX_DETAIL = 2_000;
  * A missing binary, a non-zero exit and a timeout are all the same kind of
  * answer — the check failed — so none of them escape as a throw.
  *
+ * The child's `PATH` is the caller's own `PATH` with `runDir`'s
+ * `node_modules/.bin` **prepended** (see `modules.linker.ts`), so a bare
+ * `argv: ['tsc']` resolves the run's own linked toolchain first without
+ * losing anything already on `PATH`.
+ *
  * @param check  - The declared build check.
  * @param runDir - Absolute run directory; `check.dir` resolves inside it.
  * @returns Pass/fail plus the child's output on failure.
@@ -46,8 +52,20 @@ export async function runBuildCheck(check: BuildCheck, runDir: string): Promise<
 		}
 	}
 
+	// ponytail: POSIX-only. libuv resolves PATH from the child's own environ
+	// before execvp, so prepending here reaches `execFile`'s lookup. On Windows,
+	// `process.env` is case-insensitive for property access but the object
+	// spread below produces a plain case-sensitive object, so the child would
+	// receive both the original `Path` and this prepended `PATH` as two distinct
+	// keys — which spelling wins is unspecified there. `.bin` entries are also
+	// `.cmd` shims `execFile` cannot run without a shell, so Windows coverage is
+	// unproven either way. No `shell: true` to compensate; that would hand
+	// artifact-authored argv to a command interpreter.
+	const binDir = path.join(runDir, 'node_modules', '.bin');
+	const env = { ...process.env, PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ''}` };
+
 	try {
-		const { stdout } = await execFileAsync(command, args, { cwd, timeout: BUILD_TIMEOUT_MS });
+		const { stdout } = await execFileAsync(command, args, { cwd, env, timeout: BUILD_TIMEOUT_MS });
 		return { name: check.name, passed: true, detail: truncate(stdout) };
 	} catch (e) {
 		return { name: check.name, passed: false, detail: truncate(failureText(e)) };

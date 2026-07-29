@@ -13,11 +13,10 @@ import { resolveLangId } from '../../language-map.service.js';
 import { runSuite } from '../../leetcode-runner.service.js';
 import { testEnvFor } from '../env.registry.js';
 import { runBuildCheck } from './build.check.js';
-import { runRenderCheck } from './checks.js';
+import { renderLibsFor, runRenderCheck } from './checks.js';
 import { resolveContained, writeProjectFiles } from './files.writer.js';
-
-/** Languages the render checks can bundle — the ids the `project` env registers under. */
-const RENDER_LANGUAGES = ['javascript', 'typescript'];
+import { installLibs, type InstallOptions } from './lib-installer.js';
+import { linkModules } from './modules.linker.js';
 
 /**
  * Grade every declared check of a `project` artifact.
@@ -71,26 +70,93 @@ export async function runProjectChecks(
  * Nothing is written here, which is the point: a live run grades the files the
  * solver is editing, in place, rather than a snapshot taken from the artifact.
  *
+ * Installs the run's libraries **once**, under one cache key (§B.1): every
+ * `libs:` language, widened to `renderLibsFor` only when a `dom-assert` /
+ * `css-assert` check is declared, so a `build`-only exercise never pays for
+ * esbuild + jsdom + React. An empty set installs and links nothing. The
+ * resulting cache is linked into `runDir`'s own `node_modules` (§B.2) before
+ * any check runs, and handed to the render check so it never installs its own
+ * — one install, one key, one link target.
+ *
  * With `publicOnly`, each check is graded against `cases.slice(0, publicCount)`
  * — the mid-challenge Run Tests loop, which must never touch the hidden suite.
  *
  * @param parsed  - Parsed `project` artifact.
  * @param runDir  - Directory holding the tree to grade.
- * @param options - `publicOnly` restricts every check to its public cases.
+ * @param options - `publicOnly` restricts every check to its public cases;
+ *                  `installRun` injects the install subprocess for tests,
+ *                  which must never reach the network or a developer's real cache.
  * @returns One outcome per declared check, in declaration order.
  *
  * @example
  * await gradeProjectDir(parsed, session.projectDir.fsPath, { publicOnly: true });
  */
 export async function gradeProjectDir(
-	parsed: ParsedLeetCode, runDir: string, options: { publicOnly?: boolean } = {},
+	parsed: ParsedLeetCode, runDir: string,
+	options: { publicOnly?: boolean; installRun?: NonNullable<InstallOptions['run']> } = {},
 ): Promise<ProjectCheckOutcome[]> {
+	const checks = parsed.checks ?? [];
+	if (checks.length === 0) { return []; }
+
+	const libs = installSetFor(parsed, checks);
+	let cacheDir: string | undefined;
+	if (libs.length > 0) {
+		const installed = await installLibs(libs, options.installRun ? { run: options.installRun } : {});
+		if (!installed.ok) {
+			return checks.map(c => ({ name: c.name, passed: false, detail: installed.reason }));
+		}
+		await linkModules(runDir, installed.dir);
+		cacheDir = installed.dir;
+	}
+
 	const outcomes: ProjectCheckOutcome[] = [];
-	for (const check of parsed.checks ?? []) {
+	for (const check of checks) {
 		const graded = options.publicOnly ? publicCasesOf(check) : check;
-		outcomes.push(await runOneCheck(graded, parsed, runDir));
+		outcomes.push(await runOneCheck(graded, parsed, runDir, cacheDir));
 	}
 	return outcomes;
+}
+
+/**
+ * The set of libraries this grading run needs, installed once under one cache
+ * key (§B.1).
+ *
+ * `runLibs(parsed)` unless the artifact declares a `dom-assert` / `css-assert`
+ * check, in which case the set is widened to `renderLibsFor` — the harness
+ * toolchain plus React, so the render driver and this install resolve from
+ * the very same cache.
+ *
+ * @param parsed - The artifact, for `libs:`.
+ * @param checks - Its declared checks, to detect a render kind.
+ * @returns Specs to install; `[]` when the run needs nothing.
+ *
+ * @example
+ * installSetFor(parsed, [{ kind: 'build', … }]); // → runLibs(parsed), unwidened
+ */
+function installSetFor(parsed: ParsedLeetCode, checks: ProjectCheck[]): string[] {
+	const libs = runLibs(parsed);
+	const needsRender = checks.some(c => c.kind === 'dom-assert' || c.kind === 'css-assert');
+	return needsRender ? renderLibsFor(libs) : libs;
+}
+
+/**
+ * Union of every `libs:` entry across every declared language, deduped.
+ *
+ * Deliberately **not** restricted to the render-capable languages — a
+ * `libs.python` project (a `build` check shelling out to a Python toolchain)
+ * must install its own declared libraries too, not silently install nothing.
+ * Order does not matter: `libCacheDir` sorts before hashing.
+ *
+ * @param parsed - The artifact, for `libs:`.
+ * @returns Deduped specs across every language; `[]` when none are declared.
+ *
+ * @example
+ * runLibs({ libs: { javascript: ['lodash@^4.0.0'], python: ['requests@^2.0.0'] } });
+ * // → ['lodash@^4.0.0', 'requests@^2.0.0']
+ */
+function runLibs(parsed: ParsedLeetCode): string[] {
+	const libs = parsed.libs ?? {};
+	return [...new Set(Object.values(libs).flat())];
 }
 
 /** The same check restricted to its public cases — the leading `publicCount` slice. */
@@ -101,23 +167,26 @@ function publicCasesOf(check: ProjectCheck): ProjectCheck {
 /**
  * Dispatch one check to the machinery for its kind.
  *
- * ponytail: a `build` check runs in the run directory, which has **no**
- * `node_modules` — the artifact's `libs:` install into the shared cache, and
- * only the render driver resolves from there. A build that shells out to a
- * project's own toolchain (`npx tsc`, `npm run build`) therefore fails until
- * the cache is linked into the run directory. Add that link when an exercise
- * needs a real build; the React exercises this was written for grade entirely
- * through `dom-assert`.
+ * The run directory's `node_modules` is linked once by `gradeProjectDir`
+ * before any check runs — a `build` check's own toolchain (`npx tsc`, `npm run
+ * build`) resolves it exactly like a real project checkout, and a render
+ * check is handed the same cache dir so it never installs a second one.
+ *
+ * @param check   - The check to run.
+ * @param parsed  - The artifact, for `params` / `returns` / `libs`.
+ * @param runDir  - Run directory holding the materialised tree and its linked `node_modules`.
+ * @param cacheDir - Resolved install cache for this run, when one was installed.
+ * @returns The check's verdict.
  */
 async function runOneCheck(
-	check: ProjectCheck, parsed: ParsedLeetCode, runDir: string,
+	check: ProjectCheck, parsed: ParsedLeetCode, runDir: string, cacheDir?: string,
 ): Promise<ProjectCheckOutcome> {
 	switch (check.kind) {
 		case 'build':
 			return runBuildCheck(check, runDir);
 		case 'dom-assert':
 		case 'css-assert':
-			return runRenderCheck(check, runDir, renderLibs(parsed));
+			return runRenderCheck(check, runDir, undefined, cacheDir);
 		case 'function':
 			return runFunctionCheck(check, parsed, runDir);
 	}
@@ -142,12 +211,6 @@ function overlaySolutions(files: FileSpec[], solutions: FileSpec[]): FileSpec[] 
 	const merged = files.map(file => byPath.get(file.path) ?? file);
 	const extra = solutions.filter(s => !files.some(f => f.path === s.path));
 	return [...merged, ...extra];
-}
-
-/** The artifact's declared libs for the languages a render check can bundle. */
-function renderLibs(parsed: ParsedLeetCode): string[] {
-	const libs = parsed.libs ?? {};
-	return RENDER_LANGUAGES.flatMap(language => libs[language] ?? []);
 }
 
 /**

@@ -54,6 +54,45 @@ suite('project build check', () => {
 		assert.ok(outcome.detail === undefined || outcome.detail.includes('client'), outcome.detail);
 	});
 
+	test('a dir aimed at node_modules is refused before any spawn', async () => {
+		// A real run directory always has a node_modules (linkModules creates it),
+		// so this must exist here too — otherwise a missing cwd, not the guard,
+		// would be what makes execFile fail, and the test would pass for the wrong reason.
+		fs.mkdirSync(path.join(runDir, 'node_modules'), { recursive: true });
+		const marker = path.join(runDir, 'spawned');
+		const outcome = await runBuildCheck(
+			check({
+				dir: 'node_modules',
+				argv: [process.execPath, '-e', `require('fs').writeFileSync(${JSON.stringify(marker)}, 'x')`],
+			}),
+			runDir,
+		);
+
+		assert.strictEqual(outcome.passed, false);
+		assert.ok(/reserved/.test(outcome.detail ?? ''), outcome.detail);
+		assert.strictEqual(fs.existsSync(marker), false, 'a spawn happened despite the containment refusal');
+	});
+
+	// ── The run's own node_modules/.bin resolves on PATH ─────────────────────
+
+	test("a binary in the run's node_modules/.bin resolves by bare name", async () => {
+		const binDir = path.join(runDir, 'node_modules', '.bin');
+		fs.mkdirSync(binDir, { recursive: true });
+		const shimPath = path.join(binDir, 'mytool');
+		fs.writeFileSync(shimPath, '#!/bin/sh\necho from-local-bin\n');
+		fs.chmodSync(shimPath, 0o755);
+
+		const outcome = await runBuildCheck(check({ argv: ['mytool'] }), runDir);
+
+		assert.strictEqual(outcome.passed, true, outcome.detail);
+		assert.ok(outcome.detail?.includes('from-local-bin'), outcome.detail);
+	});
+
+	test('PATH is prepended, not replaced — a system binary still resolves', async () => {
+		const outcome = await runBuildCheck(check({ argv: ['sh', '-c', 'exit 0'] }), runDir);
+		assert.strictEqual(outcome.passed, true, outcome.detail);
+	});
+
 	// ── Exit code is the verdict ──────────────────────────────────────────────
 
 	test('exit 0 passes', async () => {

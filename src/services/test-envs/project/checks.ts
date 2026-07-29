@@ -13,6 +13,7 @@ import { canonicalJson } from '../../../utils/canonical-json.js';
 import { safeJsonParse } from '../../../utils/safe-json.js';
 import type { CaseOutcome } from '../env.types.js';
 import { parseSentinelLines } from '../sentinel.helpers.js';
+import { resolveContained } from './files.writer.js';
 import { installLibs } from './lib-installer.js';
 import { HARNESS_LIBS, RENDER_RUNNER, type RenderCase, renderRunnerSource } from './render.driver.js';
 
@@ -94,7 +95,7 @@ function validateCase(check: RenderCheck, testCase: TestCase, index: number): st
 		if (reason) { return reason; }
 	}
 
-	const last = steps[steps.length - 1] as { op?: unknown };
+	const last = steps.at(-1) as { op?: unknown };
 	if (typeof last.op !== 'string' || !READING_OPS.has(last.op)) {
 		return `${where}: the last step must read something (text, count, attr or style) — otherwise the case observes no value`;
 	}
@@ -212,31 +213,50 @@ export function renderLibsFor(artifactLibs: readonly string[] = []): string[] {
  * Run one render check end to end: validate, install, bundle, mount, grade.
  *
  * Every failure mode reduces to a red check with a reason — a refused case, an
- * install that could not complete, a driver that died. Nothing throws out of
- * here, because a check failing is a normal result and the panel has one place
- * to render it.
+ * escaping `file:`, an install that could not complete, a driver that died.
+ * Nothing throws out of here, because a check failing is a normal result and
+ * the panel has one place to render it.
+ *
+ * `resolveContained` runs on `check.file` before anything installs or bundles
+ * — a render check is the fourth artifact-declared path into the run
+ * directory (the parser does not validate it, unlike the `## Files` writer
+ * and the `function` check's own `file`), so an escaping entry must be
+ * refused here rather than handed to esbuild's `entryPoints`.
  *
  * @param check        - The check to run.
  * @param runDir       - Run directory holding the materialised `## Files` tree.
- * @param artifactLibs - `libs:` for the run's language.
+ * @param artifactLibs - `libs:` for the run's language — ignored when `cacheDir` is given.
+ * @param cacheDir     - Already-installed cache dir (§B.1: one install per grading run,
+ *                       done once in `gradeProjectDir`). Omitted only by direct/E2E callers,
+ *                       which still install their own.
  * @returns The check's verdict.
  *
  * @example
  * await runRenderCheck(domCheck, '/tmp/run', ['react@^19.0.0']);
  */
 export async function runRenderCheck(
-	check: RenderCheck, runDir: string, artifactLibs: readonly string[] = [],
+	check: RenderCheck, runDir: string, artifactLibs: readonly string[] = [], cacheDir?: string,
 ): Promise<ProjectCheckOutcome> {
 	const invalid = validateRenderCheck(check);
 	if (invalid) { return fail(check, invalid); }
 
-	const installed = await installLibs(renderLibsFor(artifactLibs));
-	if (!installed.ok) { return fail(check, installed.reason); }
+	try {
+		resolveContained(runDir, check.file);
+	} catch (e) {
+		return fail(check, e instanceof Error ? e.message : String(e));
+	}
+
+	let dir = cacheDir;
+	if (!dir) {
+		const installed = await installLibs(renderLibsFor(artifactLibs));
+		if (!installed.ok) { return fail(check, installed.reason); }
+		dir = installed.dir;
+	}
 
 	try {
 		await fs.writeFile(
 			path.join(runDir, RENDER_RUNNER),
-			renderRunnerSource({ entry: check.file, cacheDir: installed.dir, cases: renderCasesFor(check) }),
+			renderRunnerSource({ entry: check.file, cacheDir: dir, cases: renderCasesFor(check) }),
 			'utf-8',
 		);
 		const { stdout } = await execFileAsync(process.execPath, [RENDER_RUNNER], {

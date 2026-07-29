@@ -3,6 +3,9 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { parseLeetCode } from '../src/services/leetcode-parser.service.js';
+import { renderLibsFor } from '../src/services/test-envs/project/checks.js';
+import { libCacheDir } from '../src/services/test-envs/project/lib-installer.js';
+import { linkModules } from '../src/services/test-envs/project/modules.linker.js';
 import { gradeProjectDir, runProjectChecks } from '../src/services/test-envs/project/project.runner.js';
 
 /**
@@ -151,5 +154,209 @@ suite('project runner', () => {
 	test('runProjectChecks with solutions grades the reference tree', async () => {
 		const outcomes = await runProjectChecks(parseLeetCode(artifact()), { withSolutions: true });
 		assert.strictEqual(outcomes[0].passed, true, outcomes[0].detail);
+	});
+
+	// ── T4 §B.1/§B.2: one install per grading run, linked into the run dir ───
+
+	suite('libs install + link', () => {
+
+		/** Same `doubles` function check as `artifact()`, plus a declared `libs:` entry. */
+		function artifactWithLibs(): string {
+			return [
+				'---',
+				'type: leetcode',
+				'title: Double',
+				'params:',
+				'  - name: n',
+				'    type: int',
+				'returns: int',
+				'libs:',
+				'  javascript:',
+				'    - lodash@^4.17.21',
+				'test:',
+				'  type: project',
+				'  checks:',
+				'    - name: doubles',
+				'      kind: function',
+				'      file: src/double.js',
+				'      function: double',
+				'---',
+				'',
+				'Double a number.',
+				'',
+				'## Tests',
+				'',
+				'```json check=doubles',
+				'[{ "input": { "n": 1 }, "expected": 2 }]',
+				'```',
+				'',
+				'## Files',
+				'',
+				'```javascript path=src/double.js role=editable',
+				'export function double(n) { return n * 2; }',
+				'```',
+				'',
+			].join('\n');
+		}
+
+		/**
+		 * `artifactWithLibs()` plus a second language's `libs:`.
+		 *
+		 * §B.1 rule 1 is the one rule with a named failure mode — "a `libs.python`
+		 * project must not silently install nothing" — so it gets its own fixture
+		 * rather than riding on the javascript-only one.
+		 */
+		function artifactWithMultiLangLibs(): string {
+			return artifactWithLibs().replace(
+				'  javascript:\n    - lodash@^4.17.21',
+				'  javascript:\n    - lodash@^4.17.21\n  python:\n    - requests@^2.0.0',
+			);
+		}
+
+		/** A `dom-assert` check (with one real case) plus a `build` check that always exits 0. */
+		function multiCheckArtifact(): string {
+			return [
+				'---',
+				'type: leetcode',
+				'title: Multi',
+				'params:',
+				'  - name: n',
+				'    type: int',
+				'returns: int',
+				'libs:',
+				'  javascript:',
+				'    - lodash@^4.17.21',
+				'test:',
+				'  type: project',
+				'  checks:',
+				'    - name: mounts',
+				'      kind: dom-assert',
+				'      file: src/App.jsx',
+				'    - name: builds',
+				'      kind: build',
+				'      argv: ["node", "-e", "process.exit(0)"]',
+				'---',
+				'',
+				'Mounts and builds.',
+				'',
+				'## Tests',
+				'',
+				'```json check=mounts',
+				'[{ "input": { "steps": [{ "op": "count", "selector": "div" }] }, "expected": 1 }]',
+				'```',
+				'',
+				'## Files',
+				'',
+				'```jsx path=src/App.jsx role=editable',
+				'export default function App() { return null; }',
+				'```',
+				'',
+			].join('\n');
+		}
+
+		/** Fake `npm install`: touches no network, just drops one resolvable package into the cache. */
+		function fakeInstall(pkg: string): (file: string, args: string[], cwd: string) => Promise<void> {
+			return async (_file, _args, cwd) => {
+				const pkgDir = path.join(cwd, 'node_modules', pkg);
+				fs.mkdirSync(pkgDir, { recursive: true });
+				fs.writeFileSync(path.join(pkgDir, 'index.js'), 'module.exports = 42;\n');
+			};
+		}
+
+		let cacheRoot: string;
+		const previousCache = process.env.OBSIDIAN_LEETCODE_LIBCACHE;
+
+		setup(() => {
+			cacheRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'libcache-'));
+			process.env.OBSIDIAN_LEETCODE_LIBCACHE = cacheRoot;
+		});
+
+		teardown(() => {
+			if (previousCache === undefined) { delete process.env.OBSIDIAN_LEETCODE_LIBCACHE; }
+			else { process.env.OBSIDIAN_LEETCODE_LIBCACHE = previousCache; }
+			fs.rmSync(cacheRoot, { recursive: true, force: true });
+		});
+
+		test('a project declaring libs gets a real node_modules that resolves the declared package', async () => {
+			writeCandidate('export function double(n) { return n * 2; }');
+			const outcomes = await gradeProjectDir(parseLeetCode(artifactWithLibs()), runDir, {
+				installRun: fakeInstall('lodash'),
+			});
+
+			assert.strictEqual(outcomes[0].passed, true, outcomes[0].detail);
+			const linked = path.join(runDir, 'node_modules', 'lodash');
+			assert.ok(fs.lstatSync(linked).isSymbolicLink(), 'lodash should be linked into the run directory');
+			assert.strictEqual(fs.readFileSync(path.join(linked, 'index.js'), 'utf-8'), 'module.exports = 42;\n');
+		});
+
+		test('a project declaring no libs creates no node_modules at all', async () => {
+			writeCandidate('export function double(n) { return n * 2; }');
+			await gradeProjectDir(parseLeetCode(artifact()), runDir);
+			assert.strictEqual(fs.existsSync(path.join(runDir, 'node_modules')), false);
+		});
+
+		test('an install failure fails every check with its reason, rather than throwing', async () => {
+			writeCandidate('export function double(n) { return n * 2; }');
+			const failingRun = async (): Promise<void> => { throw new Error('network unreachable'); };
+			const outcomes = await gradeProjectDir(parseLeetCode(artifactWithLibs()), runDir, { installRun: failingRun });
+
+			assert.strictEqual(outcomes.length, 1);
+			assert.strictEqual(outcomes[0].passed, false);
+			assert.ok(outcomes[0].detail?.includes('network unreachable'), outcomes[0].detail);
+		});
+
+		test('one gradeProjectDir invokes the installer once, under one cache key, for a render check plus a build check', async () => {
+			const calls: { cwd: string }[] = [];
+			const countingRun = async (_file: string, _args: string[], cwd: string): Promise<void> => {
+				calls.push({ cwd });
+				fs.mkdirSync(path.join(cwd, 'node_modules'), { recursive: true });
+			};
+
+			fs.mkdirSync(path.join(runDir, 'src'), { recursive: true });
+			fs.writeFileSync(path.join(runDir, 'src/App.jsx'), 'export default function App() { return null; }');
+
+			const parsed = parseLeetCode(multiCheckArtifact());
+			await gradeProjectDir(parsed, runDir, { installRun: countingRun });
+
+			assert.strictEqual(calls.length, 1, 'the installer must run exactly once per grading run — two calls means two cache keys');
+			const expectedKey = libCacheDir(renderLibsFor(['lodash@^4.17.21']));
+			assert.strictEqual(calls[0].cwd, expectedKey);
+		});
+
+		test('runLibs unions every language, not only the render ones — a libs.python entry still installs', async () => {
+			const calls: { cwd: string }[] = [];
+			const countingRun = async (_file: string, _args: string[], cwd: string): Promise<void> => {
+				calls.push({ cwd });
+				fs.mkdirSync(path.join(cwd, 'node_modules'), { recursive: true });
+			};
+
+			writeCandidate('export function double(n) { return n * 2; }');
+			await gradeProjectDir(parseLeetCode(artifactWithMultiLangLibs()), runDir, { installRun: countingRun });
+
+			// §B.1 rule 1: the union is over every `parsed.libs[lang]`, so a
+			// language outside the render set cannot silently install nothing.
+			// Rule 2 too: no render check is declared, so the set stays unwidened.
+			assert.strictEqual(calls.length, 1);
+			assert.strictEqual(
+				calls[0].cwd,
+				libCacheDir(['lodash@^4.17.21', 'requests@^2.0.0']),
+				"the cache key must cover every language's libs, not only javascript",
+			);
+		});
+
+		test('linkModules refuses a hijacked node_modules symlink and leaves its target untouched', async () => {
+			const evilTarget = fs.mkdtempSync(path.join(os.tmpdir(), 'evil-target-'));
+			fs.writeFileSync(path.join(evilTarget, 'marker.txt'), 'untouched');
+			fs.symlinkSync(evilTarget, path.join(runDir, 'node_modules'));
+
+			const cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fake-cache-'));
+			fs.mkdirSync(path.join(cacheDir, 'node_modules'), { recursive: true });
+
+			await assert.rejects(() => linkModules(runDir, cacheDir), /symlink/);
+			assert.strictEqual(fs.readFileSync(path.join(evilTarget, 'marker.txt'), 'utf-8'), 'untouched');
+
+			fs.rmSync(evilTarget, { recursive: true, force: true });
+			fs.rmSync(cacheDir, { recursive: true, force: true });
+		});
 	});
 });
