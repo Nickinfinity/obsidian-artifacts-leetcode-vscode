@@ -584,3 +584,21 @@ shipped in `validateLibNames` ([lib-spec.helpers.ts](src/services/lib-spec.helpe
 a bare scoped/unscoped package name with an optional `@version`, no `..` anywhere — before
 it can reach an install subprocess. Java is out of scope (no transitive resolver in a stock
 JDK).
+
+**The installer is npm-only, so the language key decides whether a list installs at all.**
+`installLibs` shells out to `npm install --prefix`, and there is no second installer, so only
+the languages in `NPM_LANGUAGES` (`javascript`, `typescript`, `javascriptreact`,
+`typescriptreact`) are served. A list under any other key is **kept on the parsed artifact,
+warned about, and skipped** — `libs: { python: [requests@^2.0.0] }` warns
+`libs: 'python' is not installable — the library installer is npm-only, so these are skipped`
+rather than `npm install`ing the unrelated npm package that happens to share the name. The
+name-shape allowlist cannot tell two registries' packages apart, so the language key is the
+only thing that can.
+
+**Trust class, stated plainly:** installing `libs:` runs the declared packages' own
+`preinstall`/`install`/`postinstall` scripts — **arbitrary code**, the same trust class as
+running a solver's candidate locally. The allowlist bounds the *shape of a name*; it says
+nothing about what the package does once npm fetches it. `--ignore-scripts` is deliberately
+**not** passed: the harness's own toolchain needs it (esbuild's postinstall fetches its
+platform binary). Treat an artifact's `libs:` the way you would treat its `build` argv — as
+code you are choosing to run.

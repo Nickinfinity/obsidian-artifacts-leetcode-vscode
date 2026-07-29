@@ -398,9 +398,19 @@ Rules that are load-bearing, not stylistic:
   from the parent's environment block and the winning spelling between `Path` and `PATH` after an
   object spread is unspecified.
 - **The links land in the solver's live attempt tree too, deliberately** — their editor then
-  resolves their imports. Discard deletes that tree through `vscode.workspace.fs.delete`, **not**
-  the Node `fs.rm` that is known link-safe, so whether VS Code's deleter follows symlinks into
-  the shared cache is **unverified**; nothing in `src/` may assume either answer.
+  resolves their imports. Discard deletes that tree through `vscode.workspace.fs.delete`, not the
+  Node `fs.rm` this repo verified link-safe, so it was worth checking: VS Code's
+  `DiskFileSystemProvider.delete` routes a recursive delete to its own `rimraf` in
+  `RimRafMode.MOVE` — `fs.promises.rename` to a temp path, then
+  `fs.promises.rm(…, { recursive: true, force: true })`. Both steps operate on the link, not its
+  target, so **discarding an attempt does not touch the shared cache** (confirmed against the
+  shipped extension-host bundle and re-tested with those exact options).
+- **One install per grading run also means one npm registry.** `runLibs` skips any `libs:`
+  language outside `NPM_LANGUAGES` — the installer is npm-only, and unioning `libs.python` in
+  would fetch the unrelated npm package of that name. The parser warns so the skip is never
+  silent. Installing `libs:` runs the packages' install scripts (arbitrary code, same trust class
+  as a `build` argv); `--ignore-scripts` is not passed because esbuild's postinstall fetches its
+  platform binary. See `ARTIFACT_LEETCODE_FILE_FORMAT.md` §9.4.
 
 **The solve flow is a directory, not a buffer.** *Solve It* on a `project` materialises the
 starter tree into a fresh `globalStorageUri/attempts/project_<slug>_<run>/`

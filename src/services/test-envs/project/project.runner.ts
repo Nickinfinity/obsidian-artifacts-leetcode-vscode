@@ -10,6 +10,7 @@ import type {
 } from '../../../types/leetcode.types.js';
 import { canonicalJson } from '../../../utils/canonical-json.js';
 import { resolveLangId } from '../../language-map.service.js';
+import { isNpmServableLanguage } from '../../lib-spec.helpers.js';
 import { runSuite } from '../../leetcode-runner.service.js';
 import { testEnvFor } from '../env.registry.js';
 import { runBuildCheck } from './build.check.js';
@@ -140,23 +141,33 @@ function installSetFor(parsed: ParsedLeetCode, checks: ProjectCheck[]): string[]
 }
 
 /**
- * Union of every `libs:` entry across every declared language, deduped.
+ * Union of every `libs:` entry the installer can actually serve, deduped.
  *
- * Deliberately **not** restricted to the render-capable languages — a
- * `libs.python` project (a `build` check shelling out to a Python toolchain)
- * must install its own declared libraries too, not silently install nothing.
+ * Not restricted to the *render-capable* languages — a `build`-check project
+ * declaring `libs.typescript` must install its own libraries, and scoping this
+ * to the render set was the bug that made a render check install a superset
+ * under a second cache key. But it **is** restricted to the languages npm
+ * serves ({@link isNpmServableLanguage}), because `installLibs` shells out to
+ * npm and there is no second installer: unioning `libs.python: [requests]` in
+ * would `npm install` the unrelated npm package of that name rather than the
+ * PyPI one, and the name-shape allowlist cannot tell them apart. The parser
+ * warns about the skipped language at authoring time, so nothing is silent.
+ *
  * Order does not matter: `libCacheDir` sorts before hashing.
  *
  * @param parsed - The artifact, for `libs:`.
- * @returns Deduped specs across every language; `[]` when none are declared.
+ * @returns Deduped npm-installable specs; `[]` when none are declared.
  *
  * @example
- * runLibs({ libs: { javascript: ['lodash@^4.0.0'], python: ['requests@^2.0.0'] } });
- * // → ['lodash@^4.0.0', 'requests@^2.0.0']
+ * runLibs({ libs: { typescript: ['react@^19.0.0'], python: ['requests@^2.0.0'] } });
+ * // → ['react@^19.0.0']   — python is npm's to serve, so it is skipped
  */
 function runLibs(parsed: ParsedLeetCode): string[] {
 	const libs = parsed.libs ?? {};
-	return [...new Set(Object.values(libs).flat())];
+	const servable = Object.entries(libs)
+		.filter(([language]) => isNpmServableLanguage(language))
+		.flatMap(([, specs]) => specs);
+	return [...new Set(servable)];
 }
 
 /** The same check restricted to its public cases — the leading `publicCount` slice. */

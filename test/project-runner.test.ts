@@ -200,11 +200,11 @@ suite('project runner', () => {
 		}
 
 		/**
-		 * `artifactWithLibs()` plus a second language's `libs:`.
+		 * `artifactWithLibs()` plus a language the npm-only installer cannot serve.
 		 *
-		 * §B.1 rule 1 is the one rule with a named failure mode — "a `libs.python`
-		 * project must not silently install nothing" — so it gets its own fixture
-		 * rather than riding on the javascript-only one.
+		 * Derived by `replace()` on purpose: if the anchor ever drifts the block is
+		 * dropped, the install set loses `python`, and the test that asserts the
+		 * warning goes red — the failure points the safe direction.
 		 */
 		function artifactWithMultiLangLibs(): string {
 			return artifactWithLibs().replace(
@@ -323,7 +323,7 @@ suite('project runner', () => {
 			assert.strictEqual(calls[0].cwd, expectedKey);
 		});
 
-		test('runLibs unions every language, not only the render ones — a libs.python entry still installs', async () => {
+		test('a language npm cannot serve is skipped, not npm-installed under the same name', async () => {
 			const calls: { cwd: string }[] = [];
 			const countingRun = async (_file: string, _args: string[], cwd: string): Promise<void> => {
 				calls.push({ cwd });
@@ -331,17 +331,36 @@ suite('project runner', () => {
 			};
 
 			writeCandidate('export function double(n) { return n * 2; }');
-			await gradeProjectDir(parseLeetCode(artifactWithMultiLangLibs()), runDir, { installRun: countingRun });
+			const parsed = parseLeetCode(artifactWithMultiLangLibs());
+			await gradeProjectDir(parsed, runDir, { installRun: countingRun });
 
-			// §B.1 rule 1: the union is over every `parsed.libs[lang]`, so a
-			// language outside the render set cannot silently install nothing.
-			// Rule 2 too: no render check is declared, so the set stays unwidened.
+			// `installLibs` is npm-only, so `libs.python: [requests@^2.0.0]` must
+			// NOT join the install set — npm would serve the unrelated package of
+			// that name and the allowlist cannot tell them apart. The author is
+			// told instead, at parse time.
 			assert.strictEqual(calls.length, 1);
 			assert.strictEqual(
 				calls[0].cwd,
-				libCacheDir(['lodash@^4.17.21', 'requests@^2.0.0']),
-				"the cache key must cover every language's libs, not only javascript",
+				libCacheDir(['lodash@^4.17.21']),
+				'a non-npm language must not reach the npm install set',
 			);
+			assert.ok(
+				(parsed.warnings ?? []).some(w => w.includes("'python'") && w.includes('npm-only')),
+				`expected a warning naming python; got ${JSON.stringify(parsed.warnings ?? [])}`,
+			);
+		});
+
+		test('the install set still spans every npm-servable language, not just the render ones', () => {
+			// §B.1 rule 1's real intent: scoping the union to the render-capable
+			// set was the bug that made a render check install a superset under a
+			// second cache key. `javascriptreact` is display-only, but npm serves
+			// its packages, so its libs must still be installed.
+			const parsed = parseLeetCode(artifactWithLibs().replace(
+				'  javascript:\n    - lodash@^4.17.21',
+				'  javascriptreact:\n    - classnames@^2.5.1',
+			));
+			assert.deepStrictEqual(parsed.libs, { javascriptreact: ['classnames@^2.5.1'] });
+			assert.deepStrictEqual(parsed.warnings ?? [], [], 'npm serves jsx packages — no warning is due');
 		});
 
 		test('linkModules refuses a hijacked node_modules symlink and leaves its target untouched', async () => {

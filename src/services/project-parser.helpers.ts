@@ -1,7 +1,7 @@
 import type { FileRole, FileSpec, LibSpec, ProjectCheck, TestCase } from '../types/leetcode.types.js';
 import { safeJsonParse } from '../utils/safe-json.js';
 import { resolveLangId } from './language-map.service.js';
-import { validateLibNames } from './lib-spec.helpers.js';
+import { isNpmServableLanguage, validateLibNames } from './lib-spec.helpers.js';
 import { sectionBounds } from './leetcode-section-bounds.helpers.js';
 import { CASE_SECTIONS, extractCaseFences } from './leetcode-sections.helpers.js';
 
@@ -172,6 +172,14 @@ function parseLibs(lines: string[], warn: (m: string) => void): LibSpec {
 	for (const [key, values] of readListMap(lines, start)) {
 		const language = resolveLangId(key);
 		if (!isSafeKey(language)) { continue; }
+
+		// Reported, not dropped: the entries stay on the parsed artifact so a
+		// future non-npm installer can use them, but the author is told now
+		// rather than discovering that npm served a same-named package from the
+		// wrong registry.
+		if (!isNpmServableLanguage(language)) {
+			warn(`libs: '${language}' is not installable — the library installer is npm-only, so these are skipped`);
+		}
 
 		const check = validateLibNames(values);
 		if (!check.ok) {
