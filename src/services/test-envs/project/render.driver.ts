@@ -152,6 +152,26 @@ function required(root, selector) {
 	return node;
 }
 
+// A \`change\` step writes through the prototype \`value\` setter, which ignores
+// both \`readOnly\` and \`disabled\` — so a field no user could type into would
+// register a state change and grade **green**. That is the one unfaithful path,
+// and it is refused here.
+//
+// A \`click\` deliberately gets NO such guard. A disabled target is already inert
+// for the driver exactly as it is for a real user: React never fires the
+// handler, so the case observes the no-op it should. Refusing the step instead
+// fails a solver who correctly disables a completed control — an occupied
+// tic-tac-toe square, a submitted button — which is idiomatic, and which several
+// suites script clicks against precisely to assert the no-op.
+function writable(root, selector) {
+	const node = required(root, selector);
+	const why = node.disabled ? 'disabled' : (node.readOnly ? 'readOnly' : null);
+	if (why) {
+		throw new Error(JSON.stringify(selector) + ' is ' + why + ' — a user could not type into it');
+	}
+	return node;
+}
+
 function perform(root, step, win, act) {
 	switch (step.op) {
 		case 'click':
@@ -159,7 +179,7 @@ function perform(root, step, win, act) {
 				new win.MouseEvent('click', { bubbles: true, cancelable: true })));
 			return undefined;
 		case 'change': {
-			const node = required(root, step.selector);
+			const node = writable(root, step.selector);
 			act(() => {
 				const setter = Object.getOwnPropertyDescriptor(node.constructor.prototype, 'value');
 				if (setter && setter.set) { setter.set.call(node, step.value); } else { node.value = step.value; }

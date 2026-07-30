@@ -2,7 +2,7 @@ import * as assert from 'node:assert';
 import { compareExpecteds, verifyExercise } from '../src/services/exercise-verify.helpers.js';
 
 /**
- * Unit tests for the pure CoderByte-migration verification harness
+ * Unit tests for the pure artifact verification harness
  * (`verifyExercise` / `compareExpecteds`). Every fixture here is an inline
  * `.md` string built by `buildMd` — no `test/fixtures/` directory, per repo
  * convention.
@@ -199,6 +199,72 @@ suite('exercise-verify', () => {
             assert.strictEqual(result.ok, false);
             assert.ok(!result.ok && /need >= 1 public tests/.test(result.reason), JSON.stringify(result));
         });
+
+        test('a reserved type declares no params or returns — it has no candidate function', async () => {
+            // `service` is check-graded like `project`: a file tree and a list of
+            // checks, no single function. Measuring it against the function floor
+            // reported `structural: missing params`, which named the wrong thing.
+            const result = await verifyExercise(buildMd({
+                testType: 'service',
+                params: [],
+                returns: '',
+                tests: DEFAULT_TESTS.slice(0, 2),
+                finalTests: [],
+                solutionCode: null,
+                setupCode: null,
+            }));
+            assert.strictEqual(result.ok, true, JSON.stringify(result));
+        });
+
+        test('a reserved type is not held to the examples-pinned rule', async () => {
+            // `## Examples` for a check-graded type are illustrative (an HTTP
+            // request/response sample), not function input/output pairs, so there
+            // is nothing in `## Tests` for them to mirror.
+            const result = await verifyExercise(buildMd({
+                testType: 'service',
+                params: [],
+                returns: '',
+                examples: [
+                    { input: 'GET /orders', output: '200 [{"id":1}]' },
+                    { input: 'POST /orders', output: '201' },
+                ],
+                tests: DEFAULT_TESTS.slice(0, 2),
+                finalTests: [],
+                solutionCode: null,
+                setupCode: null,
+            }));
+            assert.strictEqual(result.ok, true, JSON.stringify(result));
+        });
+
+        test('a runnable type is still held to the examples-pinned rule', async () => {
+            // The relaxation must not leak into the function path — this is the
+            // mutation that would otherwise go unnoticed.
+            const result = await verifyExercise(buildMd({
+                examples: [
+                    { input: 'a = 1, b = 2', output: '3' },
+                    { input: 'a = 99, b = 99', output: '198' },
+                ],
+            }));
+            assert.strictEqual(result.ok, false);
+            assert.ok(!result.ok && /pin: example\[1\]/.test(result.reason), JSON.stringify(result));
+        });
+
+        test('a reserved type that does declare params still has its input keys checked', async () => {
+            // The relaxation is about *absence*, not a licence to drift: a reserved
+            // type carrying params is still held to them.
+            const result = await verifyExercise(buildMd({
+                testType: 'class',
+                tests: [{ input: { wrong: 1 }, expected: 2 }],
+                finalTests: [],
+                solutionCode: null,
+                setupCode: null,
+            }));
+            assert.strictEqual(result.ok, false);
+            assert.ok(
+                !result.ok && /input keys do not match params/.test(result.reason),
+                JSON.stringify(result),
+            );
+        });
     });
 
     // ── Rule 5: ## Examples ⊆ ## Tests pin ────────────────────────────────────
@@ -228,9 +294,9 @@ suite('exercise-verify', () => {
     // ── path prefixing ────────────────────────────────────────────────────────
 
     test('a supplied path is prefixed onto the failure reason', async () => {
-        const result = await verifyExercise(buildMd({ title: '' }), 'CoderByte/Strings/Bad.md');
+        const result = await verifyExercise(buildMd({ title: '' }), 'Strings/Bad.md');
         assert.strictEqual(result.ok, false);
-        assert.ok(!result.ok && result.reason.startsWith('CoderByte/Strings/Bad.md: '), JSON.stringify(result));
+        assert.ok(!result.ok && result.reason.startsWith('Strings/Bad.md: '), JSON.stringify(result));
     });
 
     // ── compareExpecteds ──────────────────────────────────────────────────────
@@ -264,6 +330,8 @@ suite('exercise-verify', () => {
             files?: string;
             checks?: string;
             tests?: string;
+            /** `''` omits `# Solutions` entirely — the pre-solved condition. */
+            solutions?: string;
         }
 
         const EXIT_OK = '["' + process.execPath.replace(/\\/g, '\\\\') + '", "-e", "process.exit(0)"]';
@@ -275,6 +343,9 @@ suite('exercise-verify', () => {
                 files = '```javascript path=src/App.jsx role=editable\nexport default function App() { return null; }\n```',
                 checks = `    - name: app builds\n      kind: build\n      argv: ${EXIT_OK}`,
                 tests = '',
+                // A real exercise ships a starter plus a reference overlay; green
+                // with no overlay means the starter passed, which is pre-solved.
+                solutions = '# Solutions\n\n```javascript path=src/App.jsx\nexport default function App() { return null; }\n```\n',
             } = opts;
 
             return [
@@ -295,6 +366,7 @@ suite('exercise-verify', () => {
                 '',
                 files,
                 '',
+                solutions,
             ].join('\n');
         }
 
@@ -361,30 +433,42 @@ suite('exercise-verify', () => {
         test('# Solutions overlays the starter, so an exercise ships unsolved and still verifies', async () => {
             // The starter exits 1; only the overlay's file makes the check pass, so a
             // green result proves the overlay was applied rather than the starter graded.
-            const md = [
-                buildProjectMd({
-                    files: '```javascript path=probe.js role=editable\nprocess.exit(1);\n```',
-                    checks: `    - name: probe\n      kind: build\n      argv: ["${process.execPath.replace(/\\/g, '\\\\')}", "probe.js"]`,
-                }),
-                '# Solutions',
-                '',
-                '```javascript path=probe.js',
-                'process.exit(0);',
-                '```',
-                '',
-            ].join('\n');
+            const md = buildProjectMd({
+                files: '```javascript path=probe.js role=editable\nprocess.exit(1);\n```',
+                checks: `    - name: probe\n      kind: build\n      argv: ["${process.execPath.replace(/\\/g, '\\\\')}", "probe.js"]`,
+                solutions: '# Solutions\n\n```javascript path=probe.js\nprocess.exit(0);\n```\n',
+            });
 
             const result = await verifyExercise(md);
             assert.strictEqual(result.ok, true, !result.ok ? result.reason : '');
+        });
+
+        test('a project verifying green with no # Solutions overlay ships pre-solved', async () => {
+            // Green *and* no overlay means the harness graded the starter, so the
+            // starter passes — the solver presses Solve It, Submit, and is marked
+            // solved having written nothing. `react-counter.md` shipped this way.
+            const result = await verifyExercise(buildProjectMd({ solutions: '' }));
+            assert.strictEqual(result.ok, false, JSON.stringify(result));
+            assert.ok(
+                !result.ok && /pre-solved/.test(result.reason),
+                `reason must name the pre-solved condition: ${JSON.stringify(result)}`,
+            );
         });
 
         test('without an overlay the starter itself is graded', async () => {
             const result = await verifyExercise(buildProjectMd({
                 files: '```javascript path=probe.js role=editable\nprocess.exit(1);\n```',
                 checks: `    - name: probe\n      kind: build\n      argv: ["${process.execPath.replace(/\\/g, '\\\\')}", "probe.js"]`,
+                solutions: '',
             }));
 
             assert.strictEqual(result.ok, false);
+            // It must fail because the *check* went red on the starter, not because
+            // the pre-solved rule fired — otherwise this stops testing the fallback.
+            assert.ok(
+                !result.ok && result.reason.includes("check 'probe' failed"),
+                `must fail on the graded starter, not the overlay rule: ${JSON.stringify(result)}`,
+            );
         });
 
         test('a traversal path in ## Files fails every check, and writes nothing', async () => {

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// CoderByte-migration verification CLI (plan §D, T0.2).
+// Artifact verification CLI — the uniform harness over one vault `.md`.
 //
 // Two modes over one migrated `.md`:
 //   node scripts/verify-exercise.mjs "<file.md>"
@@ -8,6 +8,12 @@
 //       → §D.7 cross-check: diff the artifact's stored expecteds against an
 //         independently recomputed positional array ([...## Tests, ...## Final Tests]
 //         order); exit 0 if they agree, non-zero listing each mismatch.
+//   node scripts/verify-exercise.mjs "<file.md>" --starter-red
+//       → `project`/`service` only: grade `## Files` WITHOUT the `# Solutions`
+//         overlays and require at least one red check. Exit 0 = correctly red,
+//         1 = the exercise ships pre-solved. `verifyExercise` already refuses a
+//         project that is green with *no* overlay at all; this catches the
+//         residual case — overlays exist, but the starter passes anyway.
 //
 // It imports the COMPILED, vscode-free harness from `dist/` and therefore asserts
 // the build exists FIRST — unlike the gate, this CLI has no `rm -rf dist && pnpm
@@ -39,18 +45,24 @@ if (!existsSync(distHelper)) {
 
 const { verifyExercise, compareExpecteds } = await import(pathToFileURL(distHelper).href);
 const { parseLeetCode } = await import(pathToFileURL(join(dist, 'leetcode-parser.service.js')).href);
+const { languagesForType } = await import(
+	pathToFileURL(join(dist, 'test-envs', 'env.registry.js')).href);
 
 // ── argv ──────────────────────────────────────────────────────────────────────
 const args = process.argv.slice(2);
 let mdPath = null;
 let expectedsPath = null;
+let starterRed = false;
 for (let i = 0; i < args.length; i++) {
 	const a = args[i];
 	if (a === '--expecteds') { expectedsPath = args[++i]; }
+	else if (a === '--starter-red') { starterRed = true; }
 	else if (!a.startsWith('--')) { mdPath ??= a; }
 }
 
-if (!mdPath) { die('usage: verify-exercise <file.md> [--expecteds <recomputed.json>]', 2); }
+if (!mdPath) {
+	die('usage: verify-exercise <file.md> [--expecteds <recomputed.json>] [--starter-red]', 2);
+}
 if (!existsSync(mdPath)) { die(`verify-exercise: no such file: ${mdPath}`, 2); }
 
 const md = readFileSync(mdPath, 'utf-8');
@@ -80,10 +92,37 @@ if (expectedsPath) {
 	process.exit(1);
 }
 
+// ── Mode: starter must be red ────────────────────────────────────────────────
+if (starterRed) {
+	const parsed = parseLeetCode(md);
+	if (parsed.test.type !== 'project' && parsed.test.type !== 'service') {
+		die(`verify-exercise: --starter-red needs a project/service artifact, got '${parsed.test.type}'`, 2);
+	}
+	const { runProjectChecks } = await import(
+		pathToFileURL(join(dist, 'test-envs', 'project', 'project.runner.js')).href);
+
+	const outcomes = await runProjectChecks(parsed, { withSolutions: false });
+	const red = outcomes.filter(o => !o.passed);
+	if (red.length > 0) {
+		console.log(`RED  ${mdPath} — starter fails ${red.length}/${outcomes.length} check(s), as it must`);
+		for (const o of red) { console.log(`  ${o.name}: ${o.detail ?? '(no detail)'}`); }
+		process.exit(0);
+	}
+	die(`PRE-SOLVED ${mdPath}: every check passes against the starter — a solver `
+		+ 'would be marked solved without writing anything', 1);
+}
+
 // ── Mode: full harness verify ────────────────────────────────────────────────
 const result = await verifyExercise(md, mdPath);
 if (result.ok) {
-	console.log(`OK   ${mdPath}`);
+	// `ok` for a reserved `test.type` means well-formed, NOT executed — no env is
+	// registered for it, so no check and no solution was ever run. Printing a bare
+	// `OK` there reads as "verified green" and over-claims.
+	const type = parseLeetCode(md).test.type;
+	const note = languagesForType(type).length === 0
+		? ` (structure only — reserved test.type '${type}', nothing executed)`
+		: '';
+	console.log(`OK   ${mdPath}${note}`);
 	process.exit(0);
 }
 die(`FAIL ${result.reason}`, 1);

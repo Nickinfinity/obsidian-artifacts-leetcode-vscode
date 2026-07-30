@@ -398,5 +398,62 @@ suite('leetcodePreview.controls', () => {
             assert.ok(!html.includes('987654'));
             assert.ok(!html.includes('sekrit'));
         });
+
+        // ── project: the suite is `checks:`, not `## Tests` ────────────────────
+        // The function-suite reading told a build-only exercise it had `0 tests`
+        // and hid the second check gating a solver's Submit entirely.
+
+        test('a build-only project names its check instead of reading "0 tests"', () => {
+            const html = renderTestCounts(fixture({
+                tests: [], finalTests: [],
+                checks: [{ name: 'type-checks', kind: 'build', argv: ['tsc'], cases: [], publicCount: 0 }],
+            }));
+            assert.ok(!/0 tests/.test(html), `must not claim zero tests: ${html}`);
+            assert.ok(html.includes('type-checks'), html);
+            assert.ok(html.includes('build'), html);
+        });
+
+        test('every check is listed, so none gating Submit is invisible', () => {
+            const html = renderTestCounts(fixture({
+                tests: twoCases, finalTests: [twoCases[0]],
+                checks: [
+                    {
+                        name: 'catalogue filter', kind: 'function',
+                        file: 'src/lib/catalogue.ts', function: 'filterInStock',
+                        cases: [...twoCases, twoCases[0]], publicCount: 2,
+                    },
+                    { name: 'app builds', kind: 'build', argv: ['tsc'], cases: [], publicCount: 0 },
+                ],
+            }));
+            assert.ok(html.includes('catalogue filter'), html);
+            assert.ok(html.includes('app builds'), html);
+            assert.ok(/2 public/.test(html), html);
+            assert.ok(/1 hidden/.test(html), html);
+        });
+
+        test('a check name is escaped — it is artifact-controlled', () => {
+            const html = renderTestCounts(fixture({
+                tests: [], finalTests: [],
+                checks: [{
+                    name: '<img src=x onerror=alert(1)>', kind: 'build',
+                    argv: ['true'], cases: [], publicCount: 0,
+                }],
+            }));
+            assert.ok(!html.includes('<img'), `check name must be escaped: ${html}`);
+            assert.ok(html.includes('&lt;img'), html);
+        });
+
+        test('a project check never reveals a hidden case value', () => {
+            const html = renderTestCounts(fixture({
+                tests: [], finalTests: [],
+                checks: [{
+                    name: 'counter', kind: 'dom-assert', file: 'src/App.jsx',
+                    cases: [{ input: { x: 1 }, expected: 'ok' }, { input: { x: 987654 }, expected: 'sekrit' }],
+                    publicCount: 1,
+                }],
+            }));
+            assert.ok(!html.includes('987654'), html);
+            assert.ok(!html.includes('sekrit'), html);
+        });
     });
 });

@@ -2,7 +2,7 @@ import { resolveLangId } from '../../services/language-map.service.js';
 import { hasFinalTests, publicCount } from '../../services/leetcode-suite.helpers.js';
 import { languagesForType } from '../../services/test-envs/env.registry.js';
 import { PRACTICE_OPTIONS } from '../../types/constants.js';
-import type { ChallengePhase, ParsedLeetCode } from '../../types/leetcode.types.js';
+import type { ChallengePhase, ParsedLeetCode, ProjectCheck } from '../../types/leetcode.types.js';
 import { escHtml } from '../../utils/html.helpers.js';
 
 /**
@@ -114,18 +114,65 @@ export function renderLanguageMarker(langId: string): string {
  * cases will grade them without learning what those cases are. An artifact
  * without a `## Final Tests` section reads simply `2 tests`.
  *
+ * A **project** is graded by `checks:`, not by `## Tests`, so it gets one line
+ * per check instead. Reading the function suite told a build-only exercise it
+ * had `0 tests`, and hid a second check that gated the solver's Submit.
+ *
  * @param p - Parsed LeetCode artifact.
- * @returns HTML for the counts line.
+ * @returns HTML for the counts line(s).
  *
  * @example
  * renderTestCounts(parsed); // → '<div class="tests-count">2 public tests · 3 final tests</div>'
+ * @example
+ * renderTestCounts(project); // → '…>app builds (build) · pass/fail on exit status</div>'
  */
 export function renderTestCounts(p: ParsedLeetCode): string {
+	const checks = p.checks ?? [];
+	if (checks.length > 0) {
+		return checks.map(renderCheckCount).join('');
+	}
+
 	const pub = publicCount(p);
 	if (!hasFinalTests(p)) {
 		return `<div class="tests-count">${pub} tests</div>`;
 	}
 	return `<div class="tests-count">${pub} public tests &middot; ${p.finalTests.length} final tests</div>`;
+}
+
+/**
+ * One count line for a single declared check: its name, kind, and how it grades.
+ *
+ * The name is artifact-authored free text, so it goes through `escHtml`; `kind`
+ * is a narrowed literal union and needs none.
+ *
+ * @param check - The declared check.
+ * @returns HTML for that check's line.
+ *
+ * @example
+ * renderCheckCount({ name: 'counter', kind: 'dom-assert', cases: c, publicCount: 3, file: 'a.jsx' });
+ * // → '<div class="tests-count">counter (dom-assert) · 3 public · 1 hidden</div>'
+ */
+function renderCheckCount(check: ProjectCheck): string {
+	const label = `${escHtml(check.name)} (${check.kind})`;
+	return `<div class="tests-count">${label} &middot; ${gradedBy(check)}</div>`;
+}
+
+/**
+ * How a check decides pass or fail: a public/hidden case split, or an exit
+ * status for `build`, which binds no cases at all.
+ *
+ * @param check - The declared check.
+ * @returns Human-readable grading summary; never a case value.
+ *
+ * @example
+ * gradedBy({ kind: 'build', … }); // → 'pass/fail on exit status'
+ */
+function gradedBy(check: ProjectCheck): string {
+	if (check.kind === 'build') { return 'pass/fail on exit status'; }
+
+	const hidden = check.cases.length - check.publicCount;
+	const shown = `${check.publicCount} public`;
+	return hidden > 0 ? `${shown} &middot; ${hidden} hidden` : shown;
 }
 
 /**

@@ -394,14 +394,13 @@ Submit is preserved everywhere except those three writer-owned spots.
 
 > **Status, precisely.** `project` is **parsed** — `## Files`, `libs:`, `checks:` and the
 > `check=<name>` case binding all land on the parsed artifact, and `project` is
-> `implemented` in `TEST_TYPES`, registered for `javascript` + `typescript`. It is **not yet
-> runnable**: the environment refuses every candidate with one sentence until the render
-> driver and check kinds ship. `service` remains reserved — its fields below parse (it shares
-> the `project` grammar) and nothing executes them.
-> Reference artifacts live under
-> [`examples/leetcode/project/`](examples/leetcode/project/) and
-> [`examples/leetcode/service/`](examples/leetcode/service/); the gaps found while
-> writing them are in `docs/plans/rust-multilang/spike-findings.md` (branch-local).
+> `implemented` in `TEST_TYPES`, registered for `javascript` + `typescript`, and **runnable**:
+> the render driver and all three check kinds (`dom-assert`, `css-assert`, `build`) ship, and a
+> `project` artifact grades end to end. `service` remains reserved — its fields below parse (it
+> shares the `project` grammar) and nothing executes them, because no `service` environment is
+> registered.
+> Reference artifacts live in the **Obsidian vault**, not in this repo — see CLAUDE.md,
+> *Artifacts live in the vault*.
 
 - **`project`** — the exercise is a file *tree*, opened as several editor tabs and graded
   by declared **checks** rather than one return value.

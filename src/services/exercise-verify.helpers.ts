@@ -39,9 +39,9 @@ export interface ExpectedMismatch {
  * runnable `test.type`, that every language carrying both a `# Setup` and a
  * `# Solutions` entry passes its full (public + final) suite.
  *
- * This is the uniform harness described in the CoderByte migration plan §D: it
- * does not judge whether the exercise's algorithm is *interesting* — only that
- * the file is well-formed and its own reference solution(s) actually run green.
+ * This is the uniform harness: it does not judge whether the exercise's
+ * algorithm is *interesting* — only that the file is well-formed and its own
+ * reference solution(s) actually run green.
  * Checks run in order and the first failure is reported (never accumulated),
  * matching the rule numbering in §D:
  *
@@ -52,8 +52,12 @@ export interface ExpectedMismatch {
  *    declared `params` names.
  * 3. Runnable languages green — every language present in both `# Setup` and
  *    `# Solutions` passes `runSuite` against public + final.
- * 4. Reserved `test.type` (`languagesForType` empty) — the run step (3) is
- *    skipped and the public-test floor relaxes to `MIN_RESERVED_TESTS`.
+ * 4. Reserved `test.type` (`languagesForType` empty) — it has no candidate
+ *    function, so the public-test floor relaxes to `MIN_RESERVED_TESTS` and
+ *    everything that measures a function is skipped: the run step (3), the
+ *    `params`/`returns` presence floors, and the ground-truth pin (5). `ok` for
+ *    a reserved type therefore means **well-formed**, never **executed** —
+ *    `service` is check-graded and has no env, so nothing about it is run.
  * 5. Ground-truth pin — every `## Examples` pair must also appear as a public
  *    `## Tests` case (set-equal input keys, equal `expected`).
  *
@@ -63,7 +67,7 @@ export interface ExpectedMismatch {
  * @returns `{ ok: true }`, or `{ ok: false, reason }` naming the first broken rule.
  *
  * @example
- * await verifyExercise(fs.readFileSync('CoderByte/Strings/AB Check.md', 'utf-8'));
+ * await verifyExercise(fs.readFileSync(vaultPath, 'utf-8'));
  * // → { ok: true }
  */
 export async function verifyExercise(md: string, path?: string): Promise<VerifyResult> {
@@ -88,13 +92,17 @@ export async function verifyExercise(md: string, path?: string): Promise<VerifyR
 	const structuralReason = checkStructure(parsed, reserved);
 	if (structuralReason) { return fail(structuralReason); }
 
+	// Rules 3 and 5 both assume `## Examples` and `## Tests` describe one
+	// function's input and output. A reserved type has no such function — its
+	// examples are illustrative (an HTTP request/response sample) — so both are
+	// skipped and `ok` means *well-formed*, never *executed*.
 	if (!reserved) {
 		const runReason = await checkSolutionsGreen(parsed);
 		if (runReason) { return fail(runReason); }
-	}
 
-	const pinReason = checkExamplesPinned(parsed);
-	if (pinReason) { return fail(pinReason); }
+		const pinReason = checkExamplesPinned(parsed);
+		if (pinReason) { return fail(pinReason); }
+	}
 
 	return { ok: true };
 }
@@ -154,6 +162,15 @@ async function verifyProjectExercise(parsed: ParsedLeetCode): Promise<string | n
 	if (failed) {
 		return `project: check '${failed.name}' failed${failed.detail ? `: ${failed.detail}` : ''}`;
 	}
+
+	// Green with no overlay means `withSolutions` had nothing to apply, so what
+	// just passed *is* the starter — the solver presses Solve It, Submit, and is
+	// marked solved having written nothing. No second grading run is needed to
+	// know this: green ∧ no overlay ⟺ the starter passes.
+	if (!parsed.solutionFiles?.length) {
+		return 'project: ships pre-solved — every check passes against `## Files` itself; '
+			+ 'add `# Solutions` fences carrying `path=` so the starter is graded unsolved';
+	}
 	return null;
 }
 
@@ -197,9 +214,16 @@ function checkStructure(parsed: ParsedLeetCode, reserved: boolean): string | nul
 	if (!reserved && parsed.finalTests.length < MIN_FINAL_TESTS) {
 		return `structural: need >= ${MIN_FINAL_TESTS} final tests, got ${parsed.finalTests.length}`;
 	}
-	if (parsed.params.length === 0) { return 'structural: missing params'; }
-	if (!parsed.returns) { return 'structural: missing returns'; }
+	// A reserved type has no candidate function, so `params` / `returns` are not
+	// the shape it is measured by — `service` is check-graded like `project` and
+	// used to fail with the misleading `structural: missing params`.
+	if (!reserved && parsed.params.length === 0) { return 'structural: missing params'; }
+	if (!reserved && !parsed.returns) { return 'structural: missing returns'; }
 
+	// Matching input keys against an empty param set is not a check, it is a
+	// guaranteed failure; a runnable type always has params by the rule above,
+	// so this guard changes nothing there.
+	if (parsed.params.length === 0) { return null; }
 	return checkInputKeysMatchParams(parsed);
 }
 

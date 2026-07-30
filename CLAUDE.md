@@ -27,11 +27,34 @@ pnpm compile && pnpm lint && \
 `rm -rf dist` first or stale compiled tests keep running and inflate the pass count.
 Press **F5** for the Extension Development Host — the only check for `vscode`-coupled code.
 
+### ⚠️ Artifacts live in the vault, never in this repo
+
+**Never create or keep `.md` exercise artifacts inside this repository.** There is no
+`examples/` folder and none may be reintroduced — it was deleted precisely because a second
+home for artifacts drifts from the vault that actually runs them, and because a repo copy
+invites a test to guard the copy instead of the real thing.
+
+- Artifacts belong in the **Obsidian vault**, under the exercises directory the picker
+  resolves (`LeetCode/` by default, the vault root when `useVaultRoot` is on).
+- Need an artifact to validate or reproduce something? Create it in the vault under
+  **`Tests/`** — e.g. `<vault>/Tests/project/react-counter.md`. That folder is the home for
+  smoke and regression artifacts, including the `project` smoke artifact used for the F5 pass.
+- Tests in `test/` use **inline fixtures** (`CLAUDE.md`, *Code Style*). A test must never walk
+  a vault directory or depend on a machine-local absolute path — it would pass or fail
+  depending on whose checkout ran it. To sweep real artifacts, loop the CLI instead:
+  ```bash
+  find "$VAULT/Tests" -name '*.md' -exec node scripts/verify-exercise.mjs {} \;
+  ```
+  `verifyExercise` already enforces everything a parse-only guard could (missing title,
+  missing `function:`, the case floors, `params`/`returns`) and more.
+- Scratch files for a debugging session go in the session scratchpad, not the repo.
+
 ### Artifact harnesses (grade the `.md`, not the code)
 
 ```bash
 node scripts/verify-exercise.mjs "<file.md>"                      # conformance + own solutions green
 node scripts/verify-exercise.mjs "<file.md>" --expecteds <r.json> # diff stored vs recomputed expecteds
+node scripts/verify-exercise.mjs "<file.md>" --starter-red        # project/service: starter must FAIL
 node scripts/grade-candidate.mjs "<file.md>" <lang> <candidate>   # grade an EXTERNAL candidate
 ```
 
@@ -234,7 +257,13 @@ Orientation: a `type: leetcode` note carries frontmatter (`function`/`functions`
   teardown (panel dispose, successful Submit, `End LeetCode Challenge`, `deactivate()`).
 - A **reserved** `test.type` parses and validates, but no env is registered, so
   `languagesForType()` returns `[]` and the panel explains itself instead of crashing inside
-  a compiler.
+  a compiler. In `verifyExercise` a reserved type has **no candidate function**, so
+  *everything that measures one* is skipped: the run step, the `params`/`returns` presence
+  floors, the input-key match, and the `## Examples ⊆ ## Tests` pin. `ok` there means
+  **well-formed**, never **executed** — and `verify-exercise.mjs` says so out loud
+  (`structure only — reserved test.type 'service', nothing executed`) rather than printing a
+  bare `OK`. `service` is check-graded like `project` but has no env, and measuring it against
+  the function floor reported the misleading `structural: missing params`.
 
 ### Language registry — the one authority
 
@@ -355,6 +384,19 @@ Rules that are load-bearing, not stylistic:
   every hook throws `Invalid hook call`.
 - **`css-assert` refuses layout geometry.** jsdom computes no layout, so `width`/`height`/
   `margin`/… are rejected at validation rather than answered from whatever is declared inline.
+- **A `change` step refuses a field a user could not type into — and a `click` never does.**
+  The asymmetry is load-bearing, not an oversight. `change` writes through the prototype
+  `value` setter, which ignores both `readOnly` and `disabled`, so a frozen form registered a
+  state change and graded **green**; that path is refused by name. A `click` on a disabled
+  target is *already* inert for the driver exactly as for a real user (React never fires the
+  handler), so the observed no-op is faithful and the step is left alone. Guarding it too —
+  tried once, for a nicer message — **broke `disabled={alreadyTaken}`**, which is idiomatic and
+  which suites deliberately click against to assert the no-op. Pinned in both directions by the
+  opt-in E2E test.
+- **Visibility is still ungradeable, and that is a ceiling not a bug.** With no layout there is
+  no `display`/`visibility`/occlusion answer: a component rendering every element under
+  `display: none` passes its `dom-assert` suite. `css-assert` can pin the *declared* property,
+  but "the solver's UI is actually visible" is outside what any check here can assert.
 - **A case with no sentinel line fails.** A killed driver must never read as an empty, and
   therefore green, suite.
 - **Zero runtime dependencies still holds.** esbuild/jsdom install into the shared cache at
@@ -429,11 +471,23 @@ tree has none, so the field is omitted rather than fabricated.
 **`## Files` is the starter; `# Solutions` fences carrying the same `path=` are the
 reference overlay.** The harness grades the overlaid tree (`runProjectChecks(parsed,
 { withSolutions: true })`), a solver's run grades the starter — which is what lets an
-exercise ship unsolved and still verify green. An exercise whose *starter* passes is a bug:
-grade it without overlays and confirm it goes red.
+exercise ship unsolved and still verify green. An exercise whose *starter* passes is a bug,
+and it is **enforced, not remembered**:
 
-`examples/leetcode/project/javascript/react-counter.md` is the smoke artifact: the smallest
-`project` that grades green through `verify-exercise.mjs`, and the file to open for an F5 pass.
+- `verifyExercise` refuses a project that grades green while declaring **no** overlay at all.
+  No second grading run is needed to know it — green ∧ no overlay ⟺ `withSolutions` had
+  nothing to apply ⟺ what passed *is* the starter. `react-counter.md` shipped that way, so
+  *Solve It* → *Submit* marked a run solved with nothing written.
+- `--starter-red` catches the residual case the rule above cannot: overlays exist, but the
+  starter passes anyway. Opt-in, because it costs a second full grading run.
+- **A fence without `path=` is not an overlay.** It parses into `solutionFiles` as nothing at
+  all — the failure mode is silent, and it has now bitten three artifacts (the Next.js spike,
+  and both `service` spikes, where the fences are deliberately fragments and say so).
+
+`<vault>/Tests/project/react-counter.md` is the smoke artifact: the smallest `project` that
+grades green through `verify-exercise.mjs`, and the file to open for an F5 pass. It ships
+**unsolved** like every other exercise — a stub in `## Files`, the working component in a
+`path=`-carrying `# Solutions` fence.
 
 **Rust has no serde.** Results serialise through a local `LeetJson` trait (compact, key-sorted
 JSON — `i32`/`f64`/`bool`/`String`/`Vec<T>`/`Option<T>`/`HashMap<String, T>`), not `{:?}` Debug:
@@ -525,6 +579,15 @@ screen: nav header, title, difficulty/status/algorithm badges, description, exam
 test-count line, `# Setup` starter blocks, reference solutions collapsed behind a `<details>`
 (spoilers), state-gated controls, and the `<div id="results">` sink.
 
+**The test-count line follows what actually grades the artifact.** `renderTestCounts` reads
+`## Tests`/`## Final Tests` for a function exercise (`2 public tests · 3 final tests`), but a
+`project` is graded by `checks:`, so it gets one line per check —
+`app builds (build) · pass/fail on exit status`, `catalogue filter (function) · 2 public · 3
+hidden`. Reading the function suite for a project told a build-only exercise it had **`0
+tests`** and made the Next.js spike's second check invisible, so a solver could not see
+everything gating their Submit. Check **names are artifact-authored** and go through `escHtml`;
+case values never render, public or hidden.
+
 The **description is Markdown** and renders through `renderMarkdownLite`
 ([utils/markdown-lite.ts](src/utils/markdown-lite.ts)) — paragraphs, headings, lists,
 blockquotes, inline code, bold/italic, `http(s)` links, and nothing else. It is a *whitelist*
@@ -609,6 +672,13 @@ every setup/solution block whose `data-language` ≠ the selection; `data-langua
   `safeJsonParse`, `canonicalJson`, `escHtml`, `renderMarkdownLite`, `getNonce`,
   `splitMs`/`formatClock`/`formatDuration`, plus `sectionBounds` (shared by the section *reader* and the attempts
   *writer*, which used to mirror each other and drift).
+  **`sectionBounds` is fence-aware, and that is load-bearing.** A boundary heading inside a
+  ``` fence does not end the section: a column-zero `#` is a *comment* in Python, shell, YAML
+  and Dockerfile, and a heading only in a Markdown fence. Matching it truncated the section
+  silently — a `# Solutions` whose Python fence opened with a comment parsed to **zero**
+  solutions, dropping every other language with it, and `fastapi-react.md` lost its entire
+  `## Files` tree the same way. An unterminated fence runs to end of text rather than
+  resuming boundary matching inside it.
 - **KISS / YAGNI** — the simplest thing that works. No interface with one implementation, no
   factory for one product, no config for a value that never changes. Don't extract a one-line
   predicate into its own module because a plan said so; extract when a second caller or a

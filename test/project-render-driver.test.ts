@@ -135,4 +135,74 @@ suite('project render driver', () => {
 
 		fs.rmSync(runDir, { recursive: true, force: true });
 	});
+
+	test('a change step refuses a field a user could not type into, but a disabled click stays a no-op [LEET_PROJECT_E2E=1]', async function () {
+		if (process.env.LEET_PROJECT_E2E !== '1') { this.skip(); }
+		this.timeout(600_000);
+
+		// Two halves of one rule, and they must not be conflated:
+		//   • `change` writes through the prototype setter, bypassing `readOnly`
+		//     and `disabled` — a frozen form graded green, so the step is refused.
+		//   • `click` on a disabled target is ALREADY inert, exactly as for a real
+		//     user. Refusing it broke the legitimate `disabled={taken}` solution
+		//     that suites script clicks against to assert the no-op.
+		const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'render-e2e-frozen-'));
+		const libs = [...HARNESS_LIBS, 'react@^19.0.0', 'react-dom@^19.0.0'];
+		const installed = await installLibs(libs);
+		assert.ok(installed.ok, !installed.ok ? installed.reason : '');
+
+		fs.mkdirSync(path.join(runDir, 'src'));
+		fs.writeFileSync(path.join(runDir, 'src/App.jsx'), [
+			"import { useState } from 'react';",
+			'export default function App() {',
+			"  const [v, setV] = useState('');",
+			'  return (<div>',
+			'    <input id="open" value={v} onChange={e => setV(e.target.value)} />',
+			'    <input id="frozen" readOnly value={v} onChange={e => setV(e.target.value)} />',
+			'    <input id="deadfield" disabled value={v} onChange={e => setV(e.target.value)} />',
+			`    <button id="dead" disabled onClick={() => setV('clicked')}>x</button>`,
+			'    <span id="out">{v}</span>',
+			'  </div>);',
+			'}',
+		].join('\n'));
+
+		fs.writeFileSync(path.join(runDir, RENDER_RUNNER), renderRunnerSource({
+			entry: 'src/App.jsx',
+			cacheDir: libCacheDir(libs),
+			cases: [
+				{ index: 0, steps: [
+					{ op: 'change', selector: '#open', value: 'hi' }, { op: 'text', selector: '#out' },
+				] },
+				{ index: 1, steps: [
+					{ op: 'change', selector: '#frozen', value: 'hi' }, { op: 'text', selector: '#out' },
+				] },
+				{ index: 2, steps: [
+					{ op: 'change', selector: '#deadfield', value: 'hi' }, { op: 'text', selector: '#out' },
+				] },
+				{ index: 3, steps: [
+					{ op: 'click', selector: '#dead' }, { op: 'text', selector: '#out' },
+				] },
+			],
+		}), 'utf-8');
+
+		const stdout = execFileSync(process.execPath, [RENDER_RUNNER], { cwd: runDir, encoding: 'utf-8' });
+		const lines = stdout.split('\n').filter(l => l.startsWith('__LEET__'))
+			.map(l => JSON.parse(l.slice('__LEET__'.length)));
+
+		assert.strictEqual(lines.length, 4, stdout);
+		assert.strictEqual(lines[0].actual, '"hi"', 'a writable input still takes a change step');
+		assert.ok(lines[1].error?.includes('readOnly'), `readOnly must fail the case: ${JSON.stringify(lines[1])}`);
+		assert.ok(lines[1].error?.includes('#frozen'), 'the refusal names the offending selector');
+		assert.ok(
+			lines[2].error?.includes('disabled'),
+			`a change step into a disabled field must fail: ${JSON.stringify(lines[2])}`,
+		);
+
+		// The regression guard: a click on a disabled control is a NO-OP, not an
+		// error. `disabled={alreadyTaken}` is idiomatic and must stay solvable.
+		assert.strictEqual(lines[3].error, undefined, `a disabled click must not error: ${JSON.stringify(lines[3])}`);
+		assert.strictEqual(lines[3].actual, '""', 'the disabled click changed nothing, exactly as for a real user');
+
+		fs.rmSync(runDir, { recursive: true, force: true });
+	});
 });
