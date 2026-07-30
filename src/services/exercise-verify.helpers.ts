@@ -2,6 +2,7 @@ import { canonicalJson } from '../utils/canonical-json.js';
 import { safeJsonParse } from '../utils/safe-json.js';
 import type { ParsedLeetCode, TestCase } from '../types/leetcode.types.js';
 import { buildExecutable } from './leetcode-candidate.helpers.js';
+import { legacyFrontmatterKeys, splitFrontmatter } from './leetcode-config-blocks.helpers.js';
 import { parseLeetCode } from './leetcode-parser.service.js';
 import { runSuite } from './leetcode-runner.service.js';
 import { submitSuite } from './leetcode-suite.helpers.js';
@@ -44,6 +45,12 @@ export interface ExpectedMismatch {
  * reference solution(s) actually run green.
  * Checks run in order and the first failure is reported, never accumulated:
  *
+ * 0. Legacy frontmatter config — a D2 body-set key (`function`, `params`,
+ *    `libs`, …) left in frontmatter. Runs before every other check, including
+ *    the `project` branch: `parseLeetCode` silently *ignores* such a key
+ *    rather than reading it, so a `service` artifact with a stripped `libs:`
+ *    would otherwise surface as a bare toolchain error (`Cannot find module
+ *    'react'`) instead of naming the real problem.
  * 1. Parses — non-empty `title`, and (for a runnable `test.type`) non-empty
  *    `functionName`.
  * 2. Structural shape — example/test/final-test count floors, `params`/
@@ -70,8 +77,15 @@ export interface ExpectedMismatch {
  * // → { ok: true }
  */
 export async function verifyExercise(md: string, path?: string): Promise<VerifyResult> {
-	const parsed = parseLeetCode(md);
 	const fail = (reason: string): VerifyFail => ({ ok: false, reason: path ? `${path}: ${reason}` : reason });
+
+	// Rule 0 first, before any type branching (including `project`): a legacy
+	// key is silently ignored by `parseLeetCode`, so nothing downstream ever
+	// observes it missing — this is the only rule that catches it.
+	const legacyReason = checkLegacyFrontmatter(md);
+	if (legacyReason) { return fail(legacyReason); }
+
+	const parsed = parseLeetCode(md);
 
 	// A `project` is graded by declared checks, not by one function's return
 	// value: it has no `params` / `returns` and no public/final case floors, so
@@ -128,6 +142,36 @@ export function compareExpecteds(artifactCases: TestCase[], recomputed: unknown[
 		}
 	});
 	return mismatches;
+}
+
+// ── Rule 0: legacy frontmatter config (D4's hard cut, enforced) ──────────────
+
+/**
+ * Rule 0 — a D2 body-set key (`function`, `functions`, `params`, `returns`,
+ * `test`, `practice`, `libs`, `checks`, `services`) declared in frontmatter
+ * instead of a ` ```yaml leetcode ` body fence.
+ *
+ * `parseLeetCode` strips these before parsing (D4 is a hard cut: ignored, not
+ * read-then-warned), so nothing else here can ever observe one missing — this
+ * is the only check that can fail an artifact for it. Uses `splitFrontmatter`
+ * + `legacyFrontmatterKeys` directly rather than `parsed.warnings`, because a
+ * free-form warning string is not a check a caller can rely on.
+ *
+ * @param md - Full `.md` artifact content (untrusted).
+ * @returns A message naming every offending key and where it belongs, or
+ *   `null` when frontmatter carries none.
+ *
+ * @example
+ * checkLegacyFrontmatter('---\nfunction: sum\n---\nBody');
+ * // → "legacy: 'function:' declared in frontmatter — move into a 'yaml leetcode' body fence"
+ */
+function checkLegacyFrontmatter(md: string): string | null {
+	const { fmRaw } = splitFrontmatter(md);
+	const keys = legacyFrontmatterKeys(fmRaw);
+	if (keys.length === 0) { return null; }
+
+	const named = keys.map(k => `'${k}:'`).join(', ');
+	return `legacy: ${named} declared in frontmatter — move into a 'yaml leetcode' body fence`;
 }
 
 // ── project: structural rules only (no function floor, nothing executed) ─────
