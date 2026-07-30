@@ -25,36 +25,45 @@ exactly this shape so `parse(write(x))` round-trips.
 
 ## 1. Canonical file structure
 
+**Frontmatter is summary only. Execution configuration lives in the body**, in
+` ```yaml leetcode ` fences placed next to what they configure (§2.5).
+
 ~~~md
 ---
 type: leetcode
 title: Two Sum
 difficulty: easy
-function: twoSum
 algorithm: hash-map
 status: unsolved
+tags: [leetcode, arrays, hash-map]
+---
+
+Problem description as Markdown prose.
+
+```yaml leetcode
+function: twoSum
 params:
   - name: nums
     type: int[]
   - name: target
     type: int
 returns: int[]
-practice:
-  timeLimit: 30
-  locked: false
-  options: [noCompletion, noAiAgents]
-test:
-  type: function
-  timeoutMs: 5000
-tags: [leetcode, arrays, hash-map]
----
-
-Problem description as Markdown prose.
+```
 
 ## Examples
 ```example
 input: nums = [2,7,11,15], target = 9
 output: [0,1]
+```
+
+```yaml leetcode
+test:
+  type: function
+  timeoutMs: 5000
+practice:
+  timeLimit: 30
+  locked: false
+  options: [noCompletion, noAiAgents]
 ```
 
 ## Tests
@@ -95,6 +104,17 @@ description → `## Examples` → `## Tests` → `## Final Tests` → `# Setup` 
 regex, not its position — a section may be absent, and the extension appends
 `# Attempts` after `# Solutions`.
 
+**Config-fence placement is convention only — the parser is
+order-independent** and reads every ` ```yaml leetcode ` fence wherever it
+sits. The placement above is what the migrator writes and what a reader
+expects; a hand-edited file that puts a fence elsewhere still parses
+identically. See §2.5.
+
+> The `practice:` block above is **illustrative, not a template**. A fence is
+> written only for a key the file actually declares — most artifacts carry no
+> `practice:` block at all, and an absent one stays absent rather than being
+> materialised at its defaults.
+
 ---
 
 ## 2. Frontmatter
@@ -105,24 +125,107 @@ YAML between the leading `---` fences. It **must** open the file:
 hyphens**). Unknown keys are silently ignored. Invalid `difficulty` / `status`
 values are dropped, leaving the default.
 
+**Frontmatter is summary only and carries no execution configuration.** It holds
+exactly what Obsidian's Properties UI and the exercise picker read — the six
+fields in §2.1 — and nothing else. Everything that governs how the exercise
+*runs* (`function`, `functions`, `params`, `returns`, `test`, `practice`, `libs`,
+`checks`, `services`) lives in body config fences (§2.5).
+
+The retained set is deliberately **exactly `LeetCodeSummary`**
+([`src/types/leetcode.types.ts`](src/types/leetcode.types.ts)) plus the `type`
+discriminator, which is what keeps `parseFrontmatterOnly` — the picker's
+one-read-per-directory-level fast path — reading frontmatter alone, and keeps
+`patchFrontmatterField(raw, 'status', …)` writing where it always did.
+
 ### 2.1 Field table
 
 | Field | Type | Required | Default | Notes |
 |---|---|---|---|---|
-| `type` | `'leetcode'` | yes | — | Discriminator. |
+| `type` | `'leetcode'` | yes | — | Discriminator. **Read by no code path in the parser** — `applyScalar` ignores it and `verifyExercise` never reads it. It exists for Obsidian, and for the migrator's refusal check (§2.5), which therefore does its own frontmatter test rather than asking the parser. |
 | `title` | string | yes | `''` | Single line. |
 | `difficulty` | `easy`\|`medium`\|`hard` | no | `easy` | Any other value → `easy`. |
-| `function` | string | yes¹ | `''` | Default/fallback function name to implement. Parsed onto `functionName`. ¹Required for `test.type: function`; a `project`/`service` artifact names its targets in `checks:` instead (§9). |
-| `functions` | map `<lang>: <name>` | no | — | Per-language override of `function`. Keys resolve through the language-alias table (`py:` → `python`). Read via `functionNameFor(parsed, langId)`, never `functionName` directly, for language-specific code. |
-| `algorithm` | string | no | — | Category tag (e.g. `hash-map`). |
 | `status` | `unsolved`\|`attempted`\|`solved` | no | `unsolved` | **Extension-owned** — auto-written by Submit. Any other value → `unsolved`. |
-| `params` | `{ name, type }[]` | yes | `[]` | Generic types (see §5). Input keys in `## Tests` must match these `name`s. |
-| `returns` | string | yes | `''` | Generic return type. |
-| `practice` | block | no | see §2.3 | Pre-selected practice restrictions + time limit. |
-| `test` | block | no | see §2.2 | Execution strategy + per-case timeout. |
+| `algorithm` | string | no | — | Category tag (e.g. `hash-map`). |
 | `tags` | string[] | no | `[]` | Inline `[a, b]` or a YAML `- a` list. |
 
-### 2.2 `test:` block
+Every other key is an execution-config key and belongs in a body fence — see
+§2.5 for the list and for what happens when one is left here.
+
+### 2.5 Config fences
+
+Execution configuration is written in the body, in fences whose info-string is
+`yaml` followed by the bare token `leetcode`:
+
+~~~md
+```yaml leetcode
+test:
+  type: function
+  timeoutMs: 5000
+```
+~~~
+
+**The marker.** `yaml` first, then a bare `leetcode` token. `yaml` first means
+Obsidian still syntax-highlights the block (the first info-string token wins).
+The `leetcode` token must be **bare**: a `## Files` entry always carries
+`path=` (`parseFiles` skips every fence without it), so
+` ```yaml leetcode path=src/x.yml ` is a *file*, not config, and never matches.
+A plain ` ```yaml ` fence in prose stays prose.
+
+**Content starts at column 0.** A config fence's body is concatenated with the
+frontmatter text and parsed by the same `KV_RE = /^(\w+):\s*(.*)$/`, which is
+column-0 anchored — so a top-level key must begin at column 0 exactly as it
+would in frontmatter. Sub-keys indent normally beneath it. A top-level line
+indented off column 0 is kept verbatim and **warned**, because it will not
+parse as a key.
+
+**The parser reads every config fence and calls `parseFrontmatter` once**, over
+`frontmatter text + '\n' + every fence body joined in document order`. One call
+means defaults are applied exactly once and there is no merge layer to
+disagree with itself.
+
+**Order-independence.** Placement is convention (§1, and the table below); the
+parser does not enforce it. A fence anywhere in the body is read.
+
+| Block | Canonical placement | Reason |
+|---|---|---|
+| `function` · `functions` · `params` · `returns` | after the description, before `## Examples` | the signature is what the description just described |
+| `test` · `practice` | immediately before `## Tests` | they govern the suites that follow |
+| `libs` · `services` | before `# Setup` (function) or before `## Files` (project/service) | declared next to the code they install for |
+| `checks` (nested under `test:`) | with the `test:` block, before `## Tests` | `## Tests` fences bind to checks by `check=` |
+
+**A config fence is written only for a key the file declares.** No `practice:`
+in the source means no `practice:` fence in the output — an absent block keeps
+its defaults, and materialising one at its defaults is a semantic no-op that
+only adds lines to read.
+
+#### Duplicate keys across fences — the precedence is asymmetric
+
+A top-level key repeated in two fences resolves **differently depending on the
+key**, and the asymmetry is stated here rather than papered over with a uniform
+rule the parser does not implement:
+
+| Keys | Winner | Why |
+|---|---|---|
+| `function`, `functions`, `params`, `returns`, `test`, `practice`, `tags` | **last** occurrence | `parseFrontmatter` walks every line and overwrites the accumulator on each match. |
+| `libs`, `checks`, `services` | **first** occurrence | `parseLibs` and `parseChecks` locate their block with `lines.findIndex(…)` and stop at the first hit. |
+
+Either way the extractor **warns**, naming the key and which occurrence won.
+Do not rely on the precedence: declare each key once.
+
+#### The hard cut — an execution-config key left in frontmatter
+
+There is **no dual read**. A key from the body set
+(`function`, `functions`, `params`, `returns`, `test`, `practice`, `libs`,
+`checks`, `services`) found in frontmatter is:
+
+1. **ignored** — the parser does not read it;
+2. **warned** — the warning names the key and the fence it belongs in;
+3. a **`verifyExercise` failure** — such an artifact reports `ok: false`.
+
+So a v1 artifact does not silently degrade into a half-configured exercise: it
+fails loudly, with a message that says what to move where.
+
+#### 2.5.1 `test:` block
 
 Indented sub-keys, both optional:
 
@@ -132,25 +235,25 @@ Indented sub-keys, both optional:
 | `timeoutMs` | number | `5000` | Per case. Clamped to `[100, 60000]`. Suite budget = `cases × timeoutMs`, capped at 60 s. |
 
 `TestTypeId` ∈ `function` (**implemented**) · `project` (**implemented**, parsed and
-registered for `javascript` + `typescript`, not yet runnable — see §9) · `class` ·
+registered for `javascript` + `typescript` — see §9) · `class` ·
 `stdin-stdout` · `in-place` · `service` (reserved — they parse and validate, but no
 environment is registered, so the language selector renders empty and the panel says why).
 `project` and `service` are the multi-file / running-server types.
 
-### 2.3 `practice:` block
+#### 2.5.2 `practice:` block
 
 Indented sub-keys, all optional:
 
 | Sub-key | Type | Default | Rule |
 |---|---|---|---|
 | `timeLimit` | number (minutes) | `0` | `0`/empty ⇒ **unlimited**: the in-view clock counts **up** (elapsed) with a "no limit" label and never auto-submits. `> 0` ⇒ **bounded**: the clock counts **down** and auto-submits at zero. Negative / unparsable → `0`. |
-| `locked` | boolean | `false` | Exactly the string `true` locks it. Locked ⇒ the panel disables the controls and the extension ignores the option list / time limit the webview posts, using the frontmatter instead. |
+| `locked` | boolean | `false` | Exactly the string `true` locks it. Locked ⇒ the panel disables the controls and the extension ignores the option list / time limit the webview posts, using the artifact's own block instead. |
 | `options` | `PracticeOptionId[]` | `[noCompletion, noAiAgents]` | Inline `[a, b]` **or** a YAML `- a` list. Unknown ids are dropped. `options: []` ⇒ **no** restrictions. Absent `options:` ⇒ the defaults. |
 
 `PracticeOptionId` ∈ `noCompletion` · `noAiAgents` · `noSnippets` ·
 `noParameterHints`.
 
-### 2.4 `params:` block
+#### 2.5.3 `params:` block
 
 Two accepted forms:
 
@@ -175,6 +278,15 @@ dropped. A `ParamDef` is kept only when **both** `name` and `type` are set. Any
 non-empty value directly after `params:` (other than `[]`) yields an empty list
 — the entries must be on the following indented lines.
 
+#### 2.5.4 Signature fields
+
+| Field | Type | Required | Default | Notes |
+|---|---|---|---|---|
+| `function` | string | yes¹ | `''` | Default/fallback function name to implement. Parsed onto `functionName`. ¹Required for `test.type: function`; a `project`/`service` artifact names its targets in `checks:` instead (§9). |
+| `functions` | map `<lang>: <name>` | no | — | Per-language override of `function`. Keys resolve through the language-alias table (`py:` → `python`). Read via `functionNameFor(parsed, langId)`, never `functionName` directly, for language-specific code. |
+| `params` | `{ name, type }[]` | yes | `[]` | Generic types (see §5). Input keys in `## Tests` must match these `name`s. See §2.5.3. |
+| `returns` | string | yes | `''` | Generic return type. |
+
 ---
 
 ## 3. Body sections
@@ -191,14 +303,38 @@ match exactly (trailing whitespace allowed):
 | Setup | `^# Setup\s*$` | `#` | next `#` only |
 | Solutions | `^# Solutions\s*$` | `#` | next `#` only |
 | Attempts | `^# Attempts\s*$` | `#` | next `#` only |
+| *(config fence)* | ` ```yaml leetcode ` — **not a section** | — | its own closing fence |
 
 `#`-level sections (Setup / Solutions / Attempts) are **not** terminated by
 `##` sub-headings — those are the language headings inside them.
 
+**A config fence is not a section.** It has no heading, it does not open or
+close one, and it may appear inside any of them — the extractor collects fences
+by their info-string, independent of section structure. The only interaction
+with section slicing is the description (§3.1).
+
+Section slicing is **fence-aware** (`sectionBounds`), which matters more in v2
+than it did in v1: a column-0 `#` inside a config fence is a YAML **comment**,
+not a heading, and must not truncate the section that contains it.
+
 ### 3.1 Description
 
 The trimmed prose between the closing frontmatter `---` and the first Markdown
-heading (`#` or `##`). The whole body (trimmed) when there is no heading.
+heading (`#` or `##`), **minus every config-fence span**. The whole body
+(trimmed, minus config fences) when there is no heading.
+
+**A config fence sitting between the description and `## Examples` is not part
+of the description** — that is the canonical position for the signature block
+(§2.5), and it falls inside the description slice by position. The parser
+subtracts config-fence spans from the slice, so the fence contributes nothing
+to `parsed.description`.
+
+This is load-bearing, not cosmetic: the panel renders the description through
+`renderMarkdownLite`, which has **no fenced-code rule**, so an un-subtracted
+fence would show its raw YAML body as prose on the challenge screen.
+
+A column-0 `#` line *inside* a config fence — a YAML comment — likewise does
+not truncate the description.
 
 ### 3.2 `## Examples`
 
@@ -257,6 +393,9 @@ absent, malformed, or missing a required field is skipped (no partial entry).
 
 - ` ```example ` — examples.
 - ` ```json ` — test suites.
+- ` ```yaml leetcode ` — a **config fence** (§2.5). `yaml` first so Obsidian
+  highlights it; the `leetcode` token must be **bare** — a second token of the
+  form `key=value` (e.g. `path=`) makes it a `## Files` entry instead.
 - Setup / Solution / Attempt fences require a **language** info-string
   (`FENCE_LANG_RE = /```\w+\r?\n/`) — e.g. ` ```java `, ` ```python `,
   ` ```javascript `. A **bare** ` ``` ` fence is not matched and the block is
@@ -333,7 +472,16 @@ How a test executes is data, not a branch. A **test environment** is a
 | `test.type` | Languages with an environment |
 |---|---|
 | `function` | `java`, `javascript`, `python`, `rust`, `typescript` |
-| `class`, `stdin-stdout`, `in-place`, `project`, `service` | *(none — reserved; selector renders empty)* |
+| `project` | `javascript`, `typescript` |
+| `class`, `stdin-stdout`, `in-place`, `service` | *(none — reserved; selector renders empty)* |
+
+`project`'s two entries are the **runnable** ids
+(`projectEnvs = ['javascript', 'typescript'].map(projectEnvFor)`);
+`javascriptreact` / `typescriptreact` are display ids with no runtime of their
+own, and a `.jsx` / `.tsx` file maps onto the runnable pair at bundle time.
+A `project` is graded by its declared `checks:` rather than one return value, so
+its environment drives the check runner, not the single-function driver
+described below (§9.2).
 
 The five `function` environments are self-contained (the extension ships zero
 runtime dependencies). The solver's code is written verbatim as its own file and
@@ -379,7 +527,7 @@ canonical name when in doubt: `JavaScript`, `Python`, `Java`.
 
 | Part | Written by |
 |---|---|
-| Frontmatter (except `status`), description, `## Examples`, `## Tests`, `## Final Tests`, `# Setup`, `# Solutions` | **Author** |
+| Frontmatter (except `status`), **every ` ```yaml leetcode ` config fence**, description, `## Examples`, `## Tests`, `## Final Tests`, `# Setup`, `# Solutions` | **Author** |
 | `status:` frontmatter field | **Extension** — `solved` on an all-green Submit, `attempted` on a failing live Submit. A dry run against a stored solution never writes it. |
 | `<!-- meta: … -->` on a solved solution | **Extension** — on a successful Submit. |
 | `# Attempts` section + `<!-- attempt: … -->` entries | **Extension** — every live Submit (pass or fail), newest-first, in a single read-patch-write alongside the `status` update. |
@@ -387,6 +535,16 @@ canonical name when in doubt: `JavaScript`, `Python`, `Java`.
 `status` + the solved `meta` + the attempt entry are applied in **one**
 read-patch-write per Submit, so a manual edit made between a run's start and its
 Submit is preserved everywhere except those three writer-owned spots.
+
+**The extension never writes a config fence.** Config fences are author-owned
+in full: nothing in the extension creates, rewrites, reorders or deletes one.
+The only body writes it makes are `# Attempts` and the solved `<!-- meta: … -->`
+comment, and its only frontmatter write is `status:` — so a config fence, and
+the placement the author chose for it, survives every Submit untouched.
+
+The **migrator** (`scripts/migrate-artifact-format.mjs`) is the one tool that
+writes config fences, and it is a one-time author-side v1 → v2 transform run
+explicitly from the CLI, not part of the extension.
 
 ---
 
@@ -468,7 +626,11 @@ tree without overlays and confirming it goes red.
 
 ### 9.2 `checks:` — how a project is graded
 
-```yaml
+A body config fence (§2.5), canonically placed before `## Tests` so it sits with
+the cases that bind to it:
+
+````markdown
+```yaml leetcode
 test:
   type: project
   checks:
@@ -481,6 +643,10 @@ test:
       dir: client                # optional, relative to the run directory
       argv: ["npx", "tsc", "--noEmit"]
 ```
+````
+
+Note the `#` comments above are **inside** a fence and are YAML comments, not
+headings — §3 covers why that distinction is load-bearing for section slicing.
 
 | `kind` | Compares | Status |
 |---|---|---|
@@ -533,7 +699,10 @@ malformed fence costs only its own cases.
 
 ### 9.3 `services:` (`test.type: service`)
 
-```yaml
+A body config fence (§2.5), canonically placed before `## Files`:
+
+````markdown
+```yaml leetcode
 test:
   type: service
   runtime: local          # 'docker' reserved
@@ -553,6 +722,14 @@ services:
     envFile: .env.local     # written role:hidden — the solver never sees it
     dependsOn: [api]
 ```
+````
+
+> **`services:` has no parser.** `grep -rn "'services'" src/` finds it only in
+> `KNOWN_FM_KEYS` (plus one JSDoc example) — nothing reads the block, and no
+> `service` environment is registered. The fields below are a documented,
+> **not-yet-implemented** contract; the migrator relocates the block as text
+> like any other config key, and the near-miss key warning knows the name. What
+> is written here is what the implementation must satisfy, not what runs today.
 
 - `install` / `start` are **argv arrays**, never command strings.
 - `${PORT}` is the **only** substitution, templated into argv and injected as a `PORT`
@@ -568,11 +745,16 @@ the solver's own candidate locally. The argv rules and the library-name allowlis
 
 ### 9.4 `libs:` — installed before checks run
 
-```yaml
+A body config fence (§2.5), canonically placed before `# Setup` (function) or
+before `## Files` (project/service) — next to the code it installs for:
+
+````markdown
+```yaml leetcode
 libs:
   python: [fastapi@^0.115.0, uvicorn@^0.32.0]
   typescript: [react@^19.0.0, vite@^7.0.0]
 ```
+````
 
 Both the block form above and an inline `python: [fastapi@^0.115.0, uvicorn@^0.32.0]` parse.
 An entry the allowlist refuses is **dropped with a warning** before it can reach an install
@@ -593,6 +775,12 @@ warned about, and skipped** — `libs: { python: [requests@^2.0.0] }` warns
 rather than `npm install`ing the unrelated npm package that happens to share the name. The
 name-shape allowlist cannot tell two registries' packages apart, so the language key is the
 only thing that can.
+
+> **This npm-only restriction describes today's installer, not the format.** It is carried
+> across the v1 → v2 move unchanged — this change relocated the block, it did not bless the
+> limitation. A follow-on change adding per-registry installers (pip / cargo / maven) retires
+> `NPM_LANGUAGES` and this warning with it. Treat it as current behaviour to honour, not as a
+> permanent property of `libs:`.
 
 **Trust class, stated plainly:** installing `libs:` runs the declared packages' own
 `preinstall`/`install`/`postinstall` scripts — **arbitrary code**, the same trust class as

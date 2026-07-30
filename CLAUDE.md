@@ -36,15 +36,32 @@ invites a test to guard the copy instead of the real thing.
 
 - Artifacts belong in the **Obsidian vault**, under the exercises directory the picker
   resolves (`LeetCode/` by default, the vault root when `useVaultRoot` is on).
-- Need an artifact to validate or reproduce something? Create it in the vault under
-  **`Tests/`** — e.g. `<vault>/Tests/project/react-counter.md`. That folder is the home for
-  smoke and regression artifacts, including the `project` smoke artifact used for the F5 pass.
+- Need an artifact to validate or reproduce something? Create it in the vault under a **`Tests/`**
+  tree — the home for smoke and regression artifacts. There are two, and they are not
+  interchangeable: `<vault>/CoderByte/Tests/{function,project,service}/` holds the per-test-type
+  smoke artifacts (including `CoderByte/Tests/project/react-counter.md`, the `project` smoke
+  artifact used for the F5 pass), and `<vault>/Tests/{Projects,Services}/` holds the larger
+  multi-file spikes. **Paths are vault-relative** — the vault root is whatever the extension's
+  settings resolve to, never a `/Users/…` literal.
 - Tests in `test/` use **inline fixtures** (`CLAUDE.md`, *Code Style*). A test must never walk
   a vault directory or depend on a machine-local absolute path — it would pass or fail
   depending on whose checkout ran it. To sweep real artifacts, loop the CLI instead:
   ```bash
-  find "$VAULT/Tests" -name '*.md' -exec node scripts/verify-exercise.mjs {} \;
+  fail=0; total=0
+  while IFS= read -r f; do
+    grep -q '^type: leetcode' "$f" || continue     # a vault holds plain notes too
+    total=$((total + 1))
+    node scripts/verify-exercise.mjs "$f" || { fail=$((fail + 1)); echo "FAILED: $f"; }
+  done < <(find "$VAULT" -name '*.md' \
+             -not -path '*/.obsidian/*' -not -path '*/.git/*' -not -path '*/.trash/*')
+  echo "verified $total · failures $fail"
   ```
+  Two things the loop does that a one-line `find -exec` cannot, both of which have bitten:
+  **it filters on the `type: leetcode` discriminator** (a vault holds ordinary notes —
+  `CoderByte/Tests/README.md` is `.md` and is not an exercise), and **it counts failures**.
+  `find … -exec cmd {} \;` discards every exit status, so a fully-broken sweep prints its
+  failures and still exits `0`.
+
   `verifyExercise` already enforces everything a parse-only guard could (missing title,
   missing `function:`, the case floors, `params`/`returns`) and more.
 - Scratch files for a debugging session go in the session scratchpad, not the repo.
@@ -479,13 +496,16 @@ and it is **enforced, not remembered**:
   nothing to apply ⟺ what passed *is* the starter. `react-counter.md` shipped that way, so
   *Solve It* → *Submit* marked a run solved with nothing written.
 - `--starter-red` catches the residual case the rule above cannot: overlays exist, but the
-  starter passes anyway. Opt-in, because it costs a second full grading run.
+  starter passes anyway. Opt-in, because it costs a second full grading run. It accepts a
+  `project` **or** a `service` artifact and exits `2` on anything else — so a sweep of every
+  check-graded artifact in the vault is both trees' `project/` and `service/` folders, not just
+  the projects.
 - **A fence without `path=` is not an overlay.** It parses into `solutionFiles` as nothing at
   all — the failure mode is silent, and it has now bitten three artifacts (the Next.js spike,
   and both `service` spikes, where the fences are deliberately fragments and say so).
 
-`<vault>/Tests/project/react-counter.md` is the smoke artifact: the smallest `project` that
-grades green through `verify-exercise.mjs`, and the file to open for an F5 pass. It ships
+`<vault>/CoderByte/Tests/project/react-counter.md` is the smoke artifact: the smallest `project`
+that grades green through `verify-exercise.mjs`, and the file to open for an F5 pass. It ships
 **unsolved** like every other exercise — a stub in `## Files`, the working component in a
 `path=`-carrying `# Solutions` fence.
 
