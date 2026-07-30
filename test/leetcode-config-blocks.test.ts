@@ -3,6 +3,7 @@ import {
 	extractConfigBlocks,
 	legacyFrontmatterKeys,
 	splitFrontmatter,
+	withoutBodySetKeys,
 } from '../src/services/leetcode-config-blocks.helpers.js';
 
 /**
@@ -205,6 +206,103 @@ suite('splitFrontmatter', () => {
 		const started = Date.now();
 		splitFrontmatter('---\n' + 'a'.repeat(1_000_000));
 		assert.ok(Date.now() - started < 100, 'splitFrontmatter took too long on a 1 MB unterminated block');
+	});
+
+});
+
+/**
+ * `withoutBodySetKeys` is D4's enforcement point: the hard cut says a body-set
+ * key left in frontmatter is *ignored*, not read-then-warned, so this is the
+ * only thing standing between a v1 artifact and a silent dual read.
+ *
+ * Two invariants make it safe, and both are worth pinning because a future
+ * edit could break either without any other test noticing:
+ *   - detection matches `parseFrontmatter`'s `KV_RE` exactly, so no line the
+ *     parser reads as a key can slip past the strip, and no retained key can be
+ *     dropped;
+ *   - block termination matches `scanIndentedBlock`'s (any line failing
+ *     `/^\s/`, empty lines included).
+ */
+suite('withoutBodySetKeys', () => {
+
+	test('leaves clean frontmatter untouched', () => {
+		const clean = 'type: leetcode\ntitle: X\ndifficulty: easy\ntags: [a]';
+		assert.strictEqual(withoutBodySetKeys(clean), clean);
+	});
+
+	test('drops a body-set key and its indented continuation lines', () => {
+		assert.strictEqual(
+			withoutBodySetKeys('title: X\nparams:\n  - name: a\n    type: int\nstatus: unsolved'),
+			'title: X\nstatus: unsolved',
+		);
+	});
+
+	test('keeps a retained key that immediately follows a stripped block', () => {
+		// `dropping` is recomputed on every key line, so the retained key ends
+		// the strip rather than being swallowed by it.
+		assert.strictEqual(
+			withoutBodySetKeys('params:\n  - name: a\n    type: int\ntitle: Kept'),
+			'title: Kept',
+		);
+	});
+
+	test('a key at the very end of frontmatter leaves no trailing residue', () => {
+		assert.strictEqual(withoutBodySetKeys('title: X\nreturns: int'), 'title: X');
+	});
+
+	test('a blank line ends the block, exactly as scanIndentedBlock does', () => {
+		// The lines after the blank are no longer part of `params:` for the
+		// parser either, so leaving them is inert rather than a dual read.
+		const out = withoutBodySetKeys('params:\n  - name: a\n\n  - name: b\ntitle: X');
+		assert.ok(!out.includes('name: a'), 'the block before the blank line must be stripped');
+		assert.ok(out.includes('title: X'), 'the retained key must survive');
+	});
+
+	test('CRLF frontmatter carrying a legacy key strips it and keeps the line endings', () => {
+		// The only function here that splits on a bare '\n' — `stripCr` handles
+		// the '\r' in the predicates and the raw line is re-emitted, so CRLF
+		// survives. Do not "fix" the split to /\r?\n/ without re-reading this.
+		assert.strictEqual(
+			withoutBodySetKeys('title: X\r\nparams:\r\n  - name: a\r\nstatus: unsolved'),
+			'title: X\r\nstatus: unsolved',
+		);
+	});
+
+	test('strips every body-set key, not just the first', () => {
+		assert.strictEqual(
+			withoutBodySetKeys('function: f\ntitle: X\nreturns: int\ntest:\n  type: function\ntags: [a]'),
+			'title: X\ntags: [a]',
+		);
+	});
+
+});
+
+/**
+ * The mirror of the D4 hard cut: a config fence declaring a key that belongs in
+ * frontmatter. `applyScalar` is last-wins over the merged text, so the fence
+ * wins — while `patchFrontmatterField` writes `status:` to frontmatter and
+ * `parseFrontmatterOnly` (the picker) reads it there. Unwarned, that pins an
+ * artifact's two views apart permanently.
+ */
+suite('extractConfigBlocks — retained keys in a fence', () => {
+
+	test("warns when a fence declares 'status:', naming the disagreement", () => {
+		const { warnings } = extractConfigBlocks('```yaml leetcode\nstatus: unsolved\n```');
+		assert.strictEqual(warnings.length, 1);
+		assert.ok(warnings[0].includes("'status:'"), 'the warning must name the key');
+		assert.ok(warnings[0].includes('frontmatter'), 'the warning must say where it belongs');
+	});
+
+	test('warns once per key, not once per fence', () => {
+		const { warnings } = extractConfigBlocks(
+			'```yaml leetcode\ntitle: A\n```\n\n```yaml leetcode\ntitle: B\n```',
+		);
+		assert.strictEqual(warnings.filter(w => w.includes('belongs in frontmatter')).length, 1);
+	});
+
+	test('a fence declaring only body-set keys warns nothing', () => {
+		const { warnings } = extractConfigBlocks('```yaml leetcode\nfunction: f\nreturns: int\n```');
+		assert.deepStrictEqual(warnings, []);
 	});
 
 });

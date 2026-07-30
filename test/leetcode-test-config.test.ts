@@ -2,14 +2,22 @@ import * as assert from 'node:assert';
 import { defaultTestConfig, parseLeetCode } from '../src/services/leetcode-parser.service.js';
 
 /**
- * Unit tests for the `test:` frontmatter block — the sibling of `practice:`
- * that selects the execution strategy and the per-case timeout.
+ * Unit tests for the `test:` body config-fence block — the sibling of
+ * `practice:` that selects the execution strategy and the per-case timeout.
+ * Both moved out of frontmatter into ` ```yaml leetcode ` fences (§2.5).
  */
 suite('leetcode test: config', () => {
 
-    /** Compose a `.md` artifact from a frontmatter body. */
-    function artifact(frontmatter: string): string {
-        return `---\ntype: leetcode\ntitle: Two Sum\nfunction: twoSum\nreturns: int\nparams: []\n${frontmatter}---\n\nProse.\n`;
+    const FENCE = '```';
+
+    /**
+     * Compose a `.md` artifact whose `test:`/`practice:` block (when given)
+     * lives in a body config fence, never frontmatter — v2, §2.5. An empty
+     * `configFence` omits the fence entirely, matching "no block ⇒ no fence."
+     */
+    function artifact(configFence: string): string {
+        const fence = configFence === '' ? '' : `${FENCE}yaml leetcode\n${configFence}${FENCE}\n\n`;
+        return `---\ntype: leetcode\ntitle: Two Sum\n---\n\nProse.\n\n${fence}`;
     }
 
     test('an absent block yields the defaults', () => {

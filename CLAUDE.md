@@ -255,10 +255,25 @@ a dependency; the preview panel does not syntax-highlight.
 > [leetcode-sections.helpers.ts](src/services/leetcode-sections.helpers.ts); when doc and
 > parser disagree, the parser wins and the doc is the bug.
 
-Orientation: a `type: leetcode` note carries frontmatter (`function`/`functions`, `params`,
-`returns`, `practice`, `test`), a description, `## Examples`, `## Tests`, `## Final Tests`,
-`# Setup`, `# Solutions`, and an extension-written `# Attempts`. Behaviour the spec does
-**not** cover:
+Orientation: a `type: leetcode` note carries **summary-only frontmatter** (`type`, `title`,
+`difficulty`, `status`, `algorithm`, `tags` — and nothing else), a description,
+`## Examples`, `## Tests`, `## Final Tests`, `# Setup`, `# Solutions`, and an
+extension-written `# Attempts`.
+
+**Execution configuration lives in the body**, in ` ```yaml leetcode ` fences placed next to
+what they configure: `function`/`functions`/`params`/`returns` after the description,
+`test`/`practice` before `## Tests`, `libs`/`services` before `# Setup` or `## Files`.
+Placement is convention — the parser is order-independent — but the marker is not: `yaml`
+first (so Obsidian still highlights it), then a **bare** `leetcode` token, because a
+`## Files` entry always carries `path=` and must never be mistaken for config. Fence content
+starts at **column 0**, since every fence body is concatenated with the frontmatter for a
+single `parseFrontmatter` call.
+
+**The cut is hard: there is no dual read.** One of those nine keys left in frontmatter is
+ignored — *not parsed* — warned about, and fails `verifyExercise`. A v1 artifact therefore
+parses to `functionName: ''` and `params: []` rather than half-working.
+
+Behaviour the spec does **not** cover:
 
 - **`functions:`** overrides `function` per language — language-specific code reads
   `functionNameFor(parsed, langId)`, **never** `parsed.functionName`.
@@ -692,13 +707,30 @@ every setup/solution block whose `data-language` ≠ the selection; `data-langua
   `safeJsonParse`, `canonicalJson`, `escHtml`, `renderMarkdownLite`, `getNonce`,
   `splitMs`/`formatClock`/`formatDuration`, plus `sectionBounds` (shared by the section *reader* and the attempts
   *writer*, which used to mirror each other and drift).
+  **Three authorities own reading a `.md` artifact's config, and none may be re-implemented**
+  ([leetcode-config-blocks.helpers.ts](src/services/leetcode-config-blocks.helpers.ts)):
+  `extractConfigBlocks` is the **only** thing that finds ` ```yaml leetcode ` fences — it
+  returns their merged text *and* their `spans`, which is why `extractDescription` subtracts
+  them rather than re-finding the fences with a second regex; `splitFrontmatter` is the
+  **only** frontmatter/body split, so `parseLeetCode` and `verifyExercise` cannot disagree on
+  where frontmatter ends (two regexes that disagree is how a config key hides from the hard-cut
+  check); and `BODY_SET_KEYS` is the **only** list of the nine moved keys — `legacyFrontmatterKeys`
+  and `withoutBodySetKeys` read it, and `project-parser.helpers.ts` **imports** it to build its
+  known-key set instead of re-listing the names.
+  **`warnings` is `undefined` for a clean `function` artifact and `[]` for a clean
+  `project`/`service` one.** Inherited, not chosen: the field was `project?.warnings`, absent
+  when `parseProjectArtifact` never ran. `JSON.stringify` omits an `undefined` key, so
+  collapsing the two changes the serialised shape of every clean project — a golden-net
+  regression that green tests elsewhere will not catch.
   **`sectionBounds` is fence-aware, and that is load-bearing.** A boundary heading inside a
   ``` fence does not end the section: a column-zero `#` is a *comment* in Python, shell, YAML
   and Dockerfile, and a heading only in a Markdown fence. Matching it truncated the section
   silently — a `# Solutions` whose Python fence opened with a comment parsed to **zero**
   solutions, dropping every other language with it, and `fastapi-react.md` lost its entire
   `## Files` tree the same way. An unterminated fence runs to end of text rather than
-  resuming boundary matching inside it.
+  resuming boundary matching inside it. Its `boundaryOutsideFence` is **exported** so
+  `extractDescription` finds its "first heading" the same fence-aware way — v2 puts YAML in the
+  body, so a column-zero `#` before the first heading is now reachable as a comment.
 - **KISS / YAGNI** — the simplest thing that works. No interface with one implementation, no
   factory for one product, no config for a value that never changes. Don't extract a one-line
   predicate into its own module because a plan said so; extract when a second caller or a

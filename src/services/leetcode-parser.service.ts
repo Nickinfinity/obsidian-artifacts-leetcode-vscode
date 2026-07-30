@@ -12,12 +12,16 @@ import {
 	extractSolutions,
 	extractTests,
 } from './leetcode-sections.helpers.js';
+import {
+	extractConfigBlocks,
+	legacyFrontmatterKeys,
+	splitFrontmatter,
+	withoutBodySetKeys,
+} from './leetcode-config-blocks.helpers.js';
 import { parseFrontmatter } from './leetcode-parser.helpers.js';
 import { parseProjectArtifact } from './project-parser.helpers.js';
 
 export { defaultPracticeConfig, defaultTestConfig } from './leetcode-parser.helpers.js';
-
-const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/;
 
 /** Test types whose artifacts declare a file tree, dependencies and checks. */
 const MULTI_FILE_TYPES = new Set<TestTypeId>(['project', 'service']);
@@ -41,14 +45,24 @@ const MULTI_FILE_TYPES = new Set<TestTypeId>(['project', 'service']);
  * parseLeetCode(fs.readFileSync('/vault/LeetCode/two-sum.md', 'utf-8'));
  */
 export function parseLeetCode(content: string): ParsedLeetCode {
-	const fmMatch = FRONTMATTER_RE.exec(content);
-	const fmRaw   = fmMatch ? fmMatch[1] : '';
-	const body    = fmMatch ? content.slice(fmMatch[0].length) : content;
+	const { fmRaw, body } = splitFrontmatter(content);
+	const config = extractConfigBlocks(body);
 
-	const fm = parseFrontmatter(fmRaw);
+	// D5: **one** concatenation, **one** `parseFrontmatter` call. Two calls would
+	// need merge logic that cannot tell a default from a real value; one keeps
+	// defaults applied exactly once and adds no merge code.
+	//
+	// D4 is a hard cut, so the frontmatter half is stripped of body-set keys
+	// before it gets here — a `params:` left in frontmatter is *ignored*, not
+	// read-then-warned, which would be the dual read D4 forbids.
+	const legacyKeys = legacyFrontmatterKeys(fmRaw);
+	const configText = withoutBodySetKeys(fmRaw) + '\n' + config.raw;
+
+	const fm = parseFrontmatter(configText);
 	// Multi-file grammar is its own concern and its own file — a `function`
 	// artifact never pays for it, and gets none of its fields.
-	const project = MULTI_FILE_TYPES.has(fm.test.type) ? parseProjectArtifact(fmRaw, body) : null;
+	const project = MULTI_FILE_TYPES.has(fm.test.type) ? parseProjectArtifact(configText, body) : null;
+	const warnings = collectWarnings(project?.warnings, legacyKeys, config.warnings);
 
 	return {
 		title:        fm.title ?? '',
@@ -73,8 +87,55 @@ export function parseLeetCode(content: string): ParsedLeetCode {
 		libs:         project?.libs,
 		checks:       project?.checks,
 		solutionFiles: project?.solutionFiles,
-		warnings:     project?.warnings,
+		warnings,
 	};
+}
+
+/**
+ * Assembles the artifact's warning list, or `undefined` when there is nothing
+ * to say.
+ *
+ * **The empty case is `undefined` for a `function` artifact and `[]` for a
+ * `project`/`service` one, and that asymmetry is inherited, not chosen.** This
+ * field was `project?.warnings`: `undefined` when `parseProjectArtifact` did not
+ * run, and an array — empty when clean — when it did. `ParsedLeetCode.warnings`
+ * is optional and `JSON.stringify` omits an `undefined` key, so collapsing the
+ * two would change the serialised shape of every clean project artifact.
+ * The golden net caught exactly that: `"warnings":[]` vanished from the project
+ * snapshot when this returned `undefined` unconditionally.
+ *
+ * Order is fixed: `project` warnings first, then the D4 legacy-key warnings,
+ * then the extractor's. Appending rather than prepending keeps an existing
+ * project's warning order unchanged.
+ *
+ * @param projectWarnings - `parseProjectArtifact`'s warnings; `undefined` when
+ *   it did not run, which is what distinguishes the two empty cases.
+ * @param legacyKeys      - D2 body-set keys found in frontmatter (D4 hard cut).
+ * @param configWarnings  - `extractConfigBlocks`' warnings.
+ * @returns The combined list; `[]` for a clean project, `undefined` for a clean
+ *   function artifact.
+ *
+ * @example
+ * collectWarnings(undefined, ['params'], []);
+ * // → ["frontmatter 'params:' is ignored — move it into a 'yaml leetcode' body fence"]
+ * collectWarnings(undefined, [], []); // → undefined  (clean function artifact)
+ * collectWarnings([], [], []);        // → []         (clean project artifact)
+ */
+function collectWarnings(
+	projectWarnings: string[] | undefined,
+	legacyKeys: string[],
+	configWarnings: string[],
+): string[] | undefined {
+	const extra = [...legacyKeys.map(legacyKeyWarning), ...configWarnings];
+	if (projectWarnings === undefined) {
+		return extra.length > 0 ? extra : undefined;
+	}
+	return [...projectWarnings, ...extra];
+}
+
+/** D4's message: name the key, and the fence it belongs in. */
+function legacyKeyWarning(key: string): string {
+	return `frontmatter '${key}:' is ignored — move it into a 'yaml leetcode' body fence`;
 }
 
 /**
@@ -93,8 +154,11 @@ export function parseLeetCode(content: string): ParsedLeetCode {
  * parseFrontmatterOnly('---\ntitle: Two Sum\n---\n\nBody...');
  */
 export function parseFrontmatterOnly(content: string): LeetCodeSummary {
-	const fmMatch = FRONTMATTER_RE.exec(content);
-	const fm = parseFrontmatter(fmMatch ? fmMatch[1] : '');
+	// Deliberately **frontmatter alone** — no `extractConfigBlocks` call. Every
+	// field of `LeetCodeSummary` is a D2-retained frontmatter key, so reading the
+	// body would buy nothing and cost the picker a full-body scan per file at
+	// exactly the point this fast path exists to keep cheap.
+	const fm = parseFrontmatter(splitFrontmatter(content).fmRaw);
 	return {
 		title:      fm.title ?? '',
 		difficulty: fm.difficulty,

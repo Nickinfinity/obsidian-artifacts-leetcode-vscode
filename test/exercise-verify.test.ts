@@ -75,14 +75,20 @@ suite('exercise-verify', () => {
             'type: leetcode',
             `title: ${title}`,
             'difficulty: easy',
-            `function: ${functionName}`,
-            'params:',
-            paramsYaml,
-            `returns: ${returns}`,
-            'test:',
-            `  type: ${testType}${timeoutLine}`,
             '---',
         ].join('\n');
+
+        const signatureFence = '```yaml leetcode\n'
+            + `function: ${functionName}\n`
+            + 'params:\n'
+            + `${paramsYaml}\n`
+            + `returns: ${returns}\n`
+            + '```';
+
+        const testFence = '```yaml leetcode\n'
+            + 'test:\n'
+            + `  type: ${testType}${timeoutLine}\n`
+            + '```';
 
         const examplesBlock = examples
             .map(e => '```example\ninput: ' + e.input + '\noutput: ' + e.output + '\n```')
@@ -95,8 +101,8 @@ suite('exercise-verify', () => {
             ? `# Solutions\n\n## JavaScript\n\`\`\`javascript\n${solutionCode}\n\`\`\`\n`
             : '';
 
-        return `${frontmatter}\n\nProblem description.\n\n## Examples\n${examplesBlock}\n\n`
-            + `## Tests\n\`\`\`json\n${JSON.stringify(tests, null, 2)}\n\`\`\`\n\n`
+        return `${frontmatter}\n\nProblem description.\n\n${signatureFence}\n\n## Examples\n${examplesBlock}\n\n`
+            + `${testFence}\n\n## Tests\n\`\`\`json\n${JSON.stringify(tests, null, 2)}\n\`\`\`\n\n`
             + `## Final Tests\n\`\`\`json\n${JSON.stringify(finalTests, null, 2)}\n\`\`\`\n\n`
             + `${setupSection}${solutionsSection}`;
     }
@@ -353,13 +359,16 @@ suite('exercise-verify', () => {
                 'type: leetcode',
                 `title: ${title}`,
                 'difficulty: medium',
+                '---',
+                '',
+                'A multi-file exercise.',
+                '',
+                '```yaml leetcode',
                 'test:',
                 '  type: project',
                 '  checks:',
                 checks,
-                '---',
-                '',
-                'A multi-file exercise.',
+                '```',
                 '',
                 tests,
                 '## Files',

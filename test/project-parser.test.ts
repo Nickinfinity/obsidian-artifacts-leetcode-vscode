@@ -260,8 +260,9 @@ suite('project parser', () => {
 	suite('parseLeetCode dispatch', () => {
 
 		function artifact(testType: string): string {
-			return ['---', 'type: leetcode', 'title: P', `${FM.replace('  type: project', `  type: ${testType}`)}`,
-				'---', '', 'Body.', '', FILES_SECTION].join('\n');
+			const config = FM.replace('  type: project', `  type: ${testType}`);
+			return ['---', 'type: leetcode', 'title: P', '---', '', 'Body.', '',
+				'```yaml leetcode', config, '```', '', FILES_SECTION].join('\n');
 		}
 
 		test('a project artifact carries files, libs and checks', () => {
@@ -277,5 +278,111 @@ suite('project parser', () => {
 			assert.strictEqual(parsed.checks, undefined);
 			assert.strictEqual(parsed.libs, undefined);
 		});
+	});
+
+	/**
+	 * D4's hard cut on the project side — the highest-consequence shape of it.
+	 *
+	 * A `function` artifact with a legacy `params:` fails `verifyExercise` loudly.
+	 * A `project` with a legacy `libs:` fails *quietly and much later*: the key is
+	 * stripped, `libs` comes back empty, `runLibs` installs nothing, and the solver
+	 * meets `Cannot find module 'react'` from a toolchain instead of a warning
+	 * naming the real problem. The warning is the only thing that connects the two.
+	 */
+	suite('D4 hard cut — project keys left in frontmatter', () => {
+
+		const legacyProject = [
+			'---',
+			'type: leetcode',
+			'title: Legacy Project',
+			'libs:',
+			'  javascript: [react@^19.0.0]',
+			'test:',
+			'  type: project',
+			'  checks:',
+			'    - name: counter',
+			'      kind: dom-assert',
+			'      file: src/App.jsx',
+			'---',
+			'',
+			'Prose.',
+			'',
+			'## Files',
+			'',
+			'```jsx path=src/App.jsx',
+			'export default function App() { return null; }',
+			'```',
+		].join('\n');
+
+		test('a legacy libs:/test: in frontmatter is ignored, not read', () => {
+			const parsed = parseLeetCode(legacyProject);
+			// `test.type` never reaches `project`, so the multi-file grammar never
+			// runs at all — which is exactly what makes the failure quiet.
+			assert.strictEqual(parsed.test.type, 'function');
+			assert.strictEqual(parsed.libs, undefined);
+			assert.strictEqual(parsed.checks, undefined);
+		});
+
+		test('and it warns, naming each offending key', () => {
+			const warnings = parseLeetCode(legacyProject).warnings ?? [];
+			for (const key of ['libs', 'test']) {
+				assert.ok(
+					warnings.some(w => w.includes(`'${key}:'`)),
+					`expected a D4 warning naming '${key}:', got ${JSON.stringify(warnings)}`,
+				);
+			}
+		});
+
+		test('a leaked block cannot be absorbed by a preceding retained key', () => {
+			// The blank line ends the strip early, leaving `- name: b` orphaned at
+			// depth. The property that makes that inert is that the orphan cannot
+			// be swallowed by an *earlier* retained block key — the terminator that
+			// ended the strip is always itself retained, and is exactly what ends
+			// `scanIndentedBlock`. Asserted through parsed output, not string shape.
+			const parsed = parseLeetCode([
+				'---',
+				'type: leetcode',
+				'tags:',
+				'  - arrays',
+				'params:',
+				'  - name: a',
+				'',
+				'  - name: b',
+				'title: X',
+				'---',
+				'',
+				'Prose.',
+			].join('\n'));
+
+			assert.deepStrictEqual(parsed.tags, ['arrays'], 'tags must not absorb the orphaned params rows');
+			assert.deepStrictEqual(parsed.params, [], 'D4: a frontmatter params: is ignored entirely');
+			assert.strictEqual(parsed.title, 'X');
+		});
+
+		test('the same artifact in v2 form parses its libs and checks', () => {
+			const migrated = legacyProject
+				.replace(/libs:\n  javascript: \[react@\^19\.0\.0\]\ntest:\n  type: project\n  checks:\n    - name: counter\n      kind: dom-assert\n      file: src\/App\.jsx\n/, '')
+				.replace('Prose.', [
+					'Prose.',
+					'',
+					'```yaml leetcode',
+					'libs:',
+					'  javascript: [react@^19.0.0]',
+					'test:',
+					'  type: project',
+					'  checks:',
+					'    - name: counter',
+					'      kind: dom-assert',
+					'      file: src/App.jsx',
+					'```',
+				].join('\n'));
+
+			const parsed = parseLeetCode(migrated);
+			assert.strictEqual(parsed.test.type, 'project');
+			assert.deepStrictEqual(parsed.libs, { javascript: ['react@^19.0.0'] });
+			assert.strictEqual(parsed.checks?.length, 1);
+			assert.strictEqual(parsed.checks?.[0].name, 'counter');
+		});
+
 	});
 });

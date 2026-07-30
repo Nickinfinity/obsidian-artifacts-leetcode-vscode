@@ -5,7 +5,8 @@ import type {
 	TestCase,
 } from '../types/leetcode.types.js';
 import { safeJsonParse } from '../utils/safe-json.js';
-import { sectionBounds } from './leetcode-section-bounds.helpers.js';
+import { type ConfigSpan, extractConfigBlocks } from './leetcode-config-blocks.helpers.js';
+import { boundaryOutsideFence, sectionBounds } from './leetcode-section-bounds.helpers.js';
 
 const SOLUTIONS_RE     = /^# Solutions\s*$/m;
 const SETUP_RE         = /^# Setup\s*$/m;
@@ -19,22 +20,69 @@ const FENCE_W_META_RE  = /(?:<!-- meta:\s*(\{[\s\S]*?\})\s*-->\s*\r?\n)?```\w+\r
 const FENCE_W_ATTEMPT_RE = /(?:<!-- attempt:\s*(\{[\s\S]*?\})\s*-->\s*\r?\n)?```\w+\r?\n([\s\S]*?)```/g;
 const FENCE_LANG_RE    = /```\w+\r?\n([\s\S]*?)```/;
 
+/** Any Markdown heading — the description runs until the first one. */
+const DESCRIPTION_BOUNDARY_RE = /^#+ /m;
+
 /**
  * Returns the prose between the closing frontmatter `---` and the first
- * Markdown heading (`#` or `##`), trimmed.
+ * Markdown heading (`#` or `##`), trimmed, **minus every config-fence span**.
  *
- * Returns the entire body trimmed when no heading is present.
+ * Returns the entire body (minus config fences, trimmed) when no heading is
+ * present.
+ *
+ * Two things this must not do, both load-bearing in v2:
+ *
+ * - **A ` ```yaml leetcode ` fence is not description prose.** §2.5's canonical
+ *   placement puts the signature fence after the description and before
+ *   `## Examples` — i.e. *inside* this slice. Left in, `renderMarkdownLite`
+ *   (which has no fenced-code rule) would render its raw YAML body as prose on
+ *   the challenge screen. The spans come from `extractConfigBlocks`, the one
+ *   authority for finding those fences; this function never re-finds them.
+ * - **A column-0 `#` inside a fence is a comment, not a heading.** The boundary
+ *   search goes through `boundaryOutsideFence` — the same fence-aware authority
+ *   `sectionBounds` uses — rather than a bare `body.search(/^#+ /m)`, which
+ *   truncated the description at the first YAML comment.
+ *
+ * An artifact with no config fence and no fenced `#` produces a byte-identical
+ * result to the pre-v2 implementation.
  *
  * @param body - Content after the frontmatter block.
  * @returns Trimmed description string.
  *
  * @example
  * extractDescription('Some prose.\n\n## Examples'); // → 'Some prose.'
+ * extractDescription('Prose.\n\n```yaml leetcode\nreturns: int\n```\n\n## Examples'); // → 'Prose.'
  */
 export function extractDescription(body: string): string {
-	const idx = body.search(/^#+ /m);
-	if (idx === -1) { return body.trim(); }
-	return body.slice(0, idx).trim();
+	const end = boundaryOutsideFence(body, 0, DESCRIPTION_BOUNDARY_RE);
+	return withoutSpans(body.slice(0, end), extractConfigBlocks(body).spans).trim();
+}
+
+/**
+ * Removes each span's characters from `text`, keeping everything between them.
+ *
+ * Spans arrive in document order and never overlap (`extractConfigBlocks` walks
+ * linearly), so one forward cursor is enough. A span starting at or past the end
+ * of `text` belongs to a later part of the body and stops the walk; one that
+ * merely *ends* past it is clamped, so a fence straddling the slice boundary
+ * cannot leak its tail.
+ *
+ * @param text  - The description slice.
+ * @param spans - Config-fence ranges, as offsets into the body `text` came from.
+ * @returns `text` with every span's characters removed.
+ *
+ * @example
+ * withoutSpans('a<fence>b', [{ start: 1, end: 8 }]); // → 'ab'
+ */
+function withoutSpans(text: string, spans: ConfigSpan[]): string {
+	let out = '';
+	let cursor = 0;
+	for (const span of spans) {
+		if (span.start >= text.length) { break; }
+		out += text.slice(cursor, span.start);
+		cursor = Math.min(span.end, text.length);
+	}
+	return out + text.slice(cursor);
 }
 
 /**

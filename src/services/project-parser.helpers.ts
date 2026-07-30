@@ -1,5 +1,6 @@
 import type { FileRole, FileSpec, LibSpec, ProjectCheck, TestCase } from '../types/leetcode.types.js';
 import { safeJsonParse } from '../utils/safe-json.js';
+import { BODY_SET_KEYS, RETAINED_FM_KEYS } from './leetcode-config-blocks.helpers.js';
 import { resolveLangId } from './language-map.service.js';
 import { isNpmServableLanguage, validateLibNames } from './lib-spec.helpers.js';
 import { sectionBounds } from './leetcode-section-bounds.helpers.js';
@@ -39,11 +40,21 @@ const VALID_KINDS = new Set(['function', 'build', 'dom-assert', 'css-assert']);
 /** Fields a `checks:` entry may set. Anything else — `__proto__` included — never lands. */
 const CHECK_FIELDS = new Set(['name', 'kind', 'file', 'function', 'argv', 'dir']);
 
-/** Frontmatter keys the format recognises, for the near-miss warning (spike §5). */
-const KNOWN_FM_KEYS = [
-	'type', 'title', 'difficulty', 'status', 'algorithm', 'function', 'functions',
-	'params', 'returns', 'test', 'practice', 'tags', 'libs', 'checks', 'services', 'files',
-];
+/**
+ * Every key the near-miss warning considers legitimate, wherever it appeared.
+ *
+ * **Both halves are imported**, never re-listed — `leetcode-config-blocks
+ * .helpers.ts` owns the format's key partition, and a second copy here is how
+ * the two drift. Note neither half contains `files`: `## Files` is a body
+ * *section*, and `files:` was never a frontmatter key, though it sat in this
+ * list before v2 and made the check treat it as one.
+ *
+ * Union rather than per-position, because this check answers "is this a typo?"
+ * and a typo is a typo in either half. "This key is in the wrong half" is a
+ * different question, answered by `legacyFrontmatterKeys` (D4's hard cut) and
+ * `warnRetainedKeys` (its mirror).
+ */
+const KNOWN_KEYS = [...RETAINED_FM_KEYS, ...BODY_SET_KEYS];
 
 /**
  * Parses the `project`-only grammar out of an artifact.
@@ -57,7 +68,11 @@ const KNOWN_FM_KEYS = [
  * says; containment is asserted by the writer, immediately before it writes —
  * one authority, at the point of use.
  *
- * @param fmRaw - Raw frontmatter body (no `---` fences).
+ * @param configRaw - The **merged** config text: D2-retained frontmatter plus
+ *   every ` ```yaml leetcode ` fence body, exactly what `parseFrontmatter` is
+ *   given (D5's single concatenation). `libs:`, `checks:` and `services:` now
+ *   live in body fences, so frontmatter alone would find none of them — and
+ *   `warnNearMissKeys` would stop seeing frontmatter typos like `titel:`.
  * @param body  - Artifact content after the frontmatter.
  * @returns Files, libs, checks (cases already bound), and any warnings.
  *
@@ -65,10 +80,10 @@ const KNOWN_FM_KEYS = [
  * parseProjectArtifact('libs:\n  typescript:\n    - react@^19.0.0', '## Files\n```tsx path=a.tsx\nx\n```');
  * // → { files: [{ path: 'a.tsx', … }], libs: { typescript: ['react@^19.0.0'] }, checks: [], warnings: [] }
  */
-export function parseProjectArtifact(fmRaw: string, body: string): ProjectSections {
+export function parseProjectArtifact(configRaw: string, body: string): ProjectSections {
 	const warnings: string[] = [];
 	const warn = (message: string): void => { warnings.push(message); };
-	const lines = fmRaw.split(/\r?\n/);
+	const lines = configRaw.split(/\r?\n/);
 
 	warnNearMissKeys(lines, warn);
 
@@ -378,15 +393,17 @@ function bindCases(checks: ProjectCheck[], body: string, warn: (m: string) => vo
  *
  * @example
  * warnNearMissKeys(['servcies:'], m => console.log(m));
- * // logs: unknown frontmatter key 'servcies' — did you mean 'services'?
+ * // logs: unknown config key 'servcies' — did you mean 'services'?
  */
 function warnNearMissKeys(lines: string[], warn: (m: string) => void): void {
 	for (const line of lines) {
 		const kv = /^(\w+):/.exec(line);
-		if (!kv || KNOWN_FM_KEYS.includes(kv[1])) { continue; }
+		if (!kv || KNOWN_KEYS.includes(kv[1])) { continue; }
 
-		const near = KNOWN_FM_KEYS.find(known => editDistance(kv[1], known) <= 2);
-		if (near) { warn(`unknown frontmatter key '${kv[1]}' — did you mean '${near}'?`); }
+		const near = KNOWN_KEYS.find(known => editDistance(kv[1], known) <= 2);
+		// "config key", not "frontmatter key": this now reads the *merged* text,
+		// so the offending line may have come from either half of the file.
+		if (near) { warn(`unknown config key '${kv[1]}' — did you mean '${near}'?`); }
 	}
 }
 

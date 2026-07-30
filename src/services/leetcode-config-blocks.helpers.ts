@@ -77,6 +77,24 @@ export const BODY_SET_KEYS: ReadonlySet<string> = new Set([
 	'function', 'functions', 'params', 'returns', 'test', 'practice', 'libs', 'checks', 'services',
 ]);
 
+/**
+ * The D2 keys that **stay** in frontmatter — `LeetCodeSummary` plus the `type`
+ * discriminator. The other half of the same partition, so it lives beside
+ * `BODY_SET_KEYS` rather than being re-listed by each module that needs it.
+ *
+ * These must never be declared in a config fence. `parseLeetCode` reads the
+ * merged text and `applyScalar` is last-wins, so a fence would win — while
+ * `patchFrontmatterField` still *writes* `status:` to frontmatter and
+ * `parseFrontmatterOnly` (the picker) still *reads* it there. An artifact with
+ * `status:` in a fence therefore submits green, gets `status: solved` written to
+ * frontmatter, shows solved in the picker, and shows unsolved on the challenge
+ * screen forever. `extractConfigBlocks` warns rather than changing precedence:
+ * silently reassigning the winner would be a second, invisible rule.
+ */
+export const RETAINED_FM_KEYS: ReadonlySet<string> = new Set([
+	'type', 'title', 'difficulty', 'status', 'algorithm', 'tags',
+]);
+
 /** Drop a trailing `\r` so CRLF input parses identically to LF. */
 function stripCr(line: string): string {
 	return line.endsWith('\r') ? line.slice(0, -1) : line;
@@ -141,6 +159,33 @@ function collectTopLevelKeys(contentLines: string[]): Set<string> {
 		if (m) { keys.add(m[1]); }
 	}
 	return keys;
+}
+
+/**
+ * A config fence declaring a frontmatter-retained key — the mirror of
+ * `legacyFrontmatterKeys`, and the reason `RETAINED_FM_KEYS` is exported.
+ *
+ * The two halves of the format each have a home; this names the wrong-way
+ * violation, exactly as the D4 hard cut names the other way. Warn only: the
+ * fence still wins, because `applyScalar` is last-wins and quietly inverting
+ * that for six keys would be a second rule nobody could see.
+ *
+ * @param blockKeys - Per-fence top-level key sets, in document order.
+ * @param warnings  - Sink, appended in place.
+ *
+ * @example
+ * warnRetainedKeys([new Set(['status'])], out);
+ * // out: ["config fence: 'status:' belongs in frontmatter — …"]
+ */
+function warnRetainedKeys(blockKeys: Set<string>[], warnings: string[]): void {
+	const seen = new Set<string>();
+	for (const keys of blockKeys) {
+		for (const key of keys) {
+			if (!RETAINED_FM_KEYS.has(key) || seen.has(key)) { continue; }
+			seen.add(key);
+			warnings.push(`config fence: '${key}:' belongs in frontmatter — the fence wins here, but the picker and the status writer read frontmatter, so the two will disagree`);
+		}
+	}
 }
 
 /** D6: the same top-level key declared in two-or-more fences — name it and say which occurrence wins. */
@@ -219,6 +264,7 @@ export function extractConfigBlocks(body: string): ConfigBlocksResult {
 		warnings.push('config: an unterminated ``` fence earlier in the document may hide config fences after it');
 	}
 
+	warnRetainedKeys(blockKeys, warnings);
 	warnDuplicateKeys(blockKeys, warnings);
 	return { raw: blocks.join('\n'), spans, warnings };
 }
@@ -242,6 +288,39 @@ export function legacyFrontmatterKeys(fmRaw: string): string[] {
 		if (m && BODY_SET_KEYS.has(m[1])) { found.add(m[1]); }
 	}
 	return [...found];
+}
+
+/**
+ * Raw frontmatter text with every D2 body-set key **removed** — the key's own
+ * line plus its indented continuation lines.
+ *
+ * D4 is a hard cut: an execution-config key left in frontmatter is *ignored*,
+ * not read. Warning about it while still parsing it would be precisely the dual
+ * read D4 forbids, so the text handed to `parseFrontmatter` must not contain it.
+ * `legacyFrontmatterKeys` names them for the warning; this removes them for the
+ * parse. Both live here because both are the body-set list's business.
+ *
+ * A continuation line is one starting with whitespace, the same rule
+ * `scanIndentedBlock` uses in `leetcode-parser.helpers.ts` — so `params:` takes
+ * its `- name:`/`type:` lines with it, and the next column-0 key ends the block.
+ *
+ * @param fmRaw - Raw frontmatter body (no `---` fences).
+ * @returns The same text with body-set blocks dropped; unchanged when clean.
+ *
+ * @example
+ * withoutBodySetKeys('title: X\nparams:\n  - name: a\n    type: int\nstatus: unsolved');
+ * // → 'title: X\nstatus: unsolved'
+ */
+export function withoutBodySetKeys(fmRaw: string): string {
+	const kept: string[] = [];
+	let dropping = false;
+	for (const line of fmRaw.split('\n')) {
+		const key = TOP_LEVEL_KEY_RE.exec(stripCr(line));
+		if (key) { dropping = BODY_SET_KEYS.has(key[1]); }
+		else if (dropping && !/^\s/.test(stripCr(line))) { dropping = false; }
+		if (!dropping) { kept.push(line); }
+	}
+	return kept.join('\n');
 }
 
 const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/;

@@ -171,6 +171,15 @@ The `leetcode` token must be **bare**: a `## Files` entry always carries
 ` ```yaml leetcode path=src/x.yml ` is a *file*, not config, and never matches.
 A plain ` ```yaml ` fence in prose stays prose.
 
+**Do not put a fence-shaped line inside a config fence.** A config fence closes
+on a line of exactly three backticks and nothing but whitespace; the
+description's heading search, which it shares with section slicing, toggles on
+*any* line opening with three backticks. A ` ```yaml ` line inside a config
+fence body therefore desynchronises the two, and the description runs on past
+the first heading — swallowing `## Examples` and everything after it as prose.
+It degrades (over-included prose, still escaped) rather than losing data, but
+the artifact will look wrong on the challenge screen.
+
 **Content starts at column 0.** A config fence's body is concatenated with the
 frontmatter text and parsed by the same `KV_RE = /^(\w+):\s*(.*)$/`, which is
 column-0 anchored — so a top-level key must begin at column 0 exactly as it

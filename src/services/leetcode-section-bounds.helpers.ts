@@ -53,6 +53,12 @@ export function sectionBounds(text: string, headingRe: RegExp, boundaryRe: RegEx
  * fence therefore runs to end of text rather than resuming boundary matching
  * inside it: malformed input degrades to a documented default.
  *
+ * Exported for `extractDescription`, whose "prose before the first heading"
+ * slice needs exactly this fence-aware boundary search and must not carry a
+ * second fence walk of its own — v2 puts YAML config in the body, so a column-0
+ * `#` before the first heading is now reachable as a *comment* rather than a
+ * heading.
+ *
  * @param text       - Full text being sliced.
  * @param from       - Offset just past the section's own heading.
  * @param boundaryRe - Heading regex that ends the section, tested per line.
@@ -61,7 +67,7 @@ export function sectionBounds(text: string, headingRe: RegExp, boundaryRe: RegEx
  * @example
  * boundaryOutsideFence('# S\n```py\n# c\n```\n# T', 3, /^# /m); // → 17
  */
-function boundaryOutsideFence(text: string, from: number, boundaryRe: RegExp): number {
+export function boundaryOutsideFence(text: string, from: number, boundaryRe: RegExp): number {
 	let offset = from;
 	let fenced = false;
 	for (const line of text.slice(from).split('\n')) {
