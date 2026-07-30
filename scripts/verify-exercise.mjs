@@ -38,6 +38,18 @@ function die(msg, code = 1) {
 	process.exit(code);
 }
 
+/**
+ * First few lines of a check's detail, so one chatty subprocess cannot bury the
+ * result. A `build` check's detail is its tool's whole stderr — a misconfigured
+ * `tsc` prints its entire help text, which drowned every other check's verdict.
+ * The full output stays available by running the check's own argv.
+ */
+function firstLines(detail, max = 3) {
+	const lines = String(detail).split('\n');
+	if (lines.length <= max) { return detail; }
+	return `${lines.slice(0, max).join('\n  ')}\n  … ${lines.length - max} more line(s) suppressed`;
+}
+
 // ── Precondition: the build must exist (no implicit compile) ──────────────────
 if (!existsSync(distHelper)) {
 	die('verify-exercise: dist/ not built — run `pnpm compile` first.', 2);
@@ -66,6 +78,14 @@ if (!mdPath) {
 if (!existsSync(mdPath)) { die(`verify-exercise: no such file: ${mdPath}`, 2); }
 
 const md = readFileSync(mdPath, 'utf-8');
+
+// Author-facing parse problems that degraded to a default — an unknown check
+// `kind`, a rejected lib, a near-miss key. They were invisible here, which let a
+// partially-parsed artifact read as fully verified: the `service` spikes declare
+// `http` checks that are DROPPED, so "OK" covered only the checks that survived.
+for (const warning of parseLeetCode(md).warnings ?? []) {
+	console.error(`WARN ${mdPath}: ${warning}`);
+}
 
 // ── Mode: expecteds cross-check ──────────────────────────────────────────────
 if (expectedsPath) {
@@ -101,26 +121,36 @@ if (starterRed) {
 	const { runProjectChecks } = await import(
 		pathToFileURL(join(dist, 'test-envs', 'project', 'project.runner.js')).href);
 
+	// This mode grades by check **kind**, so it runs whatever machinery exists for
+	// the kinds declared — independently of whether the `test.type` has an env.
+	// Naming the kinds keeps that explicit: a reserved `service` whose `http`
+	// checks were dropped is graded only on the `build` check that survived, and
+	// the plain verify mode does not grade its checks at all.
 	const outcomes = await runProjectChecks(parsed, { withSolutions: false });
+	const kinds = [...new Set((parsed.checks ?? []).map(c => c.kind))]
+		.sort((a, b) => a.localeCompare(b)).join(', ');
 	const red = outcomes.filter(o => !o.passed);
 	if (red.length > 0) {
-		console.log(`RED  ${mdPath} — starter fails ${red.length}/${outcomes.length} check(s), as it must`);
-		for (const o of red) { console.log(`  ${o.name}: ${o.detail ?? '(no detail)'}`); }
+		console.log(`RED  ${mdPath} — starter fails ${red.length}/${outcomes.length} check(s) [${kinds}], as it must`);
+		for (const o of red) { console.log(`  ${o.name}: ${firstLines(o.detail ?? '(no detail)')}`); }
 		process.exit(0);
 	}
-	die(`PRE-SOLVED ${mdPath}: every check passes against the starter — a solver `
+	die(`PRE-SOLVED ${mdPath}: every check passes against the starter [${kinds}] — a solver `
 		+ 'would be marked solved without writing anything', 1);
 }
 
 // ── Mode: full harness verify ────────────────────────────────────────────────
 const result = await verifyExercise(md, mdPath);
 if (result.ok) {
-	// `ok` for a reserved `test.type` means well-formed, NOT executed — no env is
-	// registered for it, so no check and no solution was ever run. Printing a bare
-	// `OK` there reads as "verified green" and over-claims.
-	const type = parseLeetCode(md).test.type;
-	const note = languagesForType(type).length === 0
-		? ` (structure only — reserved test.type '${type}', nothing executed)`
+	// `ok` for a reserved `test.type` means well-formed, NOT verified green: no env
+	// is registered, so this mode ran neither its solutions nor its checks. Say
+	// exactly that. "nothing executed" over-claimed — it read as a property of the
+	// artifact, when `--starter-red` will happily grade whatever check kinds it
+	// declares, reserved type or not.
+	const parsedType = parseLeetCode(md).test.type;
+	const note = languagesForType(parsedType).length === 0
+		? ` (structure only — no environment for test.type '${parsedType}', so this mode ran`
+			+ ' neither its solutions nor its checks; --starter-red does grade the checks)'
 		: '';
 	console.log(`OK   ${mdPath}${note}`);
 	process.exit(0);
