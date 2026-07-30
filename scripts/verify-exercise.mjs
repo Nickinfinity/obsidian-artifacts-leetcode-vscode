@@ -5,7 +5,7 @@
 //   node scripts/verify-exercise.mjs "<file.md>"
 //       → run the uniform harness `verifyExercise`; exit 0 green, non-zero with reason.
 //   node scripts/verify-exercise.mjs "<file.md>" --expecteds <recomputed.json>
-//       → §D.7 cross-check: diff the artifact's stored expecteds against an
+//       → expecteds cross-check: diff the artifact's stored expecteds against an
 //         independently recomputed positional array ([...## Tests, ...## Final Tests]
 //         order); exit 0 if they agree, non-zero listing each mismatch.
 //   node scripts/verify-exercise.mjs "<file.md>" --starter-red
@@ -67,7 +67,7 @@ if (!existsSync(mdPath)) { die(`verify-exercise: no such file: ${mdPath}`, 2); }
 
 const md = readFileSync(mdPath, 'utf-8');
 
-// ── Mode: §D.7 expecteds cross-check ─────────────────────────────────────────
+// ── Mode: expecteds cross-check ──────────────────────────────────────────────
 if (expectedsPath) {
 	if (!existsSync(expectedsPath)) { die(`verify-exercise: no such file: ${expectedsPath}`, 2); }
 	let recomputed;

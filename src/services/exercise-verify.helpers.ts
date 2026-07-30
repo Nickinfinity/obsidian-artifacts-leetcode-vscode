@@ -8,7 +8,7 @@ import { submitSuite } from './leetcode-suite.helpers.js';
 import { languagesForType, testEnvFor } from './test-envs/env.registry.js';
 import { runProjectChecks } from './test-envs/project/project.runner.js';
 
-/** Structural floors from §D.2 — relaxed for a reserved (no-env) `test.type`. */
+/** Structural floors a migrated exercise must clear — relaxed for a reserved (no-env) `test.type`. */
 const MIN_EXAMPLES = 2;
 const MIN_PUBLIC_TESTS = 6;
 const MIN_FINAL_TESTS = 3;
@@ -30,7 +30,7 @@ export interface ExpectedMismatch {
 	input: Record<string, unknown>;
 	/** `expected` as stored in the artifact */
 	artifact: unknown;
-	/** `expected` as recomputed independently (e.g. by the §D.7 recompute worker) */
+	/** `expected` as recomputed independently, to cross-check the stored value */
 	recomputed: unknown;
 }
 
@@ -42,8 +42,7 @@ export interface ExpectedMismatch {
  * This is the uniform harness: it does not judge whether the exercise's
  * algorithm is *interesting* — only that the file is well-formed and its own
  * reference solution(s) actually run green.
- * Checks run in order and the first failure is reported (never accumulated),
- * matching the rule numbering in §D:
+ * Checks run in order and the first failure is reported, never accumulated:
  *
  * 1. Parses — non-empty `title`, and (for a runnable `test.type`) non-empty
  *    `functionName`.
@@ -63,7 +62,7 @@ export interface ExpectedMismatch {
  *
  * @param md   - Full `.md` artifact content.
  * @param path - Optional file path, prefixed onto a failure's `reason` for a
- *   caller (the T0.2 CLI) walking many files.
+ *   caller walking many files.
  * @returns `{ ok: true }`, or `{ ok: false, reason }` naming the first broken rule.
  *
  * @example
@@ -109,7 +108,7 @@ export async function verifyExercise(md: string, path?: string): Promise<VerifyR
 
 /**
  * Compares an artifact's stored `expected` values against an independently
- * recomputed list, by shared index (the §D.7 recompute cross-check).
+ * recomputed list, by shared index.
  *
  * @param artifactCases - The artifact's own cases (`## Tests` + `## Final Tests`, in order).
  * @param recomputed    - Independently recomputed `expected` values, same order.
@@ -160,7 +159,8 @@ async function verifyProjectExercise(parsed: ParsedLeetCode): Promise<string | n
 	const outcomes = await runProjectChecks(parsed, { withSolutions: true });
 	const failed = outcomes.find(o => !o.passed);
 	if (failed) {
-		return `project: check '${failed.name}' failed${failed.detail ? `: ${failed.detail}` : ''}`;
+		const detail = failed.detail ? `: ${failed.detail}` : '';
+		return `project: check '${failed.name}' failed${detail}`;
 	}
 
 	// Green with no overlay means `withSolutions` had nothing to apply, so what
@@ -259,7 +259,8 @@ async function checkSolutionsGreen(parsed: ParsedLeetCode): Promise<string | nul
 		const results = await runSuite(candidate, suite, parsed, env);
 		const bad = results.find(r => !r.passed);
 		if (bad) {
-			return `run: ${lang} failed case ${bad.index}: ${bad.error ?? `expected ${canonicalJson(bad.expected)}, got ${bad.actual}`}`;
+			const mismatch = `expected ${canonicalJson(bad.expected)}, got ${bad.actual}`;
+			return `run: ${lang} failed case ${bad.index}: ${bad.error ?? mismatch}`;
 		}
 	}
 	return null;

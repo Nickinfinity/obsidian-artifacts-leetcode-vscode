@@ -334,7 +334,7 @@ interface ProjectCheckBase {
 /**
  * Grades one exported function through the existing `function` machinery.
  *
- * At most **one** per project (HG-B decision 2): a project's `params` /
+ * At most **one** per project: a project's `params` /
  * `returns` are the artifact-level singletons, so a second function check would
  * have nowhere to declare its own types.
  */
@@ -365,7 +365,7 @@ export interface DomAssertCheck extends ProjectCheckBase {
 /**
  * Asserts **declared** style: inline/style-attribute properties and class
  * presence only. jsdom computes no layout, so geometry is out of scope by
- * construction rather than silently wrong (HG-B decision 8).
+ * construction rather than silently wrong.
  */
 export interface CssAssertCheck extends ProjectCheckBase {
 	kind: 'css-assert';

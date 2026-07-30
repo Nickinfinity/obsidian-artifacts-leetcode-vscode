@@ -230,7 +230,7 @@ function overlaySolutions(files: FileSpec[], solutions: FileSpec[]): FileSpec[] 
  *
  * There is no second execution path: the check's file becomes the candidate and
  * the artifact's own `params` / `returns` type it, which is exactly why a
- * project may declare **at most one** function check (HG-B decision 2).
+ * project may declare **at most one** function check.
  *
  * @param check  - The function check.
  * @param parsed - The artifact, for `params` / `returns` / `test`.

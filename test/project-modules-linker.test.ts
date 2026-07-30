@@ -5,7 +5,7 @@ import * as path from 'node:path';
 import { linkModules } from '../src/services/test-envs/project/modules.linker.js';
 
 /**
- * Per-run `node_modules` linker (plan §A/§B, T1).
+ * Per-run `node_modules` linker — a real directory of symlinks into the shared cache.
  *
  * A `build` check spawns with `cwd = runDir`, which has no ancestor
  * `node_modules` of its own — the shared lib cache lives elsewhere. This
