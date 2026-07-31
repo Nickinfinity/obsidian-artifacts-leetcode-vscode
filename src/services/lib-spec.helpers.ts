@@ -68,13 +68,38 @@ export function validateLibNames(names: readonly string[]): LibNameValidation {
 }
 
 /**
+ * The bare package name of a lib spec, with any `@version` range removed.
+ *
+ * Only the **last** `@` can open a version range: the allowlist admits at most
+ * one more, and only at index 0 as a scope marker, so `lastIndexOf` cannot
+ * mistake `@types/node` (no range) for a versioned name.
+ *
+ * The result names a directory inside a cache's `node_modules`, so callers must
+ * have passed it through {@link validateLibNames} first — that is what keeps a
+ * `..` segment out of the join.
+ *
+ * @param spec - One library spec as written in `libs:`.
+ * @returns The package name alone.
+ *
+ * @example
+ * packageNameOf('react@^19.0.0');   // → 'react'
+ * packageNameOf('@types/node@^20'); // → '@types/node'
+ * packageNameOf('@types/node');     // → '@types/node'
+ */
+export function packageNameOf(spec: string): string {
+	const at = spec.lastIndexOf('@');
+	return at > 0 ? spec.slice(0, at) : spec;
+}
+
+/**
  * Language ids whose `libs:` the installer can actually serve.
  *
- * `installLibs` shells out to **npm** and there is no second installer, so a
- * list declared under any other language cannot be installed. Installing it
- * anyway is worse than skipping it: `libs.python: [requests@^2.0.0]` would
- * fetch the unrelated *npm* package named `requests`, which the name-shape
- * allowlist cannot distinguish from the intended PyPI one.
+ * `installLibs` shells out to **pnpm**, which resolves against the npm
+ * registry, and there is no second installer — so a list declared under any
+ * other language cannot be installed. Installing it anyway is worse than
+ * skipping it: `libs.python: [requests@^2.0.0]` would fetch the unrelated *npm*
+ * package named `requests`, which the name-shape allowlist cannot distinguish
+ * from the intended PyPI one.
  *
  * The two `*react` ids are display-only — a `.jsx`/`.tsx` file maps onto the
  * runnable pair at bundle time — but an author may reasonably declare libs

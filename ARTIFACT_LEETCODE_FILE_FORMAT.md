@@ -828,15 +828,16 @@ a bare scoped/unscoped package name with an optional `@version`, no `..` anywher
 it can reach an install subprocess. Java is out of scope (no transitive resolver in a stock
 JDK).
 
-**The installer is npm-only, so the language key decides whether a list installs at all.**
-`installLibs` shells out to `npm install --prefix`, and there is no second installer, so only
-the languages in `NPM_LANGUAGES` (`javascript`, `typescript`, `javascriptreact`,
-`typescriptreact`) are served. A list under any other key is **kept on the parsed artifact,
-warned about, and skipped** — `libs: { python: [requests@^2.0.0] }` warns
+**The installer serves the npm registry only, so the language key decides whether a list
+installs at all.** `installLibs` shells out to `pnpm add --dir`, and there is no second
+installer, so only the languages in `NPM_LANGUAGES` (`javascript`, `typescript`,
+`javascriptreact`, `typescriptreact`) are served. A list under any other key is **kept on the
+parsed artifact, warned about, and skipped** — `libs: { python: [requests@^2.0.0] }` warns
 `libs: 'python' is not installable — the library installer is npm-only, so these are skipped`
-rather than `npm install`ing the unrelated npm package that happens to share the name. The
+rather than installing the unrelated npm package that happens to share the name. The
 name-shape allowlist cannot tell two registries' packages apart, so the language key is the
-only thing that can.
+only thing that can. (The warning still says *npm-only* because the **registry** is what
+bounds it; the client in front of that registry is pnpm.)
 
 > **This npm-only restriction describes today's installer, not the format.** It is carried
 > across the v1 → v2 move unchanged — this change relocated the block, it did not bless the
@@ -844,10 +845,22 @@ only thing that can.
 > `NPM_LANGUAGES` and this warning with it. Treat it as current behaviour to honour, not as a
 > permanent property of `libs:`.
 
-**Trust class, stated plainly:** installing `libs:` runs the declared packages' own
-`preinstall`/`install`/`postinstall` scripts — **arbitrary code**, the same trust class as
-running a solver's candidate locally. The allowlist bounds the *shape of a name*; it says
-nothing about what the package does once npm fetches it. `--ignore-scripts` is deliberately
-**not** passed: the harness's own toolchain needs it (esbuild's postinstall fetches its
-platform binary). Treat an artifact's `libs:` the way you would treat its `build` argv — as
-code you are choosing to run.
+**Trust class, stated plainly:** the allowlist bounds the *shape of a name*; it says nothing
+about what the package contains once it is fetched. Treat an artifact's `libs:` the way you
+would treat its `build` argv — as code you are choosing to run, because a `build` check, a
+render bundle, or a `dom-assert` will execute it.
+
+**Install scripts, however, do not run.** pnpm 10+ refuses a dependency's
+`preinstall`/`install`/`postinstall` unless it is explicitly approved, and nothing here
+approves one — so an artifact cannot obtain code execution merely by *declaring* a package.
+This is stricter than the npm installer it replaced, which ran them all. Two consequences
+worth knowing:
+
+- `--config.strict-dep-builds=false` **is** passed, because pnpm 11 makes an ignored build
+  script a non-zero exit; without it a perfectly usable install is reported as `install failed`.
+  The flag changes the *exit status*, never whether a script runs.
+- A package that genuinely needs a build step installs quietly incomplete. esbuild — the
+  harness's own toolchain, and the obvious candidate — is unaffected, because its platform
+  binary arrives as an optional dependency rather than a postinstall download. If some future
+  lib does need one, the fix is a hardcoded `--allow-build=<pkg>` list in the installer,
+  **never** one read from an artifact.

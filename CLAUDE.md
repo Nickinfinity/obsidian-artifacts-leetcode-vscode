@@ -407,7 +407,7 @@ maps onto the runnable pair at bundle time.
 |---|---|---|
 | Grammar | [project-parser.helpers.ts](src/services/project-parser.helpers.ts) | `## Files`, `libs:`, `checks:`, `check=<name>` case binding, warnings |
 | Containment | [files.writer.ts](src/services/test-envs/project/files.writer.ts) | `resolveContained` — **the** path authority; writes the tree, `role: readonly` → mode `0o444` |
-| Toolchain | [lib-installer.ts](src/services/test-envs/project/lib-installer.ts) | allowlist → argv `npm install` → shared cache under `os.tmpdir()` |
+| Toolchain | [lib-installer.ts](src/services/test-envs/project/lib-installer.ts) | allowlist → argv `pnpm add` → shared cache under `os.tmpdir()` |
 | Linking | [modules.linker.ts](src/services/test-envs/project/modules.linker.ts) | per-run `node_modules` of symlinks into that cache — pnpm's layout |
 | Render | [render.driver.ts](src/services/test-envs/project/render.driver.ts) | esbuild bundle + jsdom mount, one `__LEET__` line per case |
 | Check kinds | [checks.ts](src/services/test-envs/project/checks.ts) · [build.check.ts](src/services/test-envs/project/build.check.ts) | `dom-assert` / `css-assert` / `build` |
@@ -470,6 +470,14 @@ Rules that are load-bearing, not stylistic:
   *different* key — two cold installs per React exercise, and a linked tree the render driver
   did not resolve from. An empty set installs nothing, links nothing, and leaves no
   `node_modules` in the solver's folder.
+- **Warm means the packages are on disk, not that the marker is.** `isWarm` checks
+  `.leet-installed` **and** a directory per declared spec (`packageNameOf`, the one authority for
+  stripping an `@version`). Trusting the marker alone was a live bug: macOS prunes `/var/folders`
+  by age, so a swept entry kept its marker over an emptied `node_modules` and every later run
+  skipped the install forever — one cache dir read warm holding a single module, another held 86
+  with `jsdom` gone, and five vault artifacts failed with `Cannot find module 'jsdom'`. A failed
+  check reinstalls, repairing the entry in place. Top-level declared packages only; a swept
+  *transitive* dep still reads warm, and npm's reify repairs it on the next reinstall.
 - **`linkModules` never trusts `fs.mkdir(…, { recursive: true })`.** It succeeds silently when
   `runDir/node_modules` is already a symlink to a directory, and every later write then lands in
   the link target. Unreachable in the harness (a fresh `mkdtemp`), but the solve flow keeps its
@@ -489,12 +497,20 @@ Rules that are load-bearing, not stylistic:
   `fs.promises.rm(…, { recursive: true, force: true })`. Both steps operate on the link, not its
   target, so **discarding an attempt does not touch the shared cache** (confirmed against the
   shipped extension-host bundle and re-tested with those exact options).
-- **One install per grading run also means one npm registry.** `runLibs` skips any `libs:`
-  language outside `NPM_LANGUAGES` — the installer is npm-only, and unioning `libs.python` in
-  would fetch the unrelated npm package of that name. The parser warns so the skip is never
-  silent. Installing `libs:` runs the packages' install scripts (arbitrary code, same trust class
-  as a `build` argv); `--ignore-scripts` is not passed because esbuild's postinstall fetches its
-  platform binary. See `ARTIFACT_LEETCODE_FILE_FORMAT.md` §9.4.
+- **One install per grading run also means one registry.** `runLibs` skips any `libs:` language
+  outside `NPM_LANGUAGES` — the installer resolves against the npm registry only, and unioning
+  `libs.python` in would fetch the unrelated npm package of that name. The parser warns so the
+  skip is never silent. See `ARTIFACT_LEETCODE_FILE_FORMAT.md` §9.4.
+- **The installer is `pnpm add --dir`, and dependencies' install scripts do not run.** pnpm is
+  what this project uses everywhere, and pnpm 10+ refuses a dependency's build scripts unless
+  approved — so an artifact-declared package can no longer execute a postinstall, which the npm
+  this replaced allowed. `--config.strict-dep-builds=false` is passed because pnpm 11 turns that
+  refusal into a **non-zero exit**, which would report every usable esbuild install as
+  `install failed`. esbuild itself is unaffected: its platform binary is an optional dependency,
+  not a postinstall download (verified — `transformSync` runs from a scripts-blocked install).
+  The residual ceiling is a package that genuinely needs a build step installing quietly
+  incomplete; the fix would be a hardcoded `--allow-build=<pkg>` list in the installer, never one
+  read from an artifact.
 
 **The solve flow is a directory, not a buffer.** *Solve It* on a `project` materialises the
 starter tree into a fresh `globalStorageUri/attempts/project_<slug>_<run>/`

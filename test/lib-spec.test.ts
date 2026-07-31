@@ -1,5 +1,5 @@
 import * as assert from 'node:assert';
-import { validateLibNames } from '../src/services/lib-spec.helpers.js';
+import { packageNameOf, validateLibNames } from '../src/services/lib-spec.helpers.js';
 
 /**
  * Unit tests for the library-name allowlist — the trust boundary between
@@ -104,5 +104,25 @@ suite('lib-spec.helpers', () => {
         test('an empty list is valid', () => {
             assert.deepStrictEqual(validateLibNames([]), { ok: true });
         });
+    });
+
+    suite('packageNameOf', () => {
+
+        // The name is joined onto a cache path to decide whether an install can
+        // be skipped, so a wrong answer either reinstalls forever or — worse —
+        // reads a swept cache as warm.
+        const cases: [string, string][] = [
+            ['lodash', 'lodash'],
+            ['react@^19.0.0', 'react'],
+            ['left-pad@1.0.0', 'left-pad'],
+            ['@types/node', '@types/node'],
+            ['@types/node@^20.0.0', '@types/node'],
+            ['@scope/pkg', '@scope/pkg'],
+        ];
+        for (const [spec, want] of cases) {
+            test(`'${spec}' → '${want}'`, () => {
+                assert.strictEqual(packageNameOf(spec), want);
+            });
+        }
     });
 });

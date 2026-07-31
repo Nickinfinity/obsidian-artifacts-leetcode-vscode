@@ -146,12 +146,13 @@ function installSetFor(parsed: ParsedLeetCode, checks: ProjectCheck[]): string[]
  * Not restricted to the *render-capable* languages — a `build`-check project
  * declaring `libs.typescript` must install its own libraries, and scoping this
  * to the render set was the bug that made a render check install a superset
- * under a second cache key. But it **is** restricted to the languages npm
- * serves ({@link isNpmServableLanguage}), because `installLibs` shells out to
- * npm and there is no second installer: unioning `libs.python: [requests]` in
- * would `npm install` the unrelated npm package of that name rather than the
- * PyPI one, and the name-shape allowlist cannot tell them apart. The parser
- * warns about the skipped language at authoring time, so nothing is silent.
+ * under a second cache key. But it **is** restricted to the languages the npm
+ * registry serves ({@link isNpmServableLanguage}), because `installLibs` shells
+ * out to pnpm and there is no second installer: unioning `libs.python:
+ * [requests]` in would install the unrelated npm package of that name rather
+ * than the PyPI one, and the name-shape allowlist cannot tell them apart. The
+ * parser warns about the skipped language at authoring time, so nothing is
+ * silent.
  *
  * Order does not matter: `libCacheDir` sorts before hashing.
  *

@@ -4,7 +4,7 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { promisify } from 'node:util';
-import { validateLibNames } from '../../lib-spec.helpers.js';
+import { packageNameOf, validateLibNames } from '../../lib-spec.helpers.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -24,11 +24,35 @@ const WARM_MARKER = '.leet-installed';
 /**
  * Install budget, separate from the suite's per-case timeout.
  *
- * A cold `npm install` of a React toolchain routinely outlives a whole test
- * suite's budget; sharing one number would either kill every install or give
- * every test case five minutes.
+ * A cold install of a React toolchain routinely outlives a whole test suite's
+ * budget; sharing one number would either kill every install or give every test
+ * case five minutes.
  */
 const INSTALL_TIMEOUT_MS = 300_000;
+
+/**
+ * Flags every install carries, ahead of the artifact's own specs.
+ *
+ * `--reporter=append-only` is pnpm's non-interactive reporter: the default one
+ * redraws a live progress UI, which has nothing to redraw on the pipe
+ * `execFile` hands it.
+ *
+ * `--config.strict-dep-builds=false` keeps an *ignored* build script from
+ * failing the install. pnpm 10+ does not run dependencies' install scripts
+ * unless they are approved, and pnpm 11 turns that refusal into a non-zero
+ * exit — so without this flag a perfectly usable install is reported as
+ * `install failed`. Not running them is the point and is **stricter than the
+ * npm this replaced**, which executed every artifact-declared package's
+ * postinstall. esbuild — the one lib here that looks like it needs a script —
+ * ships its platform binary as an optional dependency, so it works untouched
+ * (verified: `transformSync` runs from a scripts-blocked install).
+ *
+ * ponytail: a package that genuinely needs a build step installs quietly
+ * incomplete. Upgrade path is a hardcoded `--allow-build=<pkg>` allowlist here
+ * — never one read from an artifact, which would be arbitrary code execution
+ * by declaration.
+ */
+const PNPM_FLAGS: readonly string[] = ['--reporter=append-only', '--config.strict-dep-builds=false'];
 
 /** How the installer reports back. */
 export type InstallResult =
@@ -65,13 +89,18 @@ export function libCacheDir(libs: readonly string[]): string {
 }
 
 /**
- * Install an artifact's declared libraries into the shared cache, once.
+ * Install an artifact's declared libraries into the shared cache, once, with
+ * **pnpm** — the package manager this project uses everywhere else, including
+ * the subprocesses the extension spawns.
  *
  * **The allowlist runs first, on every call.** A warm cache short-circuits the
  * *install*, never the validation — otherwise a set whose key happened to be
- * warm would be a way to smuggle an unvalidated name through. Names reach `npm`
+ * warm would be a way to smuggle an unvalidated name through. Names reach `pnpm`
  * as elements of an **argv array**, so a `--flag`-shaped or `../`-shaped name
  * could not be reinterpreted even if it got this far.
+ *
+ * `pnpm add --dir <cache>` needs no manifest in place first: it writes its own
+ * `package.json` and `pnpm-lock.yaml` beside the `node_modules` it builds.
  *
  * Once warm, an install is skipped entirely, which is also what makes an
  * offline run work.
@@ -96,17 +125,17 @@ export async function installLibs(libs: readonly string[], options: InstallOptio
 
 	const dir = libCacheDir(libs);
 	if (libs.length === 0) { return { ok: true, dir }; }
-	if (await isWarm(dir)) { return { ok: true, dir }; }
+	if (await isWarm(dir, libs)) { return { ok: true, dir }; }
 
 	const run = options.run ?? defaultRun;
 	try {
 		await fs.mkdir(dir, { recursive: true });
 		// ponytail: no lock around this install — two cold runs of the same lib
-		// set (e.g. two parallel `verify-exercise.mjs` invocations) both `npm
-		// install --prefix` this same dir at once. Upgrade path: install into
+		// set (e.g. two parallel `verify-exercise.mjs` invocations) both `pnpm
+		// add --dir` this same dir at once. Upgrade path: install into
 		// `<key>.tmp-<pid>` then `fs.rename` into place, which also makes the
 		// warm marker atomic instead of merely self-healing (see isWarm below).
-		await run('npm', ['install', '--prefix', dir, '--no-audit', '--no-fund', '--loglevel', 'error', ...libs], dir);
+		await run('pnpm', ['add', '--dir', dir, ...PNPM_FLAGS, ...libs], dir);
 		await fs.writeFile(path.join(dir, WARM_MARKER), libs.join('\n'), 'utf-8');
 		return { ok: true, dir };
 	} catch (e) {
@@ -115,20 +144,47 @@ export async function installLibs(libs: readonly string[], options: InstallOptio
 }
 
 /**
- * Whether a previous install of this exact set completed.
+ * Whether a previous install of this exact set completed **and is still there**.
  *
- * Requires the marker **and** a `node_modules` directory. A marker with no
- * `node_modules` is a poisoned entry — an install that never finished (this
- * is exactly the shape of two real cache dirs found on disk pre-fix,
+ * Requires the marker **and** every declared package's directory. The marker
+ * alone is a poisoned entry — an install that never finished (this is exactly
+ * the shape of two real cache dirs found on disk pre-fix,
  * `26cd6fc0919db386` / `acfe6d9ef8ec1555`, left behind by the installer's own
- * unit tests before cache isolation existed). Checking both self-heals a
- * poisoned entry on its very next resolve instead of skipping the install
- * forever.
+ * unit tests before cache isolation existed).
+ *
+ * Checking the *packages* rather than merely the `node_modules` directory is
+ * what survives an OS temp-dir sweep: `/var/folders` on macOS prunes cache
+ * contents by age, and a swept entry kept its marker and an emptied (or
+ * partly emptied) `node_modules`, so every later run read warm and skipped the
+ * install — one real cache dir claimed warm holding a single module, another
+ * held 86 with `jsdom` gone, and five vault artifacts failed with
+ * `Cannot find module 'jsdom'`. A failed check reinstalls, which repairs the
+ * entry in place.
+ *
+ * Under pnpm's layout `node_modules/<pkg>` is a **symlink** into `.pnpm/`, and
+ * `fs.access` follows it — so a sweep that took the link's target and left the
+ * link behind reads cold here, which is exactly what it should do.
+ *
+ * ponytail: top-level declared packages only — a sweep that took a *transitive*
+ * dependency and left its parent still reads warm. npm's own reify would repair
+ * that on the reinstall this triggers; walking the whole tree per resolve costs
+ * far more than it saves. Upgrade path if it ever bites: shell `npm ls
+ * --prefix <dir> --depth=0 --json` instead.
+ *
+ * @param dir  - The cache directory for this lib set.
+ * @param libs - The declared specs, already allowlist-validated by the caller.
+ * @returns `true` only when the install can safely be skipped.
  */
-async function isWarm(dir: string): Promise<boolean> {
+async function isWarm(dir: string, libs: readonly string[]): Promise<boolean> {
 	const hasMarker = await fs.access(path.join(dir, WARM_MARKER)).then(() => true, () => false);
 	if (!hasMarker) { return false; }
-	return fs.access(path.join(dir, 'node_modules')).then(() => true, () => false);
+
+	const modules = path.join(dir, 'node_modules');
+	for (const lib of libs) {
+		const present = await fs.access(path.join(modules, packageNameOf(lib))).then(() => true, () => false);
+		if (!present) { return false; }
+	}
+	return true;
 }
 
 /** Real runner: argv array via `execFile`, never a command string. */

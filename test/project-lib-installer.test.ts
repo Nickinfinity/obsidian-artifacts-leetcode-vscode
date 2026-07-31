@@ -2,6 +2,7 @@ import * as assert from 'node:assert';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { packageNameOf } from '../src/services/lib-spec.helpers.js';
 import { installLibs, libCacheDir } from '../src/services/test-envs/project/lib-installer.js';
 
 /**
@@ -33,8 +34,14 @@ suite('project lib installer', () => {
 
 	/**
 	 * Records what would have been spawned, and never spawns it — but does
-	 * create `node_modules` in the target dir, the one side effect a real
-	 * `npm install` has that `isWarm` now depends on (T3).
+	 * create `node_modules` **and a directory per installed package**, the side
+	 * effects of a real `pnpm add` that `isWarm` depends on.
+	 *
+	 * The specs are recovered from the argv rather than passed in, so a call
+	 * site reads as one `installLibs` call and cannot drift from it. A spec is
+	 * any argument that is neither the subcommand, nor the target directory,
+	 * nor a flag — and the allowlist guarantees no spec starts with `-`, so
+	 * this stays correct as the flag set changes.
 	 */
 	function spy(): { calls: { file: string; args: string[] }[]; run: (file: string, args: string[], cwd: string) => Promise<void> } {
 		const calls: { file: string; args: string[] }[] = [];
@@ -43,6 +50,10 @@ suite('project lib installer', () => {
 			run: async (file, args, cwd) => {
 				calls.push({ file, args });
 				fs.mkdirSync(path.join(cwd, 'node_modules'), { recursive: true });
+				const specs = args.filter(a => !a.startsWith('-') && a !== 'add' && a !== cwd);
+				for (const spec of specs) {
+					fs.mkdirSync(path.join(cwd, 'node_modules', packageNameOf(spec)), { recursive: true });
+				}
 			},
 		};
 	}
@@ -85,9 +96,9 @@ suite('project lib installer', () => {
 		});
 	});
 
-	// ── Warm requires node_modules, not just the marker (T3) ──────────────────
+	// ── Warm requires the packages, not just the marker ───────────────────────
 
-	suite('warm cache requires node_modules', () => {
+	suite('warm cache requires the declared packages on disk', () => {
 
 		test('a marker with no node_modules is not warm — the install runs again', async () => {
 			const libs = ['left-pad@1.0.0'];
@@ -102,10 +113,10 @@ suite('project lib installer', () => {
 			assert.strictEqual(result.ok, true);
 		});
 
-		test('marker plus node_modules is warm — the install is skipped', async () => {
+		test('marker plus every package is warm — the install is skipped', async () => {
 			const libs = ['left-pad@2.0.0'];
 			const dir = libCacheDir(libs);
-			fs.mkdirSync(path.join(dir, 'node_modules'), { recursive: true });
+			fs.mkdirSync(path.join(dir, 'node_modules', 'left-pad'), { recursive: true });
 			fs.writeFileSync(path.join(dir, '.leet-installed'), libs.join('\n'), 'utf-8');
 
 			const runner = spy();
@@ -113,6 +124,51 @@ suite('project lib installer', () => {
 
 			assert.strictEqual(runner.calls.length, 0, 'a genuinely complete cache must skip the install');
 			assert.strictEqual(result.ok, true);
+		});
+
+		test('a swept cache — marker, empty node_modules — reinstalls', async () => {
+			// The real defect: macOS prunes /var/folders by age, leaving the
+			// marker and an emptied node_modules. Reading that as warm skipped
+			// the install forever, and five vault artifacts failed with
+			// `Cannot find module 'jsdom'`.
+			const libs = ['jsdom@^26.0.0'];
+			const dir = libCacheDir(libs);
+			fs.mkdirSync(path.join(dir, 'node_modules'), { recursive: true });
+			fs.writeFileSync(path.join(dir, '.leet-installed'), libs.join('\n'), 'utf-8');
+
+			const runner = spy();
+			const result = await installLibs(libs, { run: runner.run });
+
+			assert.strictEqual(runner.calls.length, 1, 'an emptied cache must not read as warm');
+			assert.strictEqual(result.ok, true);
+			assert.ok(fs.existsSync(path.join(dir, 'node_modules', 'jsdom')), 'the reinstall must repair the entry');
+		});
+
+		test('a partly swept cache — one package gone — reinstalls', async () => {
+			// The other real shape: 86 modules present, jsdom missing.
+			const libs = ['react@^19.0.0', 'jsdom@^26.0.0'];
+			const dir = libCacheDir(libs);
+			fs.mkdirSync(path.join(dir, 'node_modules', 'react'), { recursive: true });
+			fs.writeFileSync(path.join(dir, '.leet-installed'), libs.join('\n'), 'utf-8');
+
+			const runner = spy();
+			await installLibs(libs, { run: runner.run });
+
+			assert.strictEqual(runner.calls.length, 1, 'one missing declared package must defeat the warm marker');
+		});
+
+		test('a scoped package is looked for under its scope directory', async () => {
+			// `@types/node@^20` must resolve to node_modules/@types/node, never
+			// to a top-level `@types/node@^20` that no install ever writes.
+			const libs = ['@types/node@^20.0.0'];
+			const dir = libCacheDir(libs);
+			fs.mkdirSync(path.join(dir, 'node_modules', '@types', 'node'), { recursive: true });
+			fs.writeFileSync(path.join(dir, '.leet-installed'), libs.join('\n'), 'utf-8');
+
+			const runner = spy();
+			await installLibs(libs, { run: runner.run });
+
+			assert.strictEqual(runner.calls.length, 0, 'a scoped package present on disk must read as warm');
 		});
 
 		test('node_modules with no marker is not warm — a Ctrl-C-killed install runs again', async () => {
@@ -176,6 +232,27 @@ suite('project lib installer', () => {
 	// ── Command shape ─────────────────────────────────────────────────────────
 
 	suite('install command', () => {
+
+		test('runs pnpm, never npm — the package manager this project uses', async () => {
+			const runner = spy();
+			await installLibs(['react@^19.0.0'], { run: runner.run });
+
+			assert.strictEqual(runner.calls[0].file, 'pnpm');
+			assert.strictEqual(runner.calls[0].args[0], 'add');
+		});
+
+		test('lets an ignored build script pass, so a usable install is not reported failed', async () => {
+			// pnpm 10+ refuses dependencies' install scripts, and pnpm 11 exits
+			// non-zero over it — without this flag every esbuild install reads
+			// as `install failed`.
+			const runner = spy();
+			await installLibs(['esbuild@^0.25.0'], { run: runner.run });
+
+			assert.ok(
+				runner.calls[0].args.includes('--config.strict-dep-builds=false'),
+				runner.calls[0].args.join(' '),
+			);
+		});
 
 		test('is an argv array, with every lib as its own element', async () => {
 			const runner = spy();
