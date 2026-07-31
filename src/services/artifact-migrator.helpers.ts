@@ -1,4 +1,5 @@
 import { BODY_SET_KEYS, splitFrontmatter } from './leetcode-config-blocks.helpers.js';
+import { boundaryOutsideFence } from './leetcode-section-bounds.helpers.js';
 
 /**
  * The pure half of the v1 → v2 artifact migration: moving execution config out
@@ -134,9 +135,17 @@ export function migrateArtifact(md: string): string {
 
 	const newFrontmatter = retained.flatMap(b => b.lines).join('\n').replace(/\s+$/, '');
 
-	const headingAt = body.search(FIRST_HEADING_RE);
-	const head = headingAt === -1 ? body : body.slice(0, headingAt);
-	const rest = headingAt === -1 ? '' : body.slice(headingAt);
+	// **Fence-aware, and that is load-bearing.** `extractDescription` finds its
+	// boundary through `boundaryOutsideFence`; a bare `/^#+ /m` here would
+	// disagree with it the moment the description contains a fenced block whose
+	// first line is a column-0 `#` — a comment in Python, shell, YAML and
+	// Dockerfile. The migrator would then treat that comment as the first
+	// heading and splice the signature fence *inside the code block*, where the
+	// parser never looks: `functionName` silently becomes `''`. Sharing the
+	// parser's own authority is what makes the split provably identical.
+	const headingAt = boundaryOutsideFence(body, 0, FIRST_HEADING_RE);
+	const head = headingAt >= body.length ? body : body.slice(0, headingAt);
+	const rest = headingAt >= body.length ? '' : body.slice(headingAt);
 
 	let newBody = head.replace(/\s+$/, '');
 	const signatureFence = renderFence(signature);
@@ -166,8 +175,11 @@ export function migrateArtifact(md: string): string {
 function placeExecutionFence(rest: string, fence: string): string {
 	if (fence === '') { return rest; }
 	for (const anchor of EXECUTION_ANCHORS) {
-		const at = rest.search(anchor);
-		if (at !== -1) { return rest.slice(0, at) + fence + '\n\n' + rest.slice(at); }
+		// Fence-aware for the same reason the description boundary is: a
+		// `## Tests` line inside a ```markdown block is documentation, not the
+		// section, and splicing the fence there would bury it in a code block.
+		const at = boundaryOutsideFence(rest, 0, anchor);
+		if (at < rest.length) { return rest.slice(0, at) + fence + '\n\n' + rest.slice(at); }
 	}
 	if (rest === '') { return fence + '\n'; }
 	return rest.replace(/\s*$/, '') + '\n\n' + fence + '\n';
