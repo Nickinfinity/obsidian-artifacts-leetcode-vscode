@@ -186,7 +186,9 @@ function toLines(raw: string): Line[] {
 	const out: Line[] = [];
 	for (const physical of raw.split('\n')) {
 		const noCr = physical.endsWith('\r') ? physical.slice(0, -1) : physical;
-		const text = stripComment(noCr).replace(/\s+$/, '');
+		// `trimEnd()` rather than `/\s+$/` — the regex backtracks on a long
+		// whitespace run, and this walks artifact-controlled text.
+		const text = stripComment(noCr).trimEnd();
 		if (text.trim() === '') { continue; }
 		out.push({ indent: /^ */.exec(text)?.[0].length ?? 0, text: text.trim() });
 	}
@@ -323,6 +325,10 @@ function emitScalar(value: unknown): string {
 	// scalar — `String({})` would silently emit `[object Object]`, losing data.
 	if (typeof value !== 'string') { return JSON.stringify(value ?? null); }
 	const s = value;
+	// Leading/trailing whitespace **must** be quoted: the line reader trims every
+	// scalar, so an unquoted `a ` reads back as `a`. `PLAIN_SAFE_RE` permits an
+	// inner space, which makes a trailing one look safe when it is not.
+	if (s !== s.trim()) { return JSON.stringify(s); }
 	if (!PLAIN_SAFE_RE.test(s) || NEEDS_QUOTE_CHARS.test(s)) { return JSON.stringify(s); }
 	// Plain-safe by shape, but still re-typed if it looks like a JSON literal.
 	return typePlainScalar(s) === s ? s : JSON.stringify(s);

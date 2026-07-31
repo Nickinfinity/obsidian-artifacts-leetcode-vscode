@@ -150,6 +150,33 @@ suite('yaml-cases — JSON types, YAML syntax', () => {
 			});
 		}
 
+		// Found by adversarial pass: `PLAIN_SAFE_RE` permits an inner space, which
+		// made a *trailing* one look safe — and every scalar is trimmed on read,
+		// so `a ` came back as `a`.
+		for (const value of ['a ', ' a', 'a\t', '\ta', 'a  b', '  ']) {
+			test(`round-trips whitespace-edge ${JSON.stringify(value)}`, () => {
+				const source = [{ input: { s: value }, expected: value }];
+				assert.deepStrictEqual(parseYamlCases(emitYamlCases(source)), source);
+			});
+		}
+
+		test('a scalar with edge whitespace is emitted quoted', () => {
+			assert.ok(emitYamlCases([{ expected: 'a ' }]).includes('"a "'));
+		});
+
+		test('malformed indentation refuses rather than truncating the suite', () => {
+			// Silently returning the cases it *could* read would hand the runner a
+			// short suite that still looks valid.
+			assert.strictEqual(parseYamlCases('- expected: 1\n   - odd'), null);
+			assert.strictEqual(parseYamlCases('  - expected: 1\n- expected: 2'), null);
+		});
+
+		test('pathological nesting degrades to null instead of crashing', () => {
+			const deep = '- expected: ' + '['.repeat(10_000) + '1' + ']'.repeat(10_000);
+			assert.doesNotThrow(() => parseYamlCases(deep));
+			assert.strictEqual(parseYamlCases(deep), null);
+		});
+
 		test('an empty input map emits as flow, not a childless block header', () => {
 			// `input:` with nothing under it reads back as null, silently turning
 			// a no-argument case into a broken one.
