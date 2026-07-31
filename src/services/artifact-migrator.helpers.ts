@@ -1,5 +1,7 @@
+import { safeJsonParse } from '../utils/safe-json.js';
 import { BODY_SET_KEYS, splitFrontmatter } from './leetcode-config-blocks.helpers.js';
-import { boundaryOutsideFence } from './leetcode-section-bounds.helpers.js';
+import { boundaryOutsideFence, sectionBounds } from './leetcode-section-bounds.helpers.js';
+import { emitYamlCases } from './yaml-cases.helpers.js';
 
 /**
  * The pure half of the v1 → v2 artifact migration: moving execution config out
@@ -122,12 +124,17 @@ function renderFence(picked: FrontmatterBlock[]): string {
  * // → frontmatter keeps `type`; a fence carrying `returns: int` sits before `## Tests`
  */
 export function migrateArtifact(md: string): string {
-	const { fmRaw, body } = splitFrontmatter(md);
-	if (fmRaw === '' && !md.startsWith('---')) { return md; }
+	// Case fences are independent of the frontmatter move, so they convert even
+	// for an artifact whose config already lives in a body fence — that is what
+	// lets this run over an already-v2 vault and still reformat its test data.
+	const withYamlCases = migrateCaseFences(md);
+
+	const { fmRaw, body } = splitFrontmatter(withYamlCases);
+	if (fmRaw === '' && !withYamlCases.startsWith('---')) { return withYamlCases; }
 
 	const grouped = groupBlocks(fmRaw);
 	const moving = grouped.filter(b => b.key !== null && BODY_SET_KEYS.has(b.key));
-	if (moving.length === 0) { return md; }
+	if (moving.length === 0) { return withYamlCases; }
 
 	const retained  = grouped.filter(b => b.key === null || !BODY_SET_KEYS.has(b.key));
 	const signature = moving.filter(b => b.key !== null && SIGNATURE_KEYS.has(b.key));
@@ -183,6 +190,57 @@ function placeExecutionFence(rest: string, fence: string): string {
 	}
 	if (rest === '') { return fence + '\n'; }
 	return rest.replace(/\s*$/, '') + '\n\n' + fence + '\n';
+}
+
+/** The two sections whose ` ```json ` fences hold case data. */
+const CASE_SECTION_RES: readonly RegExp[] = [/^## Tests\s*$/m, /^## Final Tests\s*$/m];
+/** A `##`-level section ends at the next `#` or `##` heading. */
+const CASE_BOUNDARY_RE = /^#{1,2} /m;
+
+/**
+ * Rewrites the ` ```json ` case fences of `## Tests` / `## Final Tests` as
+ * ` ```yaml ` fences carrying the same cases.
+ *
+ * **Scoped to those two sections, deliberately.** `## Files` declares real files
+ * with fences like ` ```json path=package.json role=hidden `, and a `# Solutions`
+ * overlay does the same — converting one of those would corrupt a project's tree
+ * rather than reformat its test data. Section bounds come from `sectionBounds`,
+ * so a `## Tests` line inside a fenced block is not mistaken for the heading.
+ *
+ * A fence whose body is not a JSON array is left exactly as it is: this
+ * function reformats data it fully understands and declines everything else.
+ *
+ * @param md - Full artifact text.
+ * @returns The text with case fences converted; unchanged where nothing applied.
+ *
+ * @example
+ * migrateCaseFences('## Tests\n```json\n[{"input":{"x":1},"expected":2}]\n```');
+ * // → '## Tests\n```yaml\n- input:\n    x: 1\n  expected: 2\n```'
+ */
+export function migrateCaseFences(md: string): string {
+	// Sections are rewritten last-first so an earlier rewrite cannot shift the
+	// offsets of a later one.
+	const spans = CASE_SECTION_RES
+		.map(re => sectionBounds(md, re, CASE_BOUNDARY_RE))
+		.filter((b): b is NonNullable<typeof b> => b !== null)
+		.sort((a, b) => b.headingEnd - a.headingEnd);
+
+	let out = md;
+	for (const span of spans) {
+		const section = out.slice(span.headingEnd, span.bodyEnd);
+		out = out.slice(0, span.headingEnd) + convertFences(section) + out.slice(span.bodyEnd);
+	}
+	return out;
+}
+
+/** Replace every well-formed ` ```json ` case fence in one section body. */
+function convertFences(section: string): string {
+	const fences = /```json([^\n]*)\r?\n([\s\S]*?)```/g;
+	return section.replace(fences, (whole, info: string, body: string) => {
+		const parsed: unknown = safeJsonParse(body);
+		if (!Array.isArray(parsed)) { return whole; }
+		return '```yaml' + info + '\n' + emitYamlCases(parsed) + '\n```';
+	});
 }
 
 /**

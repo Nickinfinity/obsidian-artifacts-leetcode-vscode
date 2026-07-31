@@ -361,10 +361,61 @@ output: [0,1]
 
 ### 3.3 `## Tests` and `## Final Tests`
 
-Each holds **one** ` ```json ` fence: an array of
-`{ "input": Record<string, unknown>, "expected": unknown }`. The `input` keys
-must match the `params` names. Malformed JSON, a missing fence, or a missing
+Each holds case fences: an array of
+`{ input: Record<string, unknown>, expected: unknown }`. The `input` keys must
+match the `params` names. A malformed fence, a missing fence, or a missing
 section all yield `[]` — the parser never throws.
+
+**Two spellings are accepted, ` ```yaml ` and ` ```json `.** The info-string
+says which grammar the body is written in, so this is not a dual read of one
+thing — it is two notations for the same case list, each parsed by exactly one
+parser. `yaml` is the preferred form and what the migrator writes; `json`
+remains valid indefinitely.
+
+~~~md
+## Tests
+
+```yaml
+- input:
+    arr: [1, -2, 0, 3]
+  expected: 3
+- input:
+    arr: [5]
+  expected: 5
+```
+~~~
+
+#### The YAML here is **not** YAML 1.1 — it is JSON's type system with YAML's syntax
+
+This is the single most important rule in this section, and it exists because a
+silently re-typed *value* is worse than a loud parse failure: an exercise's
+reference solution is graded against its own expecteds, so a coerced expected
+makes the harness verify **green while teaching the wrong answer**.
+
+| Unquoted scalar | Becomes | Note |
+|---|---|---|
+| `true` · `false` | boolean | exact lower-case only |
+| `null` · `~` | null | |
+| strict JSON number (`3`, `-0.5`, `1e3`) | number | |
+| **everything else** | **string** | |
+
+So every YAML 1.1 implicit type is **left as a string**: `yes`/`no`/`on`/`off`,
+`y`/`n`, leading-zero octals (`0051` stays `"0051"`, not `41`), sexagesimals
+(`1:1` stays `"1:1"`, not `61`), `.inf`, `.nan`. A **quoted** scalar is always a
+string and is never re-typed.
+
+A key must be followed by whitespace or end-of-line, so `1:1` and
+`http://example.com` are scalars, not mappings.
+
+**Not supported, by design** — each is a parser-complexity or ambiguity risk
+with no use in case data: anchors and aliases (`&`/`*`), explicit tags (`!!str`),
+multiple documents (`---`), block scalars (`|`, `>`), complex keys, merge keys.
+Use flow style (`[a, b]`, `{k: v}`) for nested collections; the migrator does.
+
+**Writing it by hand:** if a string could be read as a number, a boolean, `null`,
+or contains `,` `:` `#` `[` `]` `{` `}`, quote it. The migrator quotes
+automatically, and `emit → parse` is verified to be the identity on every value
+JSON can express.
 
 - `## Tests` — the **public** suite: shown in the panel, run by **Run Tests**.
 - `## Final Tests` — the **hidden** grading suite, appended by **Submit**. Counts
@@ -401,7 +452,9 @@ absent, malformed, or missing a required field is skipped (no partial entry).
 ### 3.7 Fence info-strings
 
 - ` ```example ` — examples.
-- ` ```json ` — test suites.
+- ` ```yaml ` / ` ```json ` — test suites (§3.3). A **bare** ` ```yaml ` fence
+  inside `## Tests` / `## Final Tests` is case data; ` ```yaml leetcode ` is
+  config even there, and is never read as an empty suite.
 - ` ```yaml leetcode ` — a **config fence** (§2.5). `yaml` first so Obsidian
   highlights it; the `leetcode` token must be **bare** — a second token of the
   form `key=value` (e.g. `path=`) makes it a `## Files` entry instead.

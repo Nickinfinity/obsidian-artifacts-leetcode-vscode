@@ -7,6 +7,7 @@ import type {
 import { safeJsonParse } from '../utils/safe-json.js';
 import { type ConfigSpan, extractConfigBlocks } from './leetcode-config-blocks.helpers.js';
 import { boundaryOutsideFence, sectionBounds } from './leetcode-section-bounds.helpers.js';
+import { parseYamlCases } from './yaml-cases.helpers.js';
 
 const SOLUTIONS_RE     = /^# Solutions\s*$/m;
 const SETUP_RE         = /^# Setup\s*$/m;
@@ -196,17 +197,32 @@ export function extractCaseFences(body: string, headingRe: RegExp): CaseFence[] 
 	const out: CaseFence[] = [];
 	// Fresh regex per call — a `g` flag at module scope carries `lastIndex`
 	// between calls and would silently skip fences on the second read.
-	const fences = /```json([^\n]*)\r?\n([\s\S]*?)```/g;
+	//
+	// Both ` ```json ` and ` ```yaml ` are read. The info-string is an
+	// unambiguous discriminator — it says which grammar the body is written in —
+	// so accepting both is not a dual read of one thing, it is two spellings of
+	// the case list, each parsed by exactly one parser. `yaml` here is the
+	// JSON-typed subset in `yaml-cases.helpers.ts`, never full YAML 1.1.
+	const fences = /```(json|yaml)([^\n]*)\r?\n([\s\S]*?)```/g;
 	let match = fences.exec(section);
 	while (match !== null) {
-		const parsed = safeJsonParse(match[2]);
-		out.push({
-			check: checkAttr(match[1]),
-			cases: Array.isArray(parsed) ? parsed as TestCase[] : [],
-		});
+		// A ` ```yaml leetcode ` config fence is not case data — it can appear
+		// inside a case section, and must not be read as an empty suite.
+		if (!isConfigFence(match[1], match[2])) {
+			const parsed = match[1] === 'yaml' ? parseYamlCases(match[3]) : safeJsonParse(match[3]);
+			out.push({
+				check: checkAttr(match[2]),
+				cases: Array.isArray(parsed) ? parsed as TestCase[] : [],
+			});
+		}
 		match = fences.exec(section);
 	}
 	return out;
+}
+
+/** A ` ```yaml leetcode ` fence is config (§2.5), never a case list. */
+function isConfigFence(lang: string, infoString: string): boolean {
+	return lang === 'yaml' && /^\s*leetcode\s*$/.test(infoString);
 }
 
 /** Read `check=<name>` (quoted or bare) out of a fence info-string. */

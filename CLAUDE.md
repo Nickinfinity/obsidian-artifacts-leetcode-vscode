@@ -273,6 +273,16 @@ single `parseFrontmatter` call.
 ignored — *not parsed* — warned about, and fails `verifyExercise`. A v1 artifact therefore
 parses to `functionName: ''` and `params: []` rather than half-working.
 
+**Case data in `## Tests` / `## Final Tests` accepts ` ```yaml ` or ` ```json `** — the
+info-string picks the parser, so this is two notations, not a dual read. The YAML is
+**JSON's type system with YAML's syntax** ([yaml-cases.helpers.ts](src/services/yaml-cases.helpers.ts)):
+an unquoted scalar types only as `true`/`false`, `null`/`~`, or a strict JSON number, and
+**everything else stays a string**. That is deliberate and load-bearing — full YAML 1.1
+would silently re-type this vault's data (`"0051"` → 41, `"1:1"` → 61, `"no"` → false,
+`""` → null), and a coerced *expected* makes the harness verify green while teaching the
+wrong answer, because the reference solution is graded against that same value. The emitter
+quotes anything ambiguous, and `emit → parse` is pinned as the identity.
+
 Behaviour the spec does **not** cover:
 
 - **`functions:`** overrides `function` per language — language-specific code reads
