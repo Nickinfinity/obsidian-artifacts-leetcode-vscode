@@ -50,14 +50,14 @@ suite('libs declarations', () => {
 			'libs:',
 			'  python: [requests[socks]==2.32.3]',
 			'  rust: [serde@^1+derive]',
-			'  java: [com.google.guava:guava:33.3.1]',
+			'  java: [com.google.guava:guava:33.3.1-jre]',
 			'  typescript: [react@^19.0.0]',
 		].join('\n')));
 
 		assert.deepStrictEqual(parsed.libs, {
 			python: ['requests[socks]==2.32.3'],
 			rust: ['serde@^1+derive'],
-			java: ['com.google.guava:guava:33.3.1'],
+			java: ['com.google.guava:guava:33.3.1-jre'],
 			typescript: ['react@^19.0.0'],
 		});
 		assert.deepStrictEqual(parsed.warnings, undefined, 'a clean artifact warns about nothing');
@@ -69,7 +69,7 @@ suite('libs declarations', () => {
 	 * the four registries.
 	 */
 	test('a spec valid elsewhere is refused under the wrong grammar', () => {
-		const parsed = parseLeetCode(functionArtifact('libs:\n  python: [com.google.guava:guava:33.3.1]'));
+		const parsed = parseLeetCode(functionArtifact('libs:\n  python: [com.google.guava:guava:33.3.1-jre]'));
 
 		assert.strictEqual(parsed.libs, undefined);
 		assert.ok((parsed.warnings ?? []).some(w => w.includes('guava')), JSON.stringify(parsed.warnings));

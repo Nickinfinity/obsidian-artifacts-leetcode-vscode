@@ -194,9 +194,9 @@ export function parseCargoSpec(raw: string): LibSpecParse<CargoLibSpec> {
  * @returns The parsed fields, or the reason it was refused.
  *
  * @example
- * parseMavenSpec('com.google.guava:guava:33.3.1');
+ * parseMavenSpec('com.google.guava:guava:33.3.1-jre');
  * // → { ok: true, spec: { ecosystem: 'maven', groupId: 'com.google.guava',
- * //      artifactId: 'guava', version: '33.3.1' } }
+ * //      artifactId: 'guava', version: '33.3.1-jre' } }
  */
 export function parseMavenSpec(raw: string): LibSpecParse<MavenLibSpec> {
 	if (hasTraversal(raw)) { return refuse(raw, 'contains a parent-directory segment'); }

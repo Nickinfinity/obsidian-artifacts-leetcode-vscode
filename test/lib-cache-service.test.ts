@@ -291,6 +291,26 @@ suite('lib cache service', () => {
 			);
 		});
 
+		/**
+		 * Before this, a failed maven resolve reported only
+		 * `install failed: Command failed: mvn -q -f …` — the command and
+		 * nothing about the problem. Maven writes its `[ERROR]` diagnostics to
+		 * **stdout**, so reading stderr alone left the message empty for the
+		 * ecosystem most likely to fail on a version that does not exist.
+		 */
+		test('a failure reports what the toolchain said, not just the command', async () => {
+			const noisy = Object.assign(new Error('Command failed: mvn -q -f /tmp/x/pom.xml'), {
+				stdout: '[ERROR] com.google.guava:guava:jar:33.3.1 was not found',
+				stderr: '',
+			});
+			const spy = stub('maven', { throws: noisy as NodeJS.ErrnoException });
+
+			const result = await ensureLibEnv('maven', ['com.x:y:1.0'], withStub(spy));
+
+			assert.ok(!result.ok);
+			assert.match(result.reason, /was not found/);
+		});
+
 		test('any other failure keeps its own message', async () => {
 			const spy = stub('npm', { throws: new Error('registry returned 500') });
 			const result = await ensureLibEnv('npm', ['react'], withStub(spy));

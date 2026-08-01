@@ -863,7 +863,12 @@ accepts, parsed into fields — never waved through by one pattern:
 | npm | `react@^19.0.0`, `@types/node@^20` | name (scope included), range |
 | pip | `numpy`, `"numpy>=2,<3"`, `requests[socks]==2.32.3` | name, extras, predicates |
 | cargo | `serde_json@1.0`, `serde@^1+derive+std` | name, req, features |
-| maven | `com.google.guava:guava:33.3.1` (`:packaging:classifier` optional) | the coordinate segments |
+| maven | `com.google.guava:guava:33.3.1-jre` (`:packaging:classifier` optional) | the coordinate segments |
+
+The maven version is the **published** one, qualifier included: guava ships `33.3.1-jre` and
+`33.3.1-android`, never a bare `33.3.1`. The grammar cannot know that — every segment is a
+plain identifier to it — so a version that does not exist passes validation and fails at
+resolve time, where the installer now reports Maven's own `was not found` line.
 
 An entry its registry's grammar refuses is **dropped with a warning** before it can reach an
 install subprocess; the rest of that language's list still installs.

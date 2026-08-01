@@ -156,10 +156,10 @@ suite('lib-spec grammars', () => {
 
 		test('parses a three-part coordinate', () => {
 			assert.deepStrictEqual(
-				specOf('maven', 'com.google.guava:guava:33.3.1'),
+				specOf('maven', 'com.google.guava:guava:33.3.1-jre'),
 				{
 					ecosystem: 'maven', groupId: 'com.google.guava',
-					artifactId: 'guava', version: '33.3.1',
+					artifactId: 'guava', version: '33.3.1-jre',
 				},
 			);
 		});

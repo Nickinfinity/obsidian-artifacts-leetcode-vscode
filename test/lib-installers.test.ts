@@ -170,13 +170,13 @@ suite('lib installers', () => {
 	suite('maven', () => {
 
 		test('renders exactly one dependency element per coordinate', () => {
-			const specs = specsOf<MavenLibSpec>('maven', ['com.google.guava:guava:33.3.1']);
+			const specs = specsOf<MavenLibSpec>('maven', ['com.google.guava:guava:33.3.1-jre']);
 			const pom = renderPomXml(specs);
 
 			assert.strictEqual(pom.match(/<dependency>/g)?.length, 1);
 			assert.match(pom, /<groupId>com\.google\.guava<\/groupId>/);
 			assert.match(pom, /<artifactId>guava<\/artifactId>/);
-			assert.match(pom, /<version>33\.3\.1<\/version>/);
+			assert.match(pom, /<version>33\.3\.1-jre<\/version>/);
 		});
 
 		test('renders optional packaging and classifier', () => {
@@ -189,14 +189,14 @@ suite('lib installers', () => {
 
 		/** An artifact must never be able to add a registry to resolve from. */
 		test('never emits a repositories element', () => {
-			const specs = specsOf<MavenLibSpec>('maven', ['com.google.guava:guava:33.3.1']);
+			const specs = specsOf<MavenLibSpec>('maven', ['com.google.guava:guava:33.3.1-jre']);
 			assert.strictEqual(renderPomXml(specs).includes('<repositor'), false);
 		});
 
 		test('copies dependencies into a flat jars directory', async () => {
 			const runner = spy();
 			await mavenInstaller.install(
-				dir, specsOf<MavenLibSpec>('maven', ['com.google.guava:guava:33.3.1']), runner.run,
+				dir, specsOf<MavenLibSpec>('maven', ['com.google.guava:guava:33.3.1-jre']), runner.run,
 			);
 
 			assert.deepStrictEqual(runner.calls[0].args, [

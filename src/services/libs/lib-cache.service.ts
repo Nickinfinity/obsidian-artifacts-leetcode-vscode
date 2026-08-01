@@ -254,8 +254,35 @@ function reasonFor(installer: LibInstaller, error: unknown): string {
 	if ((error as NodeJS.ErrnoException | undefined)?.code === 'ENOENT') {
 		return installer.missingTool;
 	}
-	const detail = error instanceof Error ? error.message : JSON.stringify(error);
+	const detail = childOutput(error) || (error instanceof Error ? error.message : JSON.stringify(error));
 	return `install failed: ${detail}`;
+}
+
+/** How much of a failed installer's output to keep — enough to diagnose, not a wall. */
+const MAX_OUTPUT = 2_000;
+
+/**
+ * What the package manager actually said, trimmed to its tail.
+ *
+ * Without this a failed install reported only `Command failed: mvn -q -f …`,
+ * which names the command and nothing about the problem. **stdout matters as
+ * much as stderr**: Maven prints its `[ERROR]` diagnostics to stdout, so
+ * reading stderr alone would have kept the message empty for the one
+ * ecosystem most likely to fail on a version that does not exist.
+ *
+ * The tail rather than the head, because a resolver's useful line is its last.
+ *
+ * @param error - Whatever the install threw.
+ * @returns The child's output, trimmed, or `''` when it said nothing.
+ *
+ * @example
+ * childOutput({ stdout: '[ERROR] guava:33.3.1-jre was not found' });
+ * // → '[ERROR] guava:33.3.1-jre was not found'
+ */
+function childOutput(error: unknown): string {
+	const { stderr, stdout } = (error ?? {}) as { stderr?: string; stdout?: string };
+	const text = `${stderr ?? ''}\n${stdout ?? ''}`.trim();
+	return text.length <= MAX_OUTPUT ? text : `…${text.slice(-MAX_OUTPUT)}`;
 }
 
 /** Real runner: argv array via `execFile`, never a command string. */

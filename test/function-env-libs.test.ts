@@ -90,7 +90,7 @@ suite('function envs — library consumption', () => {
 		 */
 		test('java gets a classpath that still contains the temp dir', () => {
 			const program = javaFunctionEnv.emit(
-				contextFor(javaFunctionEnv, '/cache/maven-1', { java: ['com.google.guava:guava:33.3.1'] }),
+				contextFor(javaFunctionEnv, '/cache/maven-1', { java: ['com.google.guava:guava:33.3.1-jre'] }),
 			);
 
 			assert.strictEqual(
