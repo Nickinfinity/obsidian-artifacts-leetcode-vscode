@@ -3,13 +3,15 @@ import { safeJsonParse } from '../utils/safe-json.js';
 import { BODY_SET_KEYS, RETAINED_FM_KEYS } from './leetcode-config-blocks.helpers.js';
 import { resolveLangId } from './language-map.service.js';
 import { ecosystemFor } from './libs/lib-ecosystem.js';
-import { validateLibNames } from './libs/lib-spec.helpers.js';
+import { parseSpec } from './libs/lib-spec.helpers.js';
 import { sectionBounds } from './leetcode-section-bounds.helpers.js';
 import { CASE_SECTIONS, extractCaseFences } from './leetcode-sections.helpers.js';
 
 /**
  * The `project` half of an artifact: its file tree, its dependencies, and the
- * checks that grade it.
+ * checks that grade it — plus `libs:`, which every test type may declare and
+ * which is exported from here because this file owns the list-block grammar it
+ * is written in.
  *
  * Lives beside the function grammar rather than inside it —
  * `leetcode-parser.helpers.ts` is already at the size ceiling, and a multi-file
@@ -93,7 +95,7 @@ export function parseProjectArtifact(configRaw: string, body: string): ProjectSe
 
 	return {
 		files: parseFiles(body, FILES_RE, HEADING_RE, warn),
-		libs: parseLibs(lines, warn),
+		libs: parseLibDeclarations(lines, warn),
 		checks,
 		// A `# Solutions` fence without `path=` is a plain reference solution for a
 		// function-type artifact; only path-bearing ones overlay a project's tree.
@@ -165,22 +167,31 @@ function parseRole(raw: string | undefined, warn: (m: string) => void): FileRole
 // ── libs: ─────────────────────────────────────────────────────────────────────
 
 /**
- * Parses `libs:` into per-language lists, dropping anything the allowlist
- * refuses **before** it can ever reach an install subprocess.
+ * Parses `libs:` into per-language lists, dropping anything its ecosystem's
+ * grammar refuses **before** it can ever reach an install subprocess.
+ *
+ * Exported because **every** test type may declare `libs:` — a `function`
+ * exercise can want numpy exactly as a `project` can. It lives here rather than
+ * in a module of its own because the list-block reader it needs is this file's,
+ * and one authority beats a second copy of the grammar.
+ *
+ * Each language is validated against **its own** registry's grammar: a maven
+ * coordinate is not an npm name, and one shared pattern would refuse the
+ * correct spelling for three registries out of four.
  *
  * The language key runs through `resolveLangId` and must resolve to a plain
  * identifier, which is also what keeps `__proto__` and friends out of the
  * result object.
  *
- * @param lines - Frontmatter lines.
+ * @param lines - Config-text lines (frontmatter plus body fences).
  * @param warn  - Sink for author-facing problems.
  * @returns Language id → validated specs; `{}` when `libs:` is absent.
  *
  * @example
- * parseLibs(['libs:', '  python: [fastapi@^0.115.0]'], () => {});
+ * parseLibDeclarations(['libs:', '  python: [fastapi@^0.115.0]'], () => {});
  * // → { python: ['fastapi@^0.115.0'] }
  */
-function parseLibs(lines: string[], warn: (m: string) => void): LibSpec {
+export function parseLibDeclarations(lines: string[], warn: (m: string) => void): LibSpec {
 	const start = lines.findIndex(l => /^\s*libs:\s*$/.test(l));
 	if (start === -1) { return {}; }
 
@@ -189,21 +200,18 @@ function parseLibs(lines: string[], warn: (m: string) => void): LibSpec {
 		const language = resolveLangId(key);
 		if (!isSafeKey(language)) { continue; }
 
-		// Reported, not dropped: the entries stay on the parsed artifact so a
-		// future installer can use them, but the author is told now rather than
-		// discovering that npm served a same-named package from the wrong
-		// registry.
-		if (ecosystemFor(language) !== 'npm') {
-			warn(`libs: '${language}' is not installable — the library installer is npm-only, so these are skipped`);
+		const ecosystem = ecosystemFor(language);
+		if (!ecosystem) {
+			warn(`libs: '${language}' has no package registry here — these are skipped`);
+			continue;
 		}
 
-		const check = validateLibNames(values);
-		if (!check.ok) {
-			const rejected = check.invalid.map(quoted).join(', ');
-			warn(`libs: rejected ${rejected} — not an installable package name`);
+		const accepted = values.filter(value => parseSpec(ecosystem, value).ok);
+		const refused = values.filter(value => !parseSpec(ecosystem, value).ok);
+		if (refused.length > 0) {
+			warn(`libs: rejected ${refused.map(quoted).join(', ')} — not an installable ${ecosystem} spec`);
 		}
-		const allowed = values.filter(v => !check.ok ? !check.invalid.includes(v) : true);
-		if (allowed.length > 0) { libs[language] = allowed; }
+		if (accepted.length > 0) { libs[language] = accepted; }
 	}
 	return libs;
 }
@@ -241,10 +249,47 @@ function readListMap(lines: string[], start: number): [string, string[]][] {
 function inlineList(raw: string): string[] {
 	const value = raw.trim();
 	if (!value.startsWith('[')) { return []; }
-	return value.replace(/^\[|\]$/g, '')
-		.split(',')
+	return splitOutsideQuotes(value.replace(/^\[|\]$/g, ''))
 		.map(part => unquote(part.trim()))
 		.filter(part => part !== '');
+}
+
+/**
+ * Split on commas that are **not** inside a quoted run.
+ *
+ * A plain `split(',')` is right until a value legitimately contains one, and
+ * exactly one kind does: a pip requirement's version range. `numpy>=2,<3` is
+ * the idiomatic way to bound a dependency, and splitting it produced
+ * `numpy>=2` plus a `<3` that failed validation — so the artifact installed an
+ * *unbounded* numpy while warning about something else. Quoting is the YAML
+ * answer to that, and it has to actually work.
+ *
+ * @param body - The inside of an inline list, brackets already stripped.
+ * @returns One raw part per top-level comma, quotes still attached.
+ *
+ * @example
+ * splitOutsideQuotes('a, b');            // → ['a', ' b']
+ * splitOutsideQuotes('"numpy>=2,<3", b'); // → ['"numpy>=2,<3"', ' b']
+ */
+function splitOutsideQuotes(body: string): string[] {
+	const parts: string[] = [];
+	let current = '';
+	let quote: string | null = null;
+
+	for (const char of body) {
+		if (quote !== null) {
+			if (char === quote) { quote = null; }
+		} else if (char === '"' || char === "'") {
+			quote = char;
+		} else if (char === ',') {
+			parts.push(current);
+			current = '';
+			continue;
+		}
+		current += char;
+	}
+	parts.push(current);
+	return parts;
 }
 
 // ── checks: ───────────────────────────────────────────────────────────────────

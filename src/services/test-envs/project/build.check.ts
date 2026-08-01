@@ -2,6 +2,8 @@ import { execFile } from 'node:child_process';
 import * as path from 'node:path';
 import { promisify } from 'node:util';
 import type { BuildCheck, ProjectCheckOutcome } from '../../../types/leetcode.types.js';
+import type { LibEcosystem } from '../../libs/lib-ecosystem.js';
+import { mergeLibEnvVars } from '../../libs/lib-env.helpers.js';
 import { resolveContained } from './files.writer.js';
 
 const execFileAsync = promisify(execFile);
@@ -24,20 +26,26 @@ const MAX_DETAIL = 2_000;
  * A missing binary, a non-zero exit and a timeout are all the same kind of
  * answer — the check failed — so none of them escape as a throw.
  *
- * The child's `PATH` is the caller's own `PATH` with `runDir`'s
- * `node_modules/.bin` **prepended** (see `modules.linker.ts`), so a bare
- * `argv: ['tsc']` resolves the run's own linked toolchain first without
- * losing anything already on `PATH`.
+ * The child's `PATH` is the caller's own `PATH` with the run's declared
+ * toolchains **prepended** — any ecosystem's own `bin` first, then `runDir`'s
+ * `node_modules/.bin` (see `modules.linker.ts`) — so a bare `argv: ['tsc']` or
+ * `['pytest', '-q']` resolves what this exercise declared, without losing
+ * anything already on `PATH`. Every other ecosystem reaches the child as a
+ * variable (`CLASSPATH`, `CARGO_TARGET_DIR`, `NODE_PATH`), never as argv.
  *
  * @param check  - The declared build check.
- * @param runDir - Absolute run directory; `check.dir` resolves inside it.
+ * @param runDir  - Absolute run directory; `check.dir` resolves inside it.
+ * @param libDirs - Resolved library cache per ecosystem; empty when the
+ *   exercise declares none.
  * @returns Pass/fail plus the child's output on failure.
  *
  * @example
  * await runBuildCheck({ name: 'app builds', kind: 'build', argv: ['npx', 'tsc', '--noEmit'], cases: [] }, '/tmp/run');
  * // → { name: 'app builds', passed: true }
  */
-export async function runBuildCheck(check: BuildCheck, runDir: string): Promise<ProjectCheckOutcome> {
+export async function runBuildCheck(
+	check: BuildCheck, runDir: string, libDirs: ReadonlyMap<LibEcosystem, string> = new Map(),
+): Promise<ProjectCheckOutcome> {
 	const [command, ...args] = check.argv;
 	if (!command) {
 		return { name: check.name, passed: false, detail: 'build check declares an empty argv' };
@@ -61,8 +69,18 @@ export async function runBuildCheck(check: BuildCheck, runDir: string): Promise<
 	// `.cmd` shims `execFile` cannot run without a shell, so Windows coverage is
 	// unproven either way. No `shell: true` to compensate; that would hand
 	// artifact-authored argv to a command interpreter.
+	// A declared toolchain first (`<venv>/bin`), then the run's own linked
+	// `.bin`, then whatever the parent had — so `['pytest', '-q']` and
+	// `['tsc']` both resolve the version this exercise declared.
+	const libs = mergeLibEnvVars(libDirs);
 	const binDir = path.join(runDir, 'node_modules', '.bin');
-	const env = { ...process.env, PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ''}` };
+	const prefix = libs.pathPrepend === undefined
+		? binDir
+		: `${libs.pathPrepend}${path.delimiter}${binDir}`;
+	const env = {
+		...process.env, ...libs.env,
+		PATH: `${prefix}${path.delimiter}${process.env.PATH ?? ''}`,
+	};
 
 	try {
 		const { stdout } = await execFileAsync(command, args, { cwd, env, timeout: BUILD_TIMEOUT_MS });

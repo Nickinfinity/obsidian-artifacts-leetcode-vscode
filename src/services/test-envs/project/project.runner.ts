@@ -10,7 +10,7 @@ import type {
 } from '../../../types/leetcode.types.js';
 import { canonicalJson } from '../../../utils/canonical-json.js';
 import { resolveLangId } from '../../language-map.service.js';
-import { ecosystemFor, type RunArgv } from '../../libs/lib-ecosystem.js';
+import { ecosystemFor, type LibEcosystem, type RunArgv } from '../../libs/lib-ecosystem.js';
 import { runSuite } from '../../leetcode-runner.service.js';
 import { testEnvFor } from '../env.registry.js';
 import { runBuildCheck } from './build.check.js';
@@ -99,76 +99,66 @@ export async function gradeProjectDir(
 	const checks = parsed.checks ?? [];
 	if (checks.length === 0) { return []; }
 
-	const libs = installSetFor(parsed, checks);
-	let cacheDir: string | undefined;
-	if (libs.length > 0) {
-		const installed = await ensureLibEnv('npm', libs, options.installRun ? { run: options.installRun } : {});
+	const dirs = new Map<LibEcosystem, string>();
+	const install = options.installRun ? { run: options.installRun } : {};
+	for (const [ecosystem, specs] of installSetsFor(parsed, checks)) {
+		const installed = await ensureLibEnv(ecosystem, specs, install);
 		if (!installed.ok) {
 			return checks.map(c => ({ name: c.name, passed: false, detail: installed.reason }));
 		}
-		await linkModules(runDir, installed.dir);
-		cacheDir = installed.dir;
+		dirs.set(ecosystem, installed.dir);
 	}
+
+	// Only the npm tree is linked into the run: a `build` check's toolchain
+	// resolves `node_modules` by walking up from `runDir`, and every other
+	// ecosystem is reached through an environment variable instead.
+	const npmDir = dirs.get('npm');
+	if (npmDir !== undefined) { await linkModules(runDir, npmDir); }
 
 	const outcomes: ProjectCheckOutcome[] = [];
 	for (const check of checks) {
 		const graded = options.publicOnly ? publicCasesOf(check) : check;
-		outcomes.push(await runOneCheck(graded, parsed, runDir, cacheDir));
+		outcomes.push(await runOneCheck(graded, parsed, runDir, dirs));
 	}
 	return outcomes;
 }
 
 /**
- * The set of libraries this grading run needs, installed once under one cache
- * key (§B.1).
+ * The libraries this grading run needs, grouped into one install per registry.
  *
- * `runLibs(parsed)` unless the artifact declares a `dom-assert` / `css-assert`
- * check, in which case the set is widened to `renderLibsFor` — the harness
- * toolchain plus React, so the render driver and this install resolve from
- * the very same cache.
+ * A FastAPI-plus-React exercise resolves a venv **and** a node environment in
+ * one run, which is the case that makes the grouping worth its keys: unioning
+ * them would install `libs.python: [requests]` from npm, and the name-shape
+ * grammar cannot tell the two `requests` apart.
+ *
+ * The npm set — and **only** the npm set — is widened to `renderLibsFor` when a
+ * `dom-assert` / `css-assert` check is declared, so the render driver and this
+ * install resolve from the very same cache, and a `build`-only exercise never
+ * pays for esbuild + jsdom + React.
  *
  * @param parsed - The artifact, for `libs:`.
  * @param checks - Its declared checks, to detect a render kind.
- * @returns Specs to install; `[]` when the run needs nothing.
+ * @returns Specs per ecosystem; empty when the run needs nothing installed.
  *
  * @example
- * installSetFor(parsed, [{ kind: 'build', … }]); // → runLibs(parsed), unwidened
+ * installSetsFor(parsed, [{ kind: 'build', … }]);
+ * // → Map { 'pip' => ['fastapi>=0.115'], 'npm' => ['react@^19.0.0'] }
  */
-function installSetFor(parsed: ParsedLeetCode, checks: ProjectCheck[]): string[] {
-	const libs = runLibs(parsed);
-	const needsRender = checks.some(c => c.kind === 'dom-assert' || c.kind === 'css-assert');
-	return needsRender ? renderLibsFor(libs) : libs;
-}
+function installSetsFor(
+	parsed: ParsedLeetCode, checks: ProjectCheck[],
+): Map<LibEcosystem, string[]> {
+	const sets = new Map<LibEcosystem, string[]>();
+	for (const [language, specs] of Object.entries(parsed.libs ?? {})) {
+		const ecosystem = ecosystemFor(language);
+		// A language with no registry was already warned about at parse time.
+		if (!ecosystem) { continue; }
+		sets.set(ecosystem, [...new Set([...(sets.get(ecosystem) ?? []), ...specs])]);
+	}
 
-/**
- * Union of every `libs:` entry the installer can actually serve, deduped.
- *
- * Not restricted to the *render-capable* languages — a `build`-check project
- * declaring `libs.typescript` must install its own libraries, and scoping this
- * to the render set was the bug that made a render check install a superset
- * under a second cache key. But it **is** restricted to the languages the npm
- * registry serves ({@link ecosystemFor} `=== 'npm'`), because this grading path
- * resolves one npm environment and the per-ecosystem grouping is still to come: unioning
- * `libs.python: [requests]` in would install the unrelated npm package of that
- * name rather than the PyPI one, and the name-shape allowlist cannot tell them
- * apart. The parser warns about the skipped language at authoring time, so
- * nothing is silent.
- *
- * Order does not matter: `libEnvDir` sorts before hashing.
- *
- * @param parsed - The artifact, for `libs:`.
- * @returns Deduped npm-installable specs; `[]` when none are declared.
- *
- * @example
- * runLibs({ libs: { typescript: ['react@^19.0.0'], python: ['requests@^2.0.0'] } });
- * // → ['react@^19.0.0']   — python is npm's to serve, so it is skipped
- */
-function runLibs(parsed: ParsedLeetCode): string[] {
-	const libs = parsed.libs ?? {};
-	const servable = Object.entries(libs)
-		.filter(([language]) => ecosystemFor(language) === 'npm')
-		.flatMap(([, specs]) => specs);
-	return [...new Set(servable)];
+	if (checks.some(c => c.kind === 'dom-assert' || c.kind === 'css-assert')) {
+		sets.set('npm', renderLibsFor(sets.get('npm') ?? []));
+	}
+	return sets;
 }
 
 /** The same check restricted to its public cases — the leading `publicCount` slice. */
@@ -187,19 +177,23 @@ function publicCasesOf(check: ProjectCheck): ProjectCheck {
  * @param check   - The check to run.
  * @param parsed  - The artifact, for `params` / `returns` / `libs`.
  * @param runDir  - Run directory holding the materialised tree and its linked `node_modules`.
- * @param cacheDir - Resolved install cache for this run, when one was installed.
+ * @param dirs    - Resolved cache directory per ecosystem for this run.
  * @returns The check's verdict.
  */
 async function runOneCheck(
-	check: ProjectCheck, parsed: ParsedLeetCode, runDir: string, cacheDir?: string,
+	check: ProjectCheck, parsed: ParsedLeetCode, runDir: string,
+	dirs: ReadonlyMap<LibEcosystem, string>,
 ): Promise<ProjectCheckOutcome> {
 	switch (check.kind) {
 		case 'build':
-			return runBuildCheck(check, runDir);
+			return runBuildCheck(check, runDir, dirs);
 		case 'dom-assert':
 		case 'css-assert':
-			return runRenderCheck(check, runDir, undefined, cacheDir);
+			return runRenderCheck(check, runDir, undefined, dirs.get('npm'));
 		case 'function':
+			// Nothing is threaded in: a function check runs through `runSuite`,
+			// which resolves its own library environment from `parsed.libs`.
+			// A second resolver here would install the same set twice.
 			return runFunctionCheck(check, parsed, runDir);
 	}
 }

@@ -215,7 +215,7 @@ suite('project runner', () => {
 		function artifactWithMultiLangLibs(): string {
 			return artifactWithLibs().replace(
 				'  javascript:\n    - lodash@^4.17.21',
-				'  javascript:\n    - lodash@^4.17.21\n  python:\n    - requests@^2.0.0',
+				'  javascript:\n    - lodash@^4.17.21\n  python:\n    - requests>=2',
 			);
 		}
 
@@ -335,30 +335,33 @@ suite('project runner', () => {
 			assert.ok(calls[0].cwd.startsWith(expectedKey), `${calls[0].cwd} is not under ${expectedKey}`);
 		});
 
-		test('a language npm cannot serve is skipped, not npm-installed under the same name', async () => {
+		/**
+		 * A python list must never be *npm*-installed: npm serves an unrelated
+		 * package of the same name and the grammar cannot tell the two apart.
+		 * It used to be skipped with a warning for want of an installer; now it
+		 * resolves from pip, under its own key — but the thing that must never
+		 * happen is unchanged, so it is still pinned here.
+		 */
+		test('a python list resolves from pip, and never joins the npm set', async () => {
 			const calls: { cwd: string }[] = [];
 			const countingRun = async (_file: string, _args: string[], cwd: string): Promise<void> => {
 				calls.push({ cwd });
 				fs.mkdirSync(path.join(cwd, 'node_modules'), { recursive: true });
+				fs.mkdirSync(path.join(cwd, 'bin'), { recursive: true });
+				fs.writeFileSync(path.join(cwd, 'bin', 'python3'), '', 'utf-8');
 			};
 
 			writeCandidate('export function double(n) { return n * 2; }');
 			const parsed = parseLeetCode(artifactWithMultiLangLibs());
 			await gradeProjectDir(parsed, runDir, { installRun: countingRun });
 
-			// This grading path resolves the npm environment only, so
-			// `libs.python: [requests@^2.0.0]` must NOT join the install set —
-			// npm would serve the unrelated package of that name and the
-			// allowlist cannot tell them apart. The author is told instead, at
-			// parse time.
-			assert.strictEqual(calls.length, 1);
-			assert.ok(
-				calls[0].cwd.startsWith(libEnvDir('npm', ['lodash@^4.17.21'])),
-				'a non-npm language must not reach the npm install set',
-			);
-			assert.ok(
-				(parsed.warnings ?? []).some(w => w.includes("'python'") && w.includes('npm-only')),
-				`expected a warning naming python; got ${JSON.stringify(parsed.warnings ?? [])}`,
+			const npmKey = libEnvDir('npm', ['lodash@^4.17.21']);
+			const pipKey = libEnvDir('pip', ['requests>=2']);
+			assert.ok(calls.some(c => c.cwd.startsWith(npmKey)), 'the npm set must still install');
+			assert.ok(calls.some(c => c.cwd.startsWith(pipKey)), 'the python set must install from pip');
+			assert.strictEqual(
+				calls.some(c => c.cwd.startsWith(npmKey) && c.cwd.includes('requests')), false,
+				'a python requirement must never reach the npm install set',
 			);
 		});
 

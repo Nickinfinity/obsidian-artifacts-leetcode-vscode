@@ -34,6 +34,12 @@ export interface EnvContext {
 	code: string;
 	/** Every case in the suite, in order */
 	cases: TestCase[];
+	/**
+	 * Resolved library cache directory, when this run declares `libs:` for its
+	 * own language. Absent otherwise — and an env that sees no `libDir` must
+	 * emit exactly what it emitted before libraries existed.
+	 */
+	libDir?: string;
 }
 
 /** One file to write into the run's temp directory, addressed by basename. */
@@ -62,6 +68,24 @@ export interface EmittedProgram {
 	compile?: string;
 	/** Run command (cwd = temp dir). Its stdout is fed to `parse`. */
 	run: string;
+	/**
+	 * Extra environment variables for the compile and run children, merged over
+	 * `process.env` by the runner.
+	 *
+	 * This is the **whole** library-consumption seam: a cache path reaches a
+	 * child as an environment value, never interpolated into `compile` or `run`,
+	 * both of which stay fixed literals no shell can be tricked by.
+	 */
+	env?: Record<string, string>;
+	/**
+	 * A directory to prepend to the child's `PATH`.
+	 *
+	 * Separate from `env` because prepending needs the *inherited* `PATH`, and
+	 * `emit` must stay pure — an env that reads `process.env` makes its own
+	 * golden assertions depend on the machine that ran them. The runner owns
+	 * the join.
+	 */
+	pathPrepend?: string;
 }
 
 /**

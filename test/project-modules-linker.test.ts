@@ -131,6 +131,86 @@ suite('project modules linker', () => {
 		assert.deepStrictEqual(snapshot(cacheDir), before, 'the cache tree must stay byte-identical');
 	});
 
+	// ── A pnpm cache: every top-level entry is a symlink ──────────────────────
+
+	/**
+	 * pnpm's `node_modules/<pkg>` is a **symlink** into `.pnpm/`, so
+	 * `Dirent.isDirectory()` answers `false` for every package — the link type
+	 * has to come from a *following* stat instead. A POSIX no-op today, but the
+	 * type argument exists for Windows, where linking a directory as a file is
+	 * simply wrong.
+	 */
+	suite('against a pnpm-shaped cache', () => {
+
+		/** A cache whose packages are symlinks into a `.pnpm` store. */
+		function buildPnpmCache(dir: string): void {
+			const modules = path.join(dir, 'node_modules');
+			const store = path.join(modules, '.pnpm', 'react@19.0.0', 'node_modules', 'react');
+			fs.mkdirSync(store, { recursive: true });
+			fs.writeFileSync(path.join(store, 'index.js'), 'module.exports = {};');
+			fs.symlinkSync(store, path.join(modules, 'react'), 'dir');
+
+			const binDir = path.join(modules, '.bin');
+			fs.mkdirSync(binDir, { recursive: true });
+			fs.writeFileSync(path.join(binDir, 'tool'), '#!/bin/sh\necho hi\n', { mode: 0o755 });
+		}
+
+		let pnpmCache: string;
+
+		setup(() => {
+			pnpmCache = fs.mkdtempSync(path.join(os.tmpdir(), 'pnpmcache-'));
+			buildPnpmCache(pnpmCache);
+		});
+
+		teardown(() => { fs.rmSync(pnpmCache, { recursive: true, force: true }); });
+
+		test('a symlinked package is linked as a directory, not as a file', async () => {
+			await linkModules(runDir, pnpmCache);
+
+			const linked = path.join(runDir, 'node_modules', 'react');
+			assert.ok(fs.lstatSync(linked).isSymbolicLink(), 'the entry itself is still a link');
+			assert.ok(fs.statSync(linked).isDirectory(), 'and it must resolve to a directory');
+		});
+
+		test('a link to a link still reaches the package contents', async () => {
+			await linkModules(runDir, pnpmCache);
+
+			assert.strictEqual(
+				fs.readFileSync(path.join(runDir, 'node_modules', 'react', 'index.js'), 'utf-8'),
+				'module.exports = {};',
+			);
+		});
+
+		test('.bin is still walked child by child, into a real directory', async () => {
+			await linkModules(runDir, pnpmCache);
+
+			const binDir = path.join(runDir, 'node_modules', '.bin');
+			assert.ok(fs.lstatSync(binDir).isDirectory() && !fs.lstatSync(binDir).isSymbolicLink());
+			assert.ok(fs.existsSync(path.join(binDir, 'tool')));
+		});
+
+		test('re-running is idempotent against a symlink farm too', async () => {
+			await linkModules(runDir, pnpmCache);
+			await assert.doesNotReject(linkModules(runDir, pnpmCache));
+		});
+
+		/**
+		 * A cache entry pointing outside the cache is still linked **by name**
+		 * only — the target is never followed into a write, and no link target
+		 * is ever built from artifact content.
+		 */
+		test('a dangling cache entry does not throw the whole link', async () => {
+			fs.symlinkSync(
+				path.join(pnpmCache, 'node_modules', '.pnpm', 'gone'),
+				path.join(pnpmCache, 'node_modules', 'ghost'),
+				'dir',
+			);
+
+			await assert.doesNotReject(linkModules(runDir, pnpmCache));
+			assert.ok(fs.existsSync(path.join(runDir, 'node_modules', 'react')));
+		});
+	});
+
 	test('destroying runDir leaves every cached package on disk', async () => {
 		await linkModules(runDir, cacheDir);
 		fs.rmSync(runDir, { recursive: true, force: true });

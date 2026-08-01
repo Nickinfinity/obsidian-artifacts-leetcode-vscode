@@ -55,6 +55,33 @@ async function linkIfAbsent(target: string, linkPath: string, type: 'junction' |
 }
 
 /**
+ * The symlink type for a cache entry, resolved by **following** it.
+ *
+ * `Dirent.isDirectory()` describes the entry itself, and under pnpm's layout
+ * every top-level `node_modules` entry is a *symlink* into `.pnpm/` — so it
+ * answers `false` for all of them and every link would be created with type
+ * `'file'`. A POSIX no-op, but the type argument exists for Windows, where a
+ * directory linked as a file is wrong.
+ *
+ * A broken link (a swept cache target) falls back to `'file'` rather than
+ * throwing: the warm probe will catch the sweep, and a link type is not the
+ * place to fail a run.
+ *
+ * @param target - Absolute path of the cache entry being linked.
+ * @returns `'junction'` for a directory, `'file'` otherwise.
+ *
+ * @example
+ * await linkTypeOf('/cache/node_modules/react'); // → 'junction', even as a symlink
+ */
+async function linkTypeOf(target: string): Promise<'junction' | 'file'> {
+	try {
+		return (await fs.stat(target)).isDirectory() ? 'junction' : 'file';
+	} catch {
+		return 'file';
+	}
+}
+
+/**
  * Symlink every child of a scope-like cache directory (`@scope`, `.bin`, …) one
  * level down, into a **real** directory of the same name inside the run's
  * `node_modules`.
@@ -79,11 +106,8 @@ async function linkScopeChildren(cacheModules: string, runModules: string, name:
 
 	const children = await fs.readdir(path.join(cacheModules, name), { withFileTypes: true });
 	for (const child of children) {
-		await linkIfAbsent(
-			path.join(cacheModules, name, child.name),
-			path.join(scopeDir, child.name),
-			child.isDirectory() ? 'junction' : 'file',
-		);
+		const target = path.join(cacheModules, name, child.name);
+		await linkIfAbsent(target, path.join(scopeDir, child.name), await linkTypeOf(target));
 	}
 }
 
@@ -153,14 +177,15 @@ export async function linkModules(runDir: string, cacheDir: string): Promise<voi
 	const entries = await fs.readdir(cacheModules, { withFileTypes: true });
 
 	for (const entry of entries) {
-		if (entry.isDirectory() && isScopeLike(entry.name)) {
+		const target = path.join(cacheModules, entry.name);
+		// Resolved by following, not from the `Dirent`: a scope that arrives as a
+		// symlink is still a scope, and must still be walked child-by-child so
+		// the run's copy of it stays a real directory.
+		const type = await linkTypeOf(target);
+		if (type === 'junction' && isScopeLike(entry.name)) {
 			await linkScopeChildren(cacheModules, runModules, entry.name);
 		} else {
-			await linkIfAbsent(
-				path.join(cacheModules, entry.name),
-				path.join(runModules, entry.name),
-				entry.isDirectory() ? 'junction' : 'file',
-			);
+			await linkIfAbsent(target, path.join(runModules, entry.name), type);
 		}
 	}
 }

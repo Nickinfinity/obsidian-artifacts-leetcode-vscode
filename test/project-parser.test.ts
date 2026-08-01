@@ -272,11 +272,18 @@ suite('project parser', () => {
 			assert.deepStrictEqual(Object.keys(parsed.libs ?? {}), ['typescript']);
 		});
 
-		test('a function artifact carries none of them', () => {
+		/**
+		 * `files` and `checks` are multi-file grammar and stay absent — but
+		 * `libs:` is **not**: a `function` exercise can want numpy exactly as a
+		 * project can, and parsing it only for multi-file types dropped the
+		 * declaration silently, between the author writing it and the runner
+		 * looking for it.
+		 */
+		test('a function artifact carries libs, but no files or checks', () => {
 			const parsed = parseLeetCode(artifact('function'));
 			assert.strictEqual(parsed.files, undefined);
 			assert.strictEqual(parsed.checks, undefined);
-			assert.strictEqual(parsed.libs, undefined);
+			assert.deepStrictEqual(Object.keys(parsed.libs ?? {}), ['typescript']);
 		});
 	});
 

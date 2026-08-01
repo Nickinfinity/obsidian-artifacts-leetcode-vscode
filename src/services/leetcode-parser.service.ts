@@ -1,5 +1,6 @@
 import type {
 	LeetCodeSummary,
+	LibSpec,
 	ParsedLeetCode,
 	TestTypeId,
 } from '../types/leetcode.types.js';
@@ -19,7 +20,7 @@ import {
 	withoutBodySetKeys,
 } from './leetcode-config-blocks.helpers.js';
 import { parseFrontmatter } from './leetcode-parser.helpers.js';
-import { parseProjectArtifact } from './project-parser.helpers.js';
+import { parseLibDeclarations, parseProjectArtifact } from './project-parser.helpers.js';
 
 export { defaultPracticeConfig, defaultTestConfig } from './leetcode-parser.helpers.js';
 
@@ -62,7 +63,18 @@ export function parseLeetCode(content: string): ParsedLeetCode {
 	// Multi-file grammar is its own concern and its own file — a `function`
 	// artifact never pays for it, and gets none of its fields.
 	const project = MULTI_FILE_TYPES.has(fm.test.type) ? parseProjectArtifact(configText, body) : null;
-	const warnings = collectWarnings(project?.warnings, legacyKeys, config.warnings);
+
+	// `libs:` belongs to every test type, not just the multi-file ones: a
+	// `function` exercise can want numpy. A project already parsed its own as
+	// part of the multi-file grammar, so only the other types read it here —
+	// and their warnings ride in the extractor slot, which keeps a clean
+	// function artifact's `warnings` `undefined` rather than `[]`.
+	const libWarnings: string[] = [];
+	const libs = project
+		? project.libs
+		: emptyToUndefined(parseLibDeclarations(configText.split(/\r?\n/), m => libWarnings.push(m)));
+
+	const warnings = collectWarnings(project?.warnings, legacyKeys, [...config.warnings, ...libWarnings]);
 
 	return {
 		title:        fm.title ?? '',
@@ -84,11 +96,29 @@ export function parseLeetCode(content: string): ParsedLeetCode {
 		attempts:     extractAttempts(body),
 		tags:         fm.tags ?? [],
 		files:        project?.files,
-		libs:         project?.libs,
+		libs,
 		checks:       project?.checks,
 		solutionFiles: project?.solutionFiles,
 		warnings,
 	};
+}
+
+/**
+ * `undefined` for an empty declaration map, the map itself otherwise.
+ *
+ * A `function` artifact that declares no `libs:` must have **no** `libs` key at
+ * all: `ParsedLeetCode.libs` is optional, `JSON.stringify` omits an `undefined`
+ * key, and `{}` would change the serialised shape of every existing artifact.
+ *
+ * @param libs - Parsed declarations, possibly empty.
+ * @returns The map, or `undefined` when it holds nothing.
+ *
+ * @example
+ * emptyToUndefined({});                  // → undefined
+ * emptyToUndefined({ python: ['numpy'] }); // → { python: ['numpy'] }
+ */
+function emptyToUndefined(libs: LibSpec): LibSpec | undefined {
+	return Object.keys(libs).length === 0 ? undefined : libs;
 }
 
 /**

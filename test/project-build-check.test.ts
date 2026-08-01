@@ -135,4 +135,48 @@ suite('project build check', () => {
 		assert.strictEqual(outcome.passed, true, outcome.detail);
 		assert.strictEqual(fs.existsSync(marker), false, 'a shell interpreted the argv');
 	});
+
+	// ── Declared toolchains reach the child (T15) ─────────────────────────────
+
+	suite('library environments', () => {
+
+		test('a venv goes ahead of the run’s own .bin, and both ahead of PATH', async () => {
+			const outcome = await runBuildCheck(
+				{ name: 'p', kind: 'build', argv: ['node', '-e', 'console.log(process.env.PATH)'], cases: [], publicCount: 0 },
+				runDir,
+				new Map([['pip', '/cache/pip-1']]),
+			);
+
+			const childPath = (outcome.detail ?? '').trim();
+			const expected = [
+				path.join('/cache/pip-1', 'bin'),
+				path.join(runDir, 'node_modules', '.bin'),
+			].join(path.delimiter);
+			assert.ok(childPath.startsWith(expected), childPath.slice(0, 200));
+			assert.ok(childPath.length > expected.length, 'the inherited PATH must survive');
+		});
+
+		test('CLASSPATH and CARGO_TARGET_DIR appear when their dirs are given', async () => {
+			const script = 'console.log(JSON.stringify([process.env.CLASSPATH, process.env.CARGO_TARGET_DIR]))';
+			const outcome = await runBuildCheck(
+				{ name: 'p', kind: 'build', argv: ['node', '-e', script], cases: [], publicCount: 0 },
+				runDir,
+				new Map([['maven', '/cache/mvn-1'], ['cargo', '/cache/cargo-1']]),
+			);
+
+			const [classpath, target] = JSON.parse((outcome.detail ?? '').trim()) as string[];
+			assert.strictEqual(classpath, `${path.join('/cache/mvn-1', 'jars', '*')}${path.delimiter}.`);
+			assert.strictEqual(target, path.join('/cache/cargo-1', 'target'));
+		});
+
+		test('no library directories leaves the environment as it was', async () => {
+			const script = 'console.log(JSON.stringify([process.env.CLASSPATH ?? null, process.env.VIRTUAL_ENV ?? null]))';
+			const outcome = await runBuildCheck(
+				{ name: 'p', kind: 'build', argv: ['node', '-e', script], cases: [], publicCount: 0 },
+				runDir,
+			);
+
+			assert.deepStrictEqual(JSON.parse((outcome.detail ?? '').trim()), [null, null]);
+		});
+	});
 });

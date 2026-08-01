@@ -9,6 +9,8 @@ import type {
 	TestResult,
 } from '../types/leetcode.types.js';
 import type { EnvContext, TestEnv } from './test-envs/env.types.js';
+import { ensureLibEnv, type LibEnvResult } from './libs/lib-cache.service.js';
+import { ecosystemFor, type LibEcosystem } from './libs/lib-ecosystem.js';
 import { collectResults, errorResult, type RunFailure } from './leetcode-runner.helpers.js';
 
 interface ExecResult { stdout: string; stderr: string }
@@ -36,15 +38,20 @@ class ExecErr extends Error {
  * timeout-kill from a normal failure.
  *
  * @param cmd  - Shell command line.
- * @param opts - Optional working directory and kill timeout.
+ * @param opts - Optional working directory, kill timeout and child environment.
+ *   `env` is passed through as-is: callers merge over `process.env` themselves,
+ *   because `exec` **replaces** the environment rather than extending it.
  * @returns Promise resolving to captured stdio.
  *
  * @example
  * await execAsync('node runner.js', { cwd: '/tmp/leet-x', timeoutMs: 5000 });
  */
-function execAsync(cmd: string, opts: { cwd?: string; timeoutMs?: number } = {}): Promise<ExecResult> {
+function execAsync(
+	cmd: string, opts: { cwd?: string; timeoutMs?: number; env?: NodeJS.ProcessEnv } = {},
+): Promise<ExecResult> {
 	return new Promise<ExecResult>((resolve, reject) => {
-		exec(cmd, { cwd: opts.cwd, timeout: opts.timeoutMs, maxBuffer: 1024 * 1024 }, (err, stdout, stderr) => {
+		const options = { cwd: opts.cwd, timeout: opts.timeoutMs, env: opts.env, maxBuffer: 1024 * 1024 };
+		exec(cmd, options, (err, stdout, stderr) => {
 			if (err) {
 				const e = new ExecErr(err);
 				e.stdout = stdout;
@@ -92,6 +99,14 @@ export function suiteTimeout(caseCount: number, perCaseMs: number): number {
 	return Math.min(Math.max(caseCount, 1) * perCaseMs, MAX_SUITE_TIMEOUT_MS);
 }
 
+export interface RunSuiteOptions {
+	/**
+	 * Resolve a library environment. Defaults to `ensureLibEnv`; tests inject a
+	 * stub so a suite never installs anything.
+	 */
+	resolveLibEnv?: (ecosystem: LibEcosystem, specs: readonly string[]) => Promise<LibEnvResult>;
+}
+
 /**
  * Run an entire suite in one temp directory and map its output to per-case
  * results.
@@ -103,6 +118,8 @@ export function suiteTimeout(caseCount: number, perCaseMs: number): number {
  *
  * Failure modes, all producing a full-length result array:
  *
+ * - **Library resolution** — a declared `libs:` set that cannot be installed
+ *   fails every case with the installer's reason, and nothing is emitted.
  * - **Contract violation** — `env.validate` returns a message; every case
  *   carries it, and nothing is compiled or run.
  * - **Compile error** — every case carries the same `compilation error: …`.
@@ -116,6 +133,7 @@ export function suiteTimeout(caseCount: number, perCaseMs: number): number {
  * @param tests  - The suite to run, in order.
  * @param parsed - Parsed artifact — supplies `test.timeoutMs` and the signature.
  * @param env    - Test environment that validates, emits, and parses.
+ * @param options - Injectable library resolver, for tests.
  * @returns One `TestResult` per case, in the input order.
  *
  * @example
@@ -123,10 +141,17 @@ export function suiteTimeout(caseCount: number, perCaseMs: number): number {
  */
 export async function runSuite(
 	code: string, tests: TestCase[], parsed: ParsedLeetCode, env: TestEnv,
+	options: RunSuiteOptions = {},
 ): Promise<TestResult[]> {
 	if (tests.length === 0) { return []; }
 
-	const ctx: EnvContext = { parsed, langId: env.language, code, cases: tests };
+	const resolved = await resolveLibDir(parsed, env.language, options);
+	if (!resolved.ok) { return tests.map((t, i) => errorResult(i, t, resolved.reason)); }
+
+	const ctx: EnvContext = {
+		parsed, langId: env.language, code, cases: tests,
+		...(resolved.dir === undefined ? {} : { libDir: resolved.dir }),
+	};
 
 	const invalid = env.validate?.(ctx);
 	if (invalid) { return tests.map((t, i) => errorResult(i, t, invalid)); }
@@ -138,12 +163,15 @@ export async function runSuite(
 			fs.writeFile(path.join(tmpDir, f.name), f.content, 'utf-8'),
 		));
 
+		const childEnv = childEnvironment(program.env, program.pathPrepend);
 		if (program.compile) {
-			const compileErr = await tryCompile(program.compile, tmpDir);
+			const compileErr = await tryCompile(program.compile, tmpDir, childEnv);
 			if (compileErr !== null) { return tests.map((t, i) => errorResult(i, t, compileErr)); }
 		}
 
-		const { stdout, failure } = await runProgram(program.run, tmpDir, tests.length, parsed.test.timeoutMs);
+		const { stdout, failure } = await runProgram(
+			program.run, tmpDir, tests.length, parsed.test.timeoutMs, childEnv,
+		);
 		return collectResults(tests, env.parse(stdout), failure);
 	} finally {
 		await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => { /* ignore cleanup errors */ });
@@ -152,10 +180,66 @@ export async function runSuite(
 
 // ── Internals ─────────────────────────────────────────────────────────────────
 
+/**
+ * Resolve the library environment this run needs, if it declares one.
+ *
+ * `runSuite` is the **only** resolver: a project's `function` check reaches
+ * libraries through this same call, so there is no second seam to keep in
+ * step. A language that declares nothing resolves nothing — and pays nothing.
+ *
+ * @param parsed  - The artifact, for `libs:`.
+ * @param langId  - Language the suite is running in.
+ * @param options - Injectable resolver, for tests.
+ * @returns The cache directory, `undefined` when none is needed, or a refusal.
+ */
+async function resolveLibDir(
+	parsed: ParsedLeetCode, langId: string, options: RunSuiteOptions,
+): Promise<{ ok: true; dir?: string } | { ok: false; reason: string }> {
+	const specs = parsed.libs?.[langId] ?? [];
+	if (specs.length === 0) { return { ok: true }; }
+
+	const ecosystem = ecosystemFor(langId);
+	if (!ecosystem) { return { ok: false, reason: `no package registry serves '${langId}' libraries` }; }
+
+	const resolve = options.resolveLibEnv ?? ensureLibEnv;
+	const result = await resolve(ecosystem, specs);
+	return result.ok ? { ok: true, dir: result.dir } : { ok: false, reason: result.reason };
+}
+
+/**
+ * The environment the compile and run children see.
+ *
+ * `exec` **replaces** the child environment rather than extending it, so the
+ * merge happens here — and `undefined` when nothing was asked for, which keeps
+ * the no-libs path passing no `env` option at all.
+ *
+ * @param extra       - Variables the env emitted.
+ * @param pathPrepend - Directory to put ahead of the inherited `PATH`.
+ * @returns The merged environment, or `undefined` to inherit unchanged.
+ *
+ * @example
+ * childEnvironment({ NODE_PATH: '/cache/node_modules' }, undefined);
+ */
+function childEnvironment(
+	extra?: Record<string, string>, pathPrepend?: string,
+): NodeJS.ProcessEnv | undefined {
+	if (!extra && pathPrepend === undefined) { return undefined; }
+
+	const merged: NodeJS.ProcessEnv = { ...process.env, ...extra };
+	if (pathPrepend !== undefined) {
+		// `?? ''` for the same reason the build check has it: an unset PATH must
+		// not serialise the string "undefined" into the child's environment.
+		merged.PATH = `${pathPrepend}${path.delimiter}${process.env.PATH ?? ''}`;
+	}
+	return merged;
+}
+
 /** Run the build command; returns `null` on success, the failure message otherwise. */
-async function tryCompile(command: string, cwd: string): Promise<string | null> {
+async function tryCompile(
+	command: string, cwd: string, env?: NodeJS.ProcessEnv,
+): Promise<string | null> {
 	try {
-		await execAsync(command, { cwd });
+		await execAsync(command, { cwd, env });
 		return null;
 	} catch (e) {
 		const err = e as ExecErr;
@@ -171,16 +255,19 @@ async function tryCompile(command: string, cwd: string): Promise<string | null> 
  * @param cwd       - Temp directory holding the emitted files.
  * @param caseCount - Suite size, used to size the timeout.
  * @param perCaseMs - Per-case budget.
+ * @param env       - Child environment, already merged over `process.env`.
  * @returns Whatever stdout was produced, plus how the process ended.
  *
  * @example
  * await runProgram('node runner.js', '/tmp/leet-x', 3, 5000);
  */
 async function runProgram(
-	command: string, cwd: string, caseCount: number, perCaseMs: number,
+	command: string, cwd: string, caseCount: number, perCaseMs: number, env?: NodeJS.ProcessEnv,
 ): Promise<{ stdout: string; failure: RunFailure | null }> {
 	try {
-		const { stdout } = await execAsync(command, { cwd, timeoutMs: suiteTimeout(caseCount, perCaseMs) });
+		const { stdout } = await execAsync(
+			command, { cwd, env, timeoutMs: suiteTimeout(caseCount, perCaseMs) },
+		);
 		return { stdout, failure: null };
 	} catch (e) {
 		const err = e as ExecErr;
