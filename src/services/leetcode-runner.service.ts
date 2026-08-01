@@ -2,7 +2,7 @@ import { exec, type ExecException } from 'node:child_process';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { MAX_SUITE_TIMEOUT_MS } from '../types/constants.js';
+import { COMPILE_TIMEOUT_MS, MAX_SUITE_TIMEOUT_MS } from '../types/constants.js';
 import type {
 	ParsedLeetCode,
 	TestCase,
@@ -11,7 +11,9 @@ import type {
 import type { EnvContext, TestEnv } from './test-envs/env.types.js';
 import { ensureLibEnv, type LibEnvResult } from './libs/lib-cache.service.js';
 import { ecosystemFor, type LibEcosystem } from './libs/lib-ecosystem.js';
-import { collectResults, errorResult, type RunFailure } from './leetcode-runner.helpers.js';
+import {
+	collectResults, compileFailure, errorResult, timedOut, type RunFailure,
+} from './leetcode-runner.helpers.js';
 
 interface ExecResult { stdout: string; stderr: string }
 class ExecErr extends Error {
@@ -239,17 +241,27 @@ function childEnvironment(
 	return merged;
 }
 
-/** Run the build command; returns `null` on success, the failure message otherwise. */
+/**
+ * Run the build command under its own budget.
+ *
+ * The budget is `COMPILE_TIMEOUT_MS`, not the suite's: a compile is not
+ * per-case, and before this it had **no** ceiling at all — a wedged compiler
+ * hung the solve with nothing to cancel. That became reachable when Rust grew
+ * a Cargo path, whose dependency build is unbounded work by nature.
+ *
+ * @param command - Build command from the env.
+ * @param cwd     - Temp directory holding the emitted files.
+ * @param env     - Child environment, already merged.
+ * @returns `null` on success, the failure message otherwise.
+ */
 async function tryCompile(
 	command: string, cwd: string, env?: NodeJS.ProcessEnv,
 ): Promise<string | null> {
 	try {
-		await execAsync(command, { cwd, env });
+		await execAsync(command, { cwd, env, timeoutMs: COMPILE_TIMEOUT_MS });
 		return null;
 	} catch (e) {
-		const err = e as ExecErr;
-		const detail = (err.stderr ?? err.message ?? String(err)).trim();
-		return `compilation error: ${detail || 'unknown failure'}`;
+		return compileFailure(e as ExecErr);
 	}
 }
 
@@ -276,8 +288,8 @@ async function runProgram(
 		return { stdout, failure: null };
 	} catch (e) {
 		const err = e as ExecErr;
-		const timedOut = Boolean(err.killed) || err.signal === 'SIGTERM';
-		const message  = timedOut ? 'timeout' : (err.stderr || err.message || String(err)).trim();
-		return { stdout: err.stdout ?? '', failure: { timedOut, message } };
+		const killed  = timedOut(err);
+		const message = killed ? 'timeout' : (err.stderr || err.message || String(err)).trim();
+		return { stdout: err.stdout ?? '', failure: { timedOut: killed, message } };
 	}
 }

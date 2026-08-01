@@ -210,6 +210,20 @@ export const MIN_TEST_TIMEOUT_MS = 100;
 export const MAX_SUITE_TIMEOUT_MS = 60_000;
 
 /**
+ * Wall-clock budget for the **build** step, separate from the suite's.
+ *
+ * A compile is not per-case, so it cannot share the suite budget: `javac` on
+ * two files is a second, while a Cargo link is longer, and one number cannot
+ * be both. Generous rather than tight, because the cost it guards against —
+ * a *cold* dependency build — is paid at install time by the cargo
+ * pre-warm, and what reaches here is an incremental link.
+ *
+ * Matched to the `build` check's own budget: two ways to spawn a compiler
+ * should not disagree about how long one may take.
+ */
+export const COMPILE_TIMEOUT_MS = 120_000;
+
+/**
  * Line prefix every generated test program stamps on its result lines.
  *
  * Exists so an incidental `print` / `console.log` in the solver's own code
