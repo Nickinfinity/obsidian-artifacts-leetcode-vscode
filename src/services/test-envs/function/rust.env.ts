@@ -1,8 +1,13 @@
+import { createHash } from 'node:crypto';
+import * as path from 'node:path';
 import { LEET_SENTINEL } from '../../../types/constants.js';
 import { escapeRe } from '../../../utils/regex.helpers.js';
+import { renderCargoToml } from '../../libs/cargo.installer.js';
+import { parseCargoSpec } from '../../libs/lib-spec.helpers.js';
+import type { CargoLibSpec } from '../../libs/lib-ecosystem.js';
 import { jsonToLiteral } from '../../leetcode-codegen.service.js';
 import { functionNameFor } from '../../leetcode-parser.service.js';
-import type { EnvContext } from '../env.types.js';
+import type { EmittedProgram, EnvContext } from '../env.types.js';
 import { makeFunctionEnv } from './make-function-env.js';
 
 /** A top-level `fn <name>(`, optionally already `pub` — what a bare Rust fn (never an `impl` method) matches. */
@@ -63,6 +68,62 @@ const RUST_IDENT_RE = /^[A-Za-z_]\w*$/;
  * clears via reflection; Rust clears it via trait dispatch instead. Structs
  * and enums are out of scope for this ceiling; serde is the upgrade (T18).
  */
+
+/**
+ * A package name unique to this run's temp directory.
+ *
+ * Every library-backed Rust run shares one `CARGO_TARGET_DIR` — that shared,
+ * pre-warmed `target/` is the whole reason the cargo installer builds — so two
+ * suites running at once under the same package name would compile over each
+ * other's binary and grade the wrong code. Hash-derived from the run's own
+ * directory, never from artifact content.
+ *
+ * @param libDir - The resolved cache directory (its target dir is shared).
+ * @param ctx    - The run context, for a per-run discriminator.
+ * @returns A legal crate name, e.g. `leet_ab12cd34`.
+ *
+ * @example
+ * runPackageName('/cache/cargo-9f2c', ctx); // → 'leet_5f1c0f7a'
+ */
+function runPackageName(libDir: string, ctx: EnvContext): string {
+	const seed = `${libDir}\n${ctx.code}\n${ctx.cases.length}`;
+	return `leet_${createHash('sha256').update(seed).digest('hex').slice(0, 8)}`;
+}
+
+/**
+ * The Cargo shape a library-backed run emits instead of the bare `rustc` one.
+ *
+ * **`run` is `cargo run`, not a path into `target/`.** With
+ * `CARGO_TARGET_DIR` pointing into the shared cache, `./target/release/<bin>`
+ * does not exist under the run's own `cwd`, and naming the real location would
+ * put a cache path inside a command string — the one thing the environment-
+ * variable seam exists to avoid. Cargo finds its own binary from the same
+ * variable.
+ *
+ * `compile` stays a real step so a broken candidate fails with a readable
+ * message before the run; the pre-warmed target keeps it an incremental link.
+ *
+ * @param ctx    - The run context; its `parsed.libs.rust` names the crates.
+ * @param libDir - Resolved cache directory for this run.
+ * @returns Files and commands replacing the `rustc` ones.
+ */
+function cargoProgram(ctx: EnvContext, libDir: string): Partial<EmittedProgram> {
+	const specs = (ctx.parsed.libs?.rust ?? []).flatMap((raw): CargoLibSpec[] => {
+		const parsed = parseCargoSpec(raw);
+		return parsed.ok ? [parsed.spec] : [];
+	});
+
+	return {
+		files: [
+			{ name: 'Cargo.toml', content: renderCargoToml(runPackageName(libDir, ctx), specs) },
+			{ name: path.join('src', 'solution.rs'), content: candidateContent(ctx) },
+			{ name: path.join('src', 'main.rs'), content: runnerSource(ctx) },
+		],
+		compile: 'cargo fetch --offline',
+		run: 'cargo run --offline --release --quiet',
+	};
+}
+
 export const rustFunctionEnv = makeFunctionEnv({
 	language: 'rust',
 	candidateFile: 'solution.rs',
@@ -71,6 +132,7 @@ export const rustFunctionEnv = makeFunctionEnv({
 	run: './runner',
 	candidateContent,
 	buildRunner: runnerSource,
+	withLibs: cargoProgram,
 
 	/**
 	 * Reject a resolved function name that isn't a legal Rust identifier

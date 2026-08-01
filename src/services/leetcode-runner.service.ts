@@ -159,9 +159,14 @@ export async function runSuite(
 	const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'leet-'));
 	try {
 		const program = env.emit(ctx);
-		await Promise.all(program.files.map(f =>
-			fs.writeFile(path.join(tmpDir, f.name), f.content, 'utf-8'),
-		));
+		// Names come from the env, never from artifact content — a Cargo project
+		// needs `src/`, so a nested basename is written into a created parent
+		// rather than failing with ENOENT.
+		await Promise.all(program.files.map(async f => {
+			const target = path.join(tmpDir, f.name);
+			await fs.mkdir(path.dirname(target), { recursive: true });
+			await fs.writeFile(target, f.content, 'utf-8');
+		}));
 
 		const childEnv = childEnvironment(program.env, program.pathPrepend);
 		if (program.compile) {
