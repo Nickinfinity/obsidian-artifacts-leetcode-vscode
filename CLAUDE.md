@@ -642,9 +642,15 @@ Rules that are load-bearing, not stylistic:
   points into the shared cache, so `./target/release/…` does not exist under the run's `cwd`.
   The package name is hashed per run — concurrent suites share that target directory, and equal
   names compile over one another's binary.
-- **The cargo installer pre-warms a build.** `tryCompile` passes no timeout, so a cold
-  dependency build mid-solve is an unbounded wait; paying it at install time puts it inside a
-  budget that reports a slow install as one.
+- **The cargo installer pre-warms a build.** A cold dependency build mid-solve would spend the
+  whole compile budget; paying it at install time puts it inside a budget that reports a slow
+  install as one, and leaves the run an incremental link.
+- **A venv needs no toolchain identity in its key, and that was measured.** `bin/python3` is a
+  symlink chain to the base interpreter, so if that interpreter is removed the warm probe reads
+  **cold** and reinstalls; if it merely stops being the default, the venv keeps using its own
+  recorded interpreter and still works. The remaining exposure is a swept `site-packages` with
+  the interpreter intact, which surfaces as an ImportError naming the module — the same
+  transitive-sweep ceiling npm has.
 - **`runSuite` is the only resolver.** A project's `function` check reaches libraries through
   the same call, so `gradeProjectDir` hands directories to `build` and render checks only.
 
@@ -656,7 +662,9 @@ Rules that are load-bearing, not stylistic:
   only — the env owns the commands. Pure result mapping lives in
   [leetcode-runner.helpers.ts](src/services/leetcode-runner.helpers.ts).
 - A **contract violation** (`env.validate` non-null) fills every case with the message and
-  runs nothing; a **compile error** fills every case with `compilation error: …`.
+  runs nothing; a **compile error** fills every case with `compilation error: …`, and a build
+  that outlives `COMPILE_TIMEOUT_MS` says `compilation timed out` rather than reporting the
+  empty stderr a killed compiler leaves behind.
 - **Timeout attribution.** One budget per suite (`cases × test.timeoutMs`, capped at 60 s).
   On a kill `exec` still returns the stdout already produced, so every case that printed
   keeps its real result and every case from the first missing index on is `timeout` — this is
