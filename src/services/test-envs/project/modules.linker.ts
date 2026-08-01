@@ -106,6 +106,15 @@ async function linkScopeChildren(cacheModules: string, runModules: string, name:
  * makes `@scope` and `.bin` real directories one level down
  * (`linkScopeChildren`) rather than single links.
  *
+ * The cache is built by `pnpm add`, so its own top-level `node_modules` holds
+ * **only the declared packages** — each already a symlink into `.pnpm/`, with
+ * transitive dependencies reachable by walking up from the link's realpath
+ * rather than hoisted alongside. Linking a symlink to a symlink resolves fine
+ * on POSIX, and there is simply less to link than under a hoisting installer
+ * (a React set: four entries instead of forty). `.pnpm` itself is dot-prefixed,
+ * so it takes the scope-like path below — a few dozen redundant links that cost
+ * nothing, since resolution never routes through the run's copy of it.
+ *
  * Idempotent: an entry already present is left alone rather than
  * unlinked-and-relinked, so two concurrent runs sharing a cache never race
  * each other over the same link.

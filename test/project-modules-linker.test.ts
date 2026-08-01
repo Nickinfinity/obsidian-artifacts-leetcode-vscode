@@ -31,11 +31,11 @@ suite('project modules linker', () => {
 	});
 
 	/**
-	 * A minimal npm-shaped cache: a plain package, a scoped package, a `.bin`
-	 * entry, and a top-level dot-**file** — `npm install --prefix` writes
-	 * `.package-lock.json` there on every cold install, and it must be linked
-	 * like any other entry, not treated as a scope (which would `readdir` a
-	 * file and throw ENOTDIR).
+	 * A minimal installer-shaped cache: a plain package, a scoped package, a
+	 * `.bin` entry, and a top-level dot-**file** — every cold install writes one
+	 * (`pnpm add` leaves `.modules.yaml`, npm left `.package-lock.json`), and it
+	 * must be linked like any other entry, not treated as a scope (which would
+	 * `readdir` a file and throw ENOTDIR).
 	 */
 	function buildFakeCache(dir: string): void {
 		const modules = path.join(dir, 'node_modules');
