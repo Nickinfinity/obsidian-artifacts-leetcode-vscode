@@ -7,6 +7,8 @@
  * sensible `languageId` and file extension). A language is a `LangId` only when
  * a solver can Solve It → Run Tests → Submit in it end to end.
  */
+import type { LibEcosystem } from '../services/libs/lib-ecosystem.js';
+
 export type LangId = 'java' | 'python' | 'javascript' | 'rust' | 'typescript';
 
 /**
@@ -28,6 +30,15 @@ export interface LanguageConfig {
 	readonly detectCmd: string;
 	/** Fence shorthands that resolve to `id` — every one lives in `LANG_ALIAS`. */
 	readonly aliases: readonly string[];
+	/**
+	 * Registry that serves this language's `libs:`.
+	 *
+	 * Lives here rather than in a parallel `LANG_ECOSYSTEM` map, because a
+	 * second table naming the same languages is drift waiting to happen —
+	 * this registry is already the one authority for runnable-language
+	 * metadata. Read it through `ecosystemFor`, never by indexing a raw key.
+	 */
+	readonly ecosystem: LibEcosystem;
 }
 
 /**
@@ -45,6 +56,7 @@ export const LANGUAGES: Record<LangId, LanguageConfig> = {
 		commentPrefix: '//',
 		detectCmd: 'java --version',
 		aliases: [],
+		ecosystem: 'maven',
 	},
 	python: {
 		id: 'python',
@@ -53,6 +65,7 @@ export const LANGUAGES: Record<LangId, LanguageConfig> = {
 		commentPrefix: '#',
 		detectCmd: 'python3 --version',
 		aliases: ['py', 'py3', 'python3'],
+		ecosystem: 'pip',
 	},
 	javascript: {
 		id: 'javascript',
@@ -61,6 +74,7 @@ export const LANGUAGES: Record<LangId, LanguageConfig> = {
 		commentPrefix: '//',
 		detectCmd: 'node --version',
 		aliases: ['js', 'node', 'mjs', 'cjs'],
+		ecosystem: 'npm',
 	},
 	rust: {
 		id: 'rust',
@@ -69,6 +83,7 @@ export const LANGUAGES: Record<LangId, LanguageConfig> = {
 		commentPrefix: '//',
 		detectCmd: 'rustc --version',
 		aliases: ['rs'],
+		ecosystem: 'cargo',
 	},
 	typescript: {
 		id: 'typescript',
@@ -80,6 +95,7 @@ export const LANGUAGES: Record<LangId, LanguageConfig> = {
 		// a TypeScript toolchain would reject a machine that can run the tests.
 		detectCmd: 'node --version',
 		aliases: ['ts'],
+		ecosystem: 'npm',
 	},
 };
 

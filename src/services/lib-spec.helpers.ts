@@ -91,35 +91,3 @@ export function packageNameOf(spec: string): string {
 	return at > 0 ? spec.slice(0, at) : spec;
 }
 
-/**
- * Language ids whose `libs:` the installer can actually serve.
- *
- * `installLibs` shells out to **pnpm**, which resolves against the npm
- * registry, and there is no second installer — so a list declared under any
- * other language cannot be installed. Installing it anyway is worse than
- * skipping it: `libs.python: [requests@^2.0.0]` would fetch the unrelated *npm*
- * package named `requests`, which the name-shape allowlist cannot distinguish
- * from the intended PyPI one.
- *
- * The two `*react` ids are display-only — a `.jsx`/`.tsx` file maps onto the
- * runnable pair at bundle time — but an author may reasonably declare libs
- * under them, and npm serves those packages either way.
- *
- * Widen this list only when a real installer for that ecosystem exists.
- */
-export const NPM_LANGUAGES: readonly string[] =
-	['javascript', 'typescript', 'javascriptreact', 'typescriptreact'];
-
-/**
- * Whether the npm-only installer can serve this language's `libs:`.
- *
- * @param language - Language id as written in `libs:`.
- * @returns `true` when npm is the right registry for it.
- *
- * @example
- * isNpmServableLanguage('typescript'); // → true
- * isNpmServableLanguage('python');     // → false
- */
-export function isNpmServableLanguage(language: string): boolean {
-	return NPM_LANGUAGES.includes(language);
-}

@@ -35,6 +35,39 @@ export function resolveLangId(fenceLang: string): string {
 }
 
 /**
+ * Display-only `languageId`s and the runnable language each one is graded as.
+ *
+ * VS Code gives `.jsx` / `.tsx` their own ids, but this extension has no
+ * runtime for them — a React file is bundled and executed as plain
+ * JavaScript / TypeScript.
+ */
+const DISPLAY_TO_RUNNABLE: Readonly<Record<string, string>> = {
+	javascriptreact: 'javascript',
+	typescriptreact: 'typescript',
+};
+
+/**
+ * Folds a display-only `languageId` onto the runnable language it is graded
+ * as, leaving every other id untouched.
+ *
+ * One authority for a fact two callers need: `languageOf` (which file a
+ * `function` check grades) and `ecosystemFor` (which registry serves a
+ * `libs:` key). Both used to inline the same pair of `if`s.
+ *
+ * @param langId - Canonical `languageId` (already through `resolveLangId`).
+ * @returns The runnable id, or `langId` unchanged when it is already one.
+ *
+ * @example
+ * runnableLangId('typescriptreact'); // → 'typescript'
+ * runnableLangId('python');          // → 'python'
+ */
+export function runnableLangId(langId: string): string {
+	// Own-property only, for the same reason `resolveLangId` is: the id can
+	// come from untrusted `.md` text, and `['__proto__']` is not a language.
+	return Object.hasOwn(DISPLAY_TO_RUNNABLE, langId) ? DISPLAY_TO_RUNNABLE[langId] : langId;
+}
+
+/**
  * Maps a canonical `languageId` to the file extension used for the temp
  * exercise file (no leading dot).
  *

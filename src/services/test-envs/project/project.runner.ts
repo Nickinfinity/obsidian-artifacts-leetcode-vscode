@@ -10,7 +10,7 @@ import type {
 } from '../../../types/leetcode.types.js';
 import { canonicalJson } from '../../../utils/canonical-json.js';
 import { resolveLangId } from '../../language-map.service.js';
-import { isNpmServableLanguage } from '../../lib-spec.helpers.js';
+import { ecosystemFor } from '../../libs/lib-ecosystem.js';
 import { runSuite } from '../../leetcode-runner.service.js';
 import { testEnvFor } from '../env.registry.js';
 import { runBuildCheck } from './build.check.js';
@@ -147,12 +147,12 @@ function installSetFor(parsed: ParsedLeetCode, checks: ProjectCheck[]): string[]
  * declaring `libs.typescript` must install its own libraries, and scoping this
  * to the render set was the bug that made a render check install a superset
  * under a second cache key. But it **is** restricted to the languages the npm
- * registry serves ({@link isNpmServableLanguage}), because `installLibs` shells
- * out to pnpm and there is no second installer: unioning `libs.python:
- * [requests]` in would install the unrelated npm package of that name rather
- * than the PyPI one, and the name-shape allowlist cannot tell them apart. The
- * parser warns about the skipped language at authoring time, so nothing is
- * silent.
+ * registry serves ({@link ecosystemFor} `=== 'npm'`), because `installLibs`
+ * shells out to pnpm and there is no second installer yet: unioning
+ * `libs.python: [requests]` in would install the unrelated npm package of that
+ * name rather than the PyPI one, and the name-shape allowlist cannot tell them
+ * apart. The parser warns about the skipped language at authoring time, so
+ * nothing is silent.
  *
  * Order does not matter: `libCacheDir` sorts before hashing.
  *
@@ -166,7 +166,7 @@ function installSetFor(parsed: ParsedLeetCode, checks: ProjectCheck[]): string[]
 function runLibs(parsed: ParsedLeetCode): string[] {
 	const libs = parsed.libs ?? {};
 	const servable = Object.entries(libs)
-		.filter(([language]) => isNpmServableLanguage(language))
+		.filter(([language]) => ecosystemFor(language) === 'npm')
 		.flatMap(([, specs]) => specs);
 	return [...new Set(servable)];
 }
