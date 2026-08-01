@@ -392,4 +392,52 @@ suite('project parser', () => {
 		});
 
 	});
+
+	// ── reserved vs unknown check kinds ───────────────────────────────────────
+
+	suite('a reserved kind is not a typo', () => {
+
+		function artifactWithKind(kind: string): string {
+			return ['---', 'type: leetcode', 'title: K', '---', '', 'Body.', '',
+				'```yaml leetcode',
+				'test:',
+				'  type: project',
+				'  checks:',
+				'    - name: api answers',
+				`      kind: ${kind}`,
+				'      service: api',
+				'```', ''].join('\n');
+		}
+
+		/**
+		 * The format spec lists `http` as planned for `service`. Calling it
+		 * unknown sent authors looking for a spelling mistake in a line that was
+		 * spelled correctly.
+		 */
+		test('a documented-but-unimplemented kind says so', () => {
+			const parsed = parseLeetCode(artifactWithKind('http'));
+			const warning = (parsed.warnings ?? []).find(w => w.includes('api answers')) ?? '';
+
+			assert.match(warning, /no environment implements yet/);
+			assert.strictEqual(warning.includes('unknown'), false);
+		});
+
+		test('an actual typo is still called unknown', () => {
+			const parsed = parseLeetCode(artifactWithKind('htpp'));
+			const warning = (parsed.warnings ?? []).find(w => w.includes('api answers')) ?? '';
+
+			assert.match(warning, /unknown kind 'htpp'/);
+		});
+
+		/**
+		 * Both are dropped: a check nothing can run must not reach the panel's
+		 * check line, and must never count as a red check for `--starter-red`,
+		 * which needs a starter to fail on its merits.
+		 */
+		test('both are dropped, whatever they are called', () => {
+			for (const kind of ['http', 'htpp']) {
+				assert.deepStrictEqual(parseLeetCode(artifactWithKind(kind)).checks, []);
+			}
+		});
+	});
 });

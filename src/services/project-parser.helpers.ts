@@ -40,6 +40,22 @@ const FENCE_RE = /```([^\n]*)\r?\n([\s\S]*?)```/g;
 const VALID_ROLES = new Set<FileRole>(['editable', 'readonly', 'hidden']);
 const VALID_KINDS = new Set(['function', 'build', 'dom-assert', 'css-assert']);
 
+/**
+ * Check kinds the **format** documents but no environment can execute yet.
+ *
+ * Kept apart from an unknown kind so the author is told which of two very
+ * different things happened: `kind: htpp` is a typo they can fix, while
+ * `kind: http` is a contract this extension has not implemented — the format
+ * spec lists it as planned for `service`, whose environment is not registered.
+ * Calling the second one "unknown" sent authors looking for a spelling
+ * mistake in a line that was spelled correctly.
+ *
+ * Both are still **dropped**: a check nothing can run must not reach the
+ * panel's check line, and must never count as a red check for `--starter-red`,
+ * which requires a starter to fail *on its merits*.
+ */
+const RESERVED_KINDS = new Set(['http']);
+
 /** Fields a `checks:` entry may set. Anything else — `__proto__` included — never lands. */
 const CHECK_FIELDS = new Set(['name', 'kind', 'file', 'function', 'argv', 'dir']);
 
@@ -349,6 +365,10 @@ function buildCheck(fields: Map<string, string>, warn: (m: string) => void): Pro
 	const name = unquote(fields.get('name') ?? '');
 	const kind = fields.get('kind') ?? '';
 	if (!name) { return null; }
+	if (RESERVED_KINDS.has(kind)) {
+		warn(`checks: '${name}' declares kind '${kind}', which no environment implements yet — dropped`);
+		return null;
+	}
 	if (!VALID_KINDS.has(kind)) {
 		warn(`checks: '${name}' has unknown kind '${kind}' — dropped`);
 		return null;
