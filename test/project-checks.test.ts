@@ -221,4 +221,31 @@ suite('project checks', () => {
 
 		fs.rmSync(runDir, { recursive: true, force: true });
 	});
+
+    // ── render checks are a web surface (T16) ─────────────────────────────────
+
+    suite('a render check refuses a file nothing can mount', () => {
+
+        /** jsdom mounts a JS bundle; a python module has no component in it. */
+        for (const file of ['src/app.py', 'src/main.rs', 'src/App.java']) {
+            test(`'${file}' is refused at validation, naming the language`, () => {
+                const reason = validateRenderCheck({
+                    name: 'ui', kind: 'dom-assert', file, publicCount: 1,
+                    cases: [{ input: { steps: [{ op: 'text', selector: '#a' }] }, expected: 'x' }],
+                });
+
+                assert.ok(reason, `expected '${file}' to be refused`);
+                assert.match(reason, /jsdom can only mount a JavaScript bundle/);
+            });
+        }
+
+        for (const file of ['src/App.jsx', 'src/App.tsx', 'src/app.js', 'src/app.ts']) {
+            test(`'${file}' is accepted — it bundles`, () => {
+                assert.strictEqual(validateRenderCheck({
+                    name: 'ui', kind: 'dom-assert', file, publicCount: 1,
+                    cases: [{ input: { steps: [{ op: 'text', selector: '#a' }] }, expected: 'x' }],
+                }), null);
+            });
+        }
+    });
 });

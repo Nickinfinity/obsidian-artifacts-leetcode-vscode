@@ -13,6 +13,7 @@ import { canonicalJson } from '../../../utils/canonical-json.js';
 import { safeJsonParse } from '../../../utils/safe-json.js';
 import type { CaseOutcome } from '../env.types.js';
 import { parseSentinelLines } from '../sentinel.helpers.js';
+import { resolveLangId, runnableLangId } from '../../language-map.service.js';
 import { resolveContained } from './files.writer.js';
 import { ensureLibEnv } from '../../libs/lib-cache.service.js';
 import { HARNESS_LIBS, RENDER_RUNNER, type RenderCase, renderRunnerSource } from './render.driver.js';
@@ -72,6 +73,14 @@ const RENDER_TIMEOUT_MS = 180_000;
 export function validateRenderCheck(check: RenderCheck): string | null {
 	if (check.cases.length === 0) {
 		return `${check.kind} '${check.name}' declares no cases — it would pass without asserting anything`;
+	}
+
+	// jsdom mounts a **JavaScript** bundle. A python or rust file has no
+	// component to render, and esbuild would fail with its own message far from
+	// the cause — so the refusal is named here, at validation.
+	const language = runnableLangId(resolveLangId(path.extname(check.file).replace('.', '')));
+	if (!BUNDLEABLE.has(language)) {
+		return `${check.kind} '${check.name}': '${check.file}' is ${language}, and jsdom can only mount a JavaScript bundle`;
 	}
 
 	for (const [index, testCase] of check.cases.entries()) {
@@ -204,6 +213,9 @@ function fail(check: RenderCheck, detail: string): ProjectCheckOutcome {
  * @example
  * renderLibsFor(['react@^18.0.0']); // → ['esbuild@…', 'jsdom@…', 'react@^18.0.0']
  */
+/** Languages the render driver can bundle and mount. */
+const BUNDLEABLE = new Set(['javascript', 'typescript']);
+
 export function renderLibsFor(artifactLibs: readonly string[] = []): string[] {
 	const declaresReact = artifactLibs.some(lib => lib.startsWith('react@') || lib === 'react');
 	return [...HARNESS_LIBS, ...artifactLibs, ...(declaresReact ? [] : DEFAULT_REACT)];
@@ -237,14 +249,16 @@ export function renderLibsFor(artifactLibs: readonly string[] = []): string[] {
 export async function runRenderCheck(
 	check: RenderCheck, runDir: string, artifactLibs: readonly string[] = [], cacheDir?: string,
 ): Promise<ProjectCheckOutcome> {
-	const invalid = validateRenderCheck(check);
-	if (invalid) { return fail(check, invalid); }
-
+	// Containment first, always: an escaping path is the security answer, and it
+	// must not be pre-empted by a cosmetic complaint about the file's language.
 	try {
 		resolveContained(runDir, check.file);
 	} catch (e) {
 		return fail(check, e instanceof Error ? e.message : String(e));
 	}
+
+	const invalid = validateRenderCheck(check);
+	if (invalid) { return fail(check, invalid); }
 
 	let dir = cacheDir;
 	if (!dir) {

@@ -100,4 +100,26 @@ suite('test-env registry', () => {
             assert.deepStrictEqual(languagesForType('stdin-stdout'), ['python']);
         });
     });
+
+    // ── project registration ──────────────────────────────────────────────────
+
+    suite('project × language', () => {
+
+        /**
+         * A `project` is graded by `build` and `function` checks against a file
+         * tree, which any runnable language can declare — so the matrix is the
+         * whole runnable set rather than the two the render driver can bundle.
+         */
+        test('every runnable language can hold a project exercise', () => {
+            assert.deepStrictEqual(
+                languagesForType('project'),
+                ['java', 'javascript', 'python', 'rust', 'typescript'],
+            );
+        });
+
+        test('the display-only react ids are still not registered', () => {
+            assert.strictEqual(testEnvFor('project', 'javascriptreact'), undefined);
+            assert.strictEqual(testEnvFor('project', 'typescriptreact'), undefined);
+        });
+    });
 });

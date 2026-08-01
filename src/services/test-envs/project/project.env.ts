@@ -1,3 +1,4 @@
+import { LANG_IDS } from '../../../types/languages.js';
 import type { EnvContext, EmittedProgram, TestEnv } from '../env.types.js';
 import { parseSentinelLines } from '../sentinel.helpers.js';
 
@@ -9,25 +10,32 @@ import { parseSentinelLines } from '../sentinel.helpers.js';
  * text, so an artifact opened mid-build explains itself instead of running an
  * empty program and reporting a silent pass.
  */
-const NOT_YET_RUNNABLE =
-	'project exercises are not runnable yet — the render driver and check kinds are still being built';
+/**
+ * Why a `project` candidate can never arrive through the suite runner.
+ *
+ * A `project` is graded by `gradeProjectDir` against a **directory**, not by
+ * running one candidate buffer, so reaching this env's `emit` means something
+ * called the wrong door. It replaces an older message claiming projects were
+ * "not runnable yet", which stopped being true when the render driver and the
+ * check kinds landed.
+ */
+const NOT_A_BUFFER =
+	'a project exercise is graded as a file tree, not as a single solution buffer';
 
 /**
  * The `project` environment for one language.
  *
- * A `project` exercise is graded by its declared **checks**, not by one
- * function's return value, so this env's eventual `emit` materialises a file
- * tree, installs the artifact's `libs`, bundles any component, and runs each
- * check — all of it still to come (TB.3–TB.7). Today it is a registered
- * skeleton: the registry entry exists so `testEnvFor('project', …)` and
- * `languagesForType('project')` return the real answer, and `validate` refuses
- * every candidate with one readable sentence.
+ * A `project` exercise is graded by its declared **checks** against a whole
+ * directory (`gradeProjectDir`), never by running one candidate buffer — so
+ * this entry exists to answer the capability matrix, not to execute anything.
+ * `testEnvFor('project', …)` and `languagesForType('project')` give the real
+ * answer, and `validate` explains the mismatch if anything routes a buffer here.
  *
- * It registers under the **runnable** ids `javascript` / `typescript`, never
- * `javascriptreact` / `typescriptreact` — those are display ids with no
- * runtime. A `.jsx` / `.tsx` file maps onto them at bundle time.
+ * It registers under the **runnable** ids only, never `javascriptreact` /
+ * `typescriptreact` — those are display ids with no runtime. A `.jsx` / `.tsx`
+ * file maps onto its runnable pair at bundle time.
  *
- * @param language - Canonical runnable `languageId` (`javascript` | `typescript`).
+ * @param language - Canonical runnable `languageId`.
  * @returns A `TestEnv` for the `(project × language)` slot.
  *
  * @example
@@ -37,7 +45,7 @@ export function projectEnvFor(language: string): TestEnv {
 	return {
 		type: 'project',
 		language,
-		validate: (_ctx: EnvContext): string | null => NOT_YET_RUNNABLE,
+		validate: (_ctx: EnvContext): string | null => NOT_A_BUFFER,
 		// ponytail: trivial program — unreachable while `validate` refuses every
 		// candidate, and replaced wholesale by the real emit in TB.3–TB.7.
 		emit: (_ctx: EnvContext): EmittedProgram => ({ files: [], run: 'node --version' }),
@@ -45,5 +53,13 @@ export function projectEnvFor(language: string): TestEnv {
 	};
 }
 
-/** The registered `project` environments — one per runnable language. */
-export const projectEnvs: TestEnv[] = ['javascript', 'typescript'].map(projectEnvFor);
+/**
+ * The registered `project` environments — one per runnable language.
+ *
+ * Derived from `LANG_IDS` rather than listed here: a `project` is graded by
+ * `build` and `function` checks that any language can declare, and the
+ * *render* kinds carry their own refusal for a file nothing can bundle. A
+ * second hand-kept language list is exactly the drift `LANGUAGES` exists to
+ * prevent.
+ */
+export const projectEnvs: TestEnv[] = LANG_IDS.map(projectEnvFor);
