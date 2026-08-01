@@ -115,7 +115,7 @@ function runnerSource(ctx: EnvContext): string {
 	const { parsed, cases, langId } = ctx;
 	const fn = functionNameFor(parsed, langId);
 	const caseRows = cases.map(c => {
-		const args = parsed.params.map(p => jsonToLiteral(c.input[p.name], 'java'));
+		const args = parsed.params.map(p => jsonToLiteral(c.input[p.name], 'java', p.type));
 		return `\t\t__cases.add(() -> Solution.${fn}(${args.join(', ')}));`;
 	});
 

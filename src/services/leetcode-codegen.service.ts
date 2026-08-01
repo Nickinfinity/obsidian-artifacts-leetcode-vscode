@@ -165,12 +165,12 @@ const LANG_CODEGEN: Record<LangId, LangCodegen> = {
  * @example
  * jsonToLiteral([1, 2, 3], 'java');
  */
-export function jsonToLiteral(value: unknown, language: string): string {
+export function jsonToLiteral(value: unknown, language: string, declaredType?: string): string {
 	if (value === null) { return language === 'python' || language === 'rust' ? 'None' : 'null'; }
 	if (typeof value === 'boolean') { return boolLiteral(value, language); }
 	if (typeof value === 'number')  { return String(value); }
 	if (typeof value === 'string')  { return stringLiteral(value, language); }
-	if (Array.isArray(value))       { return arrayLiteral(value, language); }
+	if (Array.isArray(value))       { return arrayLiteral(value, language, declaredType); }
 	if (typeof value === 'object')  { return objectLiteral(value as Record<string, unknown>, language); }
 	if (value === undefined)        { return language === 'python' || language === 'rust' ? 'None' : 'undefined'; }
 	return JSON.stringify(value);
@@ -239,10 +239,10 @@ function rustEscape(value: string): string {
 }
 
 /** Format an array as a language-specific list literal. */
-function arrayLiteral(arr: unknown[], language: string): string {
+function arrayLiteral(arr: unknown[], language: string, declaredType?: string): string {
 	const items = arr.map(x => jsonToLiteral(x, language)).join(', ');
 	if (language === 'java') {
-		return `new ${javaElementType(arr)}[]{${items}}`;
+		return `new ${javaElementType(arr, declaredType)}[]{${items}}`;
 	}
 	if (language === 'rust') {
 		// ponytail: `vec![]` can't type-infer standalone for an empty array;
@@ -260,19 +260,28 @@ function arrayLiteral(arr: unknown[], language: string): string {
  * literal `new int[][]{…}`). Without this, a `[[1,2],[3,4]]` argument renders as
  * `new Object[]{…}` and fails to compile against an `int[][]` parameter.
  *
- * A heterogeneous or empty array degrades to `Object`, which compiles wherever
- * an `Object[]` is accepted and fails loudly where it is not — the honest
- * outcome for a test case whose shape the type system cannot recover.
+ * An **empty** array has no contents to infer from, so the artifact's declared
+ * parameter type is used instead: `[]` for an `int[]` parameter must render
+ * `new int[]{}`, because `new Object[]{}` does not convert to `int[]` and the
+ * whole suite fails to compile. An empty-array case is ordinary — "no items"
+ * is the first edge case anyone writes — so leaving it to inference made a
+ * normal exercise uncompilable.
  *
- * @param arr - Array whose element type is needed.
+ * A heterogeneous array with no declared type still degrades to `Object`, which
+ * compiles wherever an `Object[]` is accepted and fails loudly where it is not.
+ *
+ * @param arr          - Array whose element type is needed.
+ * @param declaredType - The parameter's `params:` type, when one is known.
  * @returns Java type name, e.g. `'int'`, `'String'`, `'int[]'`.
  *
  * @example
- * javaElementType([1, 2]);       // → 'int'
- * javaElementType([[1], [2]]);   // → 'int[]'
+ * javaElementType([1, 2]);           // → 'int'
+ * javaElementType([[1], [2]]);       // → 'int[]'
+ * javaElementType([], 'int[]');      // → 'int'
+ * javaElementType([], 'int[][]');    // → 'int[]'
  */
-function javaElementType(arr: unknown[]): string {
-	if (arr.length === 0) { return 'Object'; }
+function javaElementType(arr: unknown[], declaredType?: string): string {
+	if (arr.length === 0) { return declaredElementType(declaredType) ?? 'Object'; }
 	if (arr.every(e => typeof e === 'number' && Number.isInteger(e))) { return 'int'; }
 	if (arr.every(e => typeof e === 'number'))  { return 'double'; }
 	if (arr.every(e => typeof e === 'string'))  { return 'String'; }
@@ -281,6 +290,29 @@ function javaElementType(arr: unknown[]): string {
 		return `${javaElementType(arr[0] as unknown[])}[]`;
 	}
 	return 'Object';
+}
+
+
+/**
+ * The Java element type of a declared array parameter, e.g. `int[]` → `int`.
+ *
+ * Strips one `[]` and maps what remains through `TYPE_SYNTAX`, so a nested
+ * `int[][]` yields `int[]` and an unmapped name is passed through as written.
+ *
+ * @param declaredType - A `params:` type, or `undefined` when none is known.
+ * @returns The element type, or `undefined` when the declaration is not an array.
+ *
+ * @example
+ * declaredElementType('int[]');    // → 'int'
+ * declaredElementType('string[]'); // → 'String'
+ * declaredElementType('int');      // → undefined
+ */
+function declaredElementType(declaredType?: string): string | undefined {
+	if (declaredType === undefined || !declaredType.endsWith('[]')) { return undefined; }
+
+	// `mapType` is the one authority for artifact type → native type, and it
+	// already handles nesting: `int[]` → `int[]`, `string` → `String`.
+	return mapType(declaredType.slice(0, -2), 'java');
 }
 
 /** Format an object as a language-specific dict/object literal. */
