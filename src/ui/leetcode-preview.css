@@ -300,3 +300,23 @@
 .time-limit-row .hint {
   margin-top: 0;
 }
+
+/* ── Declared libraries ─────────────────────────────────────────────────────
+   One chip per `libs:` spec, shown for the selected language only — the
+   `.lib-block[data-language]` filter is the same one the setup blocks use. */
+.lib-chips {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.35rem;
+	margin-bottom: 0.75rem;
+}
+
+.lib-chip {
+	background: var(--vscode-badge-background);
+	border-radius: 0.75rem;
+	color: var(--vscode-badge-foreground);
+	font-family: var(--vscode-editor-font-family);
+	font-size: 0.85em;
+	padding: 0.1rem 0.55rem;
+	white-space: nowrap;
+}

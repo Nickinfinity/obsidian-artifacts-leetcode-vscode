@@ -534,11 +534,14 @@ How a test executes is data, not a branch. A **test environment** is a
 | `test.type` | Languages with an environment |
 |---|---|
 | `function` | `java`, `javascript`, `python`, `rust`, `typescript` |
-| `project` | `javascript`, `typescript` |
+| `project` | `java`, `javascript`, `python`, `rust`, `typescript` |
 | `class`, `stdin-stdout`, `in-place`, `service` | *(none — reserved; selector renders empty)* |
 
-`project`'s two entries are the **runnable** ids
-(`projectEnvs = ['javascript', 'typescript'].map(projectEnvFor)`);
+`project` covers the whole runnable set (`projectEnvs = LANG_IDS.map(projectEnvFor)`),
+because it is graded by `build` and `function` checks against a file tree and any
+of these languages can declare those. Its two **render** kinds are narrower:
+`dom-assert` / `css-assert` mount a JavaScript bundle in jsdom, so a check whose
+file is python, rust or java is refused at validation, naming the language.
 `javascriptreact` / `typescriptreact` are display ids with no runtime of their
 own, and a `.jsx` / `.tsx` file maps onto the runnable pair at bundle time.
 A `project` is graded by its declared `checks:` rather than one return value, so
@@ -802,10 +805,10 @@ services:
 
 **Trust class, stated plainly:** a `service` artifact executes declared commands and
 package scripts from the `.md` — arbitrary code by design, the same trust class as running
-the solver's own candidate locally. The argv rules and the library-name allowlist bound the
+the solver's own candidate locally. The argv rules and the per-registry spec grammars bound the
 *shape* of what runs; they do not make artifact-authored code safe.
 
-### 9.4 `libs:` — installed before checks run
+### 9.4 `libs:` — third-party libraries, per registry
 
 A body config fence (§2.5), canonically placed before `# Setup` (function) or
 before `## Files` (project/service) — next to the code it installs for:
@@ -813,48 +816,108 @@ before `## Files` (project/service) — next to the code it installs for:
 ````markdown
 ```yaml leetcode
 libs:
-  python: [fastapi@^0.115.0, uvicorn@^0.32.0]
+  python: ["fastapi>=0.115,<0.116", uvicorn>=0.32]
   typescript: [react@^19.0.0, vite@^7.0.0]
 ```
 ````
 
-Both the block form above and an inline `python: [fastapi@^0.115.0, uvicorn@^0.32.0]` parse.
-An entry the allowlist refuses is **dropped with a warning** before it can reach an install
-subprocess; the rest of that language's list still installs.
+Both the block form above and the inline form parse. **`libs:` is read for every
+`test.type`** — a `function` exercise can want numpy exactly as a `project` can.
 
-Per-language dependency lists. Every entry must pass the npm-style allowlist already
-shipped in `validateLibNames` ([lib-spec.helpers.ts](src/services/lib-spec.helpers.ts)) —
-a bare scoped/unscoped package name with an optional `@version`, no `..` anywhere — before
-it can reach an install subprocess. Java is out of scope (no transitive resolver in a stock
-JDK).
+**Quote any spec containing a comma.** A comma separates entries in the inline form, so
+`python: [numpy>=2,<3]` declares *two* entries — `numpy>=2` and a `<3` that is refused —
+which silently installs an unbounded numpy. Write `["numpy>=2,<3"]`, or use the block form,
+where no quoting is needed:
 
-**The installer serves the npm registry only, so the language key decides whether a list
-installs at all.** `installLibs` shells out to `pnpm add --dir`, and there is no second
-installer, so only the languages in `NPM_LANGUAGES` (`javascript`, `typescript`,
-`javascriptreact`, `typescriptreact`) are served. A list under any other key is **kept on the
-parsed artifact, warned about, and skipped** — `libs: { python: [requests@^2.0.0] }` warns
-`libs: 'python' is not installable — the library installer is npm-only, so these are skipped`
-rather than installing the unrelated npm package that happens to share the name. The
-name-shape allowlist cannot tell two registries' packages apart, so the language key is the
-only thing that can. (The warning still says *npm-only* because the **registry** is what
-bounds it; the client in front of that registry is pnpm.)
+````markdown
+```yaml leetcode
+libs:
+  python:
+    - numpy>=2,<3
+```
+````
 
-> **This npm-only restriction describes today's installer, not the format.** It is carried
-> across the v1 → v2 move unchanged — this change relocated the block, it did not bless the
-> limitation. A follow-on change adding per-registry installers (pip / cargo / maven) retires
-> `NPM_LANGUAGES` and this warning with it. Treat it as current behaviour to honour, not as a
-> permanent property of `libs:`.
+#### The language key picks the registry
 
-**Trust class, stated plainly:** the allowlist bounds the *shape of a name*; it says nothing
-about what the package contains once it is fetched. Treat an artifact's `libs:` the way you
-would treat its `build` argv — as code you are choosing to run, because a `build` check, a
-render bundle, or a `dom-assert` will execute it.
+`LANGUAGES[lang].ecosystem` maps each runnable language to the registry that serves it, and
+`ecosystemFor` resolves the key the same way a fence info-string is resolved (`py` → python,
+`tsx` → typescript). A key naming no runnable language is **dropped with a warning**.
 
-**Install scripts, however, do not run.** pnpm 10+ refuses a dependency's
-`preinstall`/`install`/`postinstall` unless it is explicitly approved, and nothing here
-approves one — so an artifact cannot obtain code execution merely by *declaring* a package.
-This is stricter than the npm installer it replaced, which ran them all. Two consequences
-worth knowing:
+| Language(s) | Registry | Installed by |
+|---|---|---|
+| `javascript`, `typescript` (and their `*react` display ids) | npm | `pnpm add --dir` |
+| `python` | PyPI | a **venv** in the cache, then `<venv>/bin/python3 -m pip install` |
+| `rust` | crates.io | a generated `Cargo.toml`, then `cargo fetch` + a pre-warm build |
+| `java` | Maven Central | a generated `pom.xml`, then `mvn dependency:copy-dependencies` |
+
+A missing toolchain is a named message, not a stack: *"mvn not found — install Maven to run
+library-backed Java exercises"*.
+
+#### Specs are ecosystem-native, and bounded
+
+An author writes what that registry expects. Each grammar is a **subset** of what the CLI
+accepts, parsed into fields — never waved through by one pattern:
+
+| Registry | Write | Fields |
+|---|---|---|
+| npm | `react@^19.0.0`, `@types/node@^20` | name (scope included), range |
+| pip | `numpy`, `"numpy>=2,<3"`, `requests[socks]==2.32.3` | name, extras, predicates |
+| cargo | `serde_json@1.0`, `serde@^1+derive+std` | name, req, features |
+| maven | `com.google.guava:guava:33.3.1` (`:packaging:classifier` optional) | the coordinate segments |
+
+An entry its registry's grammar refuses is **dropped with a warning** before it can reach an
+install subprocess; the rest of that language's list still installs.
+
+**Refused everywhere**, because each fetches from or reads a location the artifact chose, and
+a name-shape grammar can say nothing about a URL:
+
+- npm `file:` · `link:` · `git+…` · `workspace:` protocol specs
+- pip direct references (`name @ url`), VCS URLs, environment markers (`;`), `-r file` forms
+- cargo inline TOML — `git =`, `path =`, `registry =`, `default-features = false`
+- maven repository or mirror overrides, and the non-reproducible `LATEST` / `RELEASE`
+- in all four: `..` anywhere, a leading `-` (flag injection), whitespace, shell metacharacters
+
+Cargo's `+` is this grammar's feature separator, so semver build metadata (`1.0.0+build`) is
+not supported — one character cannot mean both.
+
+#### How a run consumes them
+
+Installed **once** into a shared cache under `os.tmpdir()`, keyed on
+`sha256(ecosystem + sorted specs)` — the ecosystem is part of the key, so a pip `react` and an
+npm `react` can never be served the same directory. Two artifacts declaring the same set share
+one install; a different version is a different key.
+
+The cache reaches a run through **environment variables only**. Every `compile` / `run`
+command stays a fixed literal, so no cache path is ever interpolated into a command line:
+
+| Language | Variable(s) | Command change |
+|---|---|---|
+| python | `PATH` prefix `<dir>/bin`, `VIRTUAL_ENV` | none — `python3 runner.py` resolves the venv interpreter |
+| javascript / typescript | `NODE_PATH=<dir>/node_modules` | none |
+| java | `CLASSPATH=<dir>/jars/*` + `:.` | the run drops `-cp .`, which would override `CLASSPATH` |
+| rust | `CARGO_TARGET_DIR=<dir>/target` | **yes** — a Cargo project replaces the bare `rustc` path |
+
+`NODE_PATH` serves CJS `require` only, which is what the `function` envs' `vm` sandbox uses;
+a bare ESM `import` needs the `project` type, whose run directory gets a real `node_modules`
+of symlinks instead.
+
+A `project` resolves **one environment per registry** in a single grading run, so a
+FastAPI-plus-React exercise gets a venv *and* a node environment. A `build` check sees its
+declared toolchains first on `PATH` — `<venv>/bin`, then the run's own `node_modules/.bin`,
+then the inherited `PATH` — so `argv: ["pytest", "-q"]` resolves what the exercise declared.
+
+#### Trust class
+
+Installing `libs:` fetches, and may execute, third-party code: a PyPI `setup.py`, a cargo
+`build.rs`, a maven plugin. That is **arbitrary code**, the same trust class as running a
+solver's candidate locally. The grammars bound the *shape of a name*; they say nothing about
+what the package does once fetched. Treat an artifact's `libs:` the way you would treat its
+`build` argv — as code you are choosing to run.
+
+**Node is the exception, in the safe direction.** pnpm 10+ refuses a dependency's
+`preinstall`/`install`/`postinstall` outright, and **no allowlist ships**, so an artifact
+cannot obtain code execution merely by declaring an npm package. This is stricter than the
+npm installer it replaced, which ran them all. Two consequences worth knowing:
 
 - `--config.strict-dep-builds=false` **is** passed, because pnpm 11 makes an ignored build
   script a non-zero exit; without it a perfectly usable install is reported as `install failed`.
@@ -864,3 +927,4 @@ worth knowing:
   binary arrives as an optional dependency rather than a postinstall download. If some future
   lib does need one, the fix is a hardcoded `--allow-build=<pkg>` list in the installer,
   **never** one read from an artifact.
+

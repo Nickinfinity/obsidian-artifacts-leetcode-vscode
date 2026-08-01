@@ -238,8 +238,13 @@ running timer dies. Terminal renders *seed* their state into the document
 (`renderLeetCodePreviewHtml`'s `resultsHtml` / `timer` args); everything live is `postMessage`.
 
 **No runtime dependencies** — VS Code API + Node built-ins (`node:child_process`,
-`node:fs/promises`, `node:os`, `node:path`) only. `highlight.js` from the core repo is **not**
-a dependency; the preview panel does not syntax-highlight.
+`node:crypto`, `node:fs/promises`, `node:os`, `node:path`) only. `highlight.js` from the core
+repo is **not** a dependency; the preview panel does not syntax-highlight.
+
+Precisely: **the extension ships zero; an exercise declares its own.** A `libs:` block is
+installed at run time into a shared cache under `os.tmpdir()`, never into this repo's
+`package.json` — so the invariant is about what is *bundled*, not about what an artifact may
+resolve. See *Library support* below and `ARTIFACT_LEETCODE_FILE_FORMAT.md` §9.4.
 
 ---
 
@@ -317,7 +322,8 @@ folder) are gone.
 
 **Adding a runnable language = four rows, no scattered edits:**
 
-1. a `LANGUAGES` entry (`src/types/languages.ts`),
+1. a `LANGUAGES` entry (`src/types/languages.ts`) — including its `ecosystem`, which is what
+   `libs:` resolves through,
 2. a `TYPE_SYNTAX` row (type mapping),
 3. a `LANG_CODEGEN` row (boilerplate + harness — the template itself lives in its own file
    under [src/services/codegen/](src/services/codegen/), e.g. `rust.codegen.ts`,
@@ -370,11 +376,16 @@ drives the language selector directly, so there is no second table to keep in sy
 The five `function` envs come from `makeFunctionEnv(spec)`
 ([make-function-env.ts](src/services/test-envs/function/make-function-env.ts)), which owns
 `type: 'function'`, the two-file emit shape, and the shared sentinel parser; each language
-supplies only its `runnerSource` / `candidateContent` / `validate`. They are self-contained —
-the extension ships zero runtime dependencies and has no install path, so it cannot assume a
-JUnit jar exists. `TestEnv.requires` / `detect()` exist so a version- or library-gated env can
-run its own extra check without touching the runner; TypeScript's env is the first to use it,
-gating on a Node version floor rather than a missing package (see the four-rows section above).
+supplies only its `runnerSource` / `candidateContent` / `validate`. The **generated driver**
+is still self-contained — it can never assume a JUnit jar, because nothing the extension ships
+installs one. What an *artifact* declares is a different matter: `libs:` is resolved before
+`emit`, and the env consumes it through environment variables (see *Library support*).
+`TestEnv.requires` / `detect()` exist so a version-gated env can run its own extra check
+without touching the runner; TypeScript's env is the first to use it, gating on a Node version
+floor rather than a missing package (see the four-rows section above).
+
+`spec.withLibs` is the escape hatch for a language whose *shape* changes when libraries are
+present — only Rust sets it, swapping the bare `rustc` emit for a Cargo project.
 
 **The candidate is never spliced.** `env.emit(ctx)` returns `{ files, compile?, run }`. The
 solver's code is written **verbatim** as one file; a generated *driver* links to it, so their
@@ -407,7 +418,7 @@ maps onto the runnable pair at bundle time.
 |---|---|---|
 | Grammar | [project-parser.helpers.ts](src/services/project-parser.helpers.ts) | `## Files`, `libs:`, `checks:`, `check=<name>` case binding, warnings |
 | Containment | [files.writer.ts](src/services/test-envs/project/files.writer.ts) | `resolveContained` — **the** path authority; writes the tree, `role: readonly` → mode `0o444` |
-| Toolchain | [lib-installer.ts](src/services/test-envs/project/lib-installer.ts) | allowlist → argv `pnpm add` → shared cache under `os.tmpdir()` |
+| Toolchain | [libs/](src/services/libs/) | grammar → argv install → shared cache under `os.tmpdir()`, one door (`ensureLibEnv`) |
 | Linking | [modules.linker.ts](src/services/test-envs/project/modules.linker.ts) | per-run `node_modules` of symlinks into that cache — pnpm's layout |
 | Render | [render.driver.ts](src/services/test-envs/project/render.driver.ts) | esbuild bundle + jsdom mount, one `__LEET__` line per case |
 | Check kinds | [checks.ts](src/services/test-envs/project/checks.ts) · [build.check.ts](src/services/test-envs/project/build.check.ts) | `dom-assert` / `css-assert` / `build` |
@@ -441,8 +452,8 @@ Rules that are load-bearing, not stylistic:
   but "the solver's UI is actually visible" is outside what any check here can assert.
 - **A case with no sentinel line fails.** A killed driver must never read as an empty, and
   therefore green, suite.
-- **Zero runtime dependencies still holds.** esbuild/jsdom install into the shared cache at
-  run time, never into `package.json`. The end-to-end render tests are therefore opt-in
+- **Zero *bundled* dependencies still holds.** esbuild/jsdom — and every artifact-declared
+  library — install into the shared cache at run time, never into `package.json`. The end-to-end render tests are therefore opt-in
   (`LEET_PROJECT_E2E=1`) and `pending` otherwise — the gate stays deterministic offline.
 - **The run directory gets its own `node_modules` — pnpm's layout, not one big symlink.**
   A `build` check spawns its toolchain with `cwd = runDir`, and a compiler resolves by walking
@@ -497,10 +508,12 @@ Rules that are load-bearing, not stylistic:
   `fs.promises.rm(…, { recursive: true, force: true })`. Both steps operate on the link, not its
   target, so **discarding an attempt does not touch the shared cache** (confirmed against the
   shipped extension-host bundle and re-tested with those exact options).
-- **One install per grading run also means one registry.** `runLibs` skips any `libs:` language
-  outside `NPM_LANGUAGES` — the installer resolves against the npm registry only, and unioning
-  `libs.python` in would fetch the unrelated npm package of that name. The parser warns so the
-  skip is never silent. See `ARTIFACT_LEETCODE_FILE_FORMAT.md` §9.4.
+- **One install per grading run, per registry.** `installSetsFor` groups `libs:` by
+  `ecosystemFor(language)` and resolves each through `ensureLibEnv`, so a FastAPI-plus-React
+  exercise gets a venv **and** a node environment. Unioning them would fetch the unrelated npm
+  package named `requests`, which no name-shape grammar can distinguish. Only the **npm** dir is
+  `linkModules`'d into the run — a write through a link escapes into the shared cache, and every
+  other ecosystem arrives as an environment variable. See `ARTIFACT_LEETCODE_FILE_FORMAT.md` §9.4.
 - **The installer is `pnpm add --dir`, and dependencies' install scripts do not run.** pnpm is
   what this project uses everywhere, and pnpm 10+ refuses a dependency's build scripts unless
   approved — so an artifact-declared package can no longer execute a postinstall, which the npm
@@ -571,6 +584,69 @@ the suite. Python and Java flush per line — both block-buffer a pipe, and a ti
 would otherwise discard lines already produced. **Comparison** runs through `canonicalJson()`
 (sorted keys, no whitespace) on both sides; raw string compare could never match Java's
 `Arrays.toString` (`[0, 1]` vs `[0,1]`) and made object key order a coin flip.
+
+### Library support — four registries, one door
+
+An artifact's `libs:` is installed at run time into a shared cache; the extension itself
+still bundles nothing. Everything lives under [src/services/libs/](src/services/libs/):
+
+| Piece | File | Owns |
+|---|---|---|
+| Authority | [lib-ecosystem.ts](src/services/libs/lib-ecosystem.ts) | `LibEcosystem`, `ecosystemFor`, the `LibInstaller` contract, `ParsedLibSpec` |
+| Grammars | [lib-spec.helpers.ts](src/services/libs/lib-spec.helpers.ts) | the four `parseSpec` subsets — **the** trust boundary |
+| Cache | [lib-cache.service.ts](src/services/libs/lib-cache.service.ts) | `ensureLibEnv`: key, warm probe, tmp+rename, budget, named `ENOENT` |
+| Consumption | [lib-env.helpers.ts](src/services/libs/lib-env.helpers.ts) | dir → `NODE_PATH` / `VIRTUAL_ENV` / `CLASSPATH` / `CARGO_TARGET_DIR` |
+| Installers | `pnpm` · `pip` · `cargo` · `maven` `.installer.ts` | one argv shape each |
+
+Rules that are load-bearing, not stylistic:
+
+- **`LANGUAGES[lang].ecosystem` is the only map from language to registry.** Read it through
+  `ecosystemFor`, which folds `*react` display ids and resolves aliases; never index a raw
+  `libs:` key, which is untrusted text.
+- **Specs are ecosystem-native and parsed into fields**, never matched by one pattern: a maven
+  coordinate is not an npm name, and one grammar would refuse the correct spelling for three
+  registries out of four. Every field pattern is anchored, opens with an alphanumeric class,
+  and holds a single quantifier over a single class — that is what keeps a 10 000-character
+  spec linear rather than a backtracking hang (`S8786`).
+- **No fetch-from-anywhere form is admitted anywhere.** npm `file:`/`link:`/`git+`/`workspace:`,
+  pip direct references and env markers, cargo `git =`/`path =`/`registry =`, maven repository
+  overrides. A grammar can bound the shape of a *name* and nothing at all about a URL.
+- **An inline list splits on commas outside quotes.** `numpy>=2,<3` is the idiomatic pip bound
+  and a comma is also the separator, so the unquoted form silently declared two entries and
+  installed an unbounded numpy. Quote it, or use the block form.
+- **The cache key is `sha256(ecosystem + sorted specs)`.** The ecosystem half is a defect fix:
+  keyed on specs alone, `['react']` named one directory whether it meant the npm package or a
+  PyPI one, so a python run could be served a `node_modules` and report green.
+- **Validation runs on every resolve, before the warm check** — otherwise a warm key is a way
+  to smuggle an unvalidated spec through.
+- **Warm means the marker *and* every declared warm path.** macOS prunes `/var/folders` by age,
+  and a swept entry keeping its marker over an emptied tree read warm forever. npm declares one
+  path per package; cargo declares `Cargo.lock` **and** `target`, so a swept target cannot hand
+  the next solve the cold build the pre-warm exists to avoid.
+- **Installs build in `<key>.tmp-<pid>` and rename — except pip.** Losing that race is
+  *success*: both runs wanted that directory. A venv opts out because its console scripts carry
+  absolute shebangs, so a renamed venv has a dead `bin/pip`, `pytest` and `uvicorn`. For the
+  same reason pip is invoked as `<venv>/bin/python3 -m pip`, never the `pip` shim.
+- **Manifests are rendered from validated fields.** `Cargo.toml` and `pom.xml` are files a
+  toolchain obeys; author text in one is TOML/XML injection. The pnpm installer authors **no**
+  manifest at all — `pnpm add --dir` writes its own.
+- **The consumption seam is environment variables, and only that.** Every `compile`/`run`
+  command stays a fixed literal, so no cache path is ever interpolated into a command line.
+  `EmittedProgram.pathPrepend` exists so `emit()` stays pure: prepending needs the inherited
+  `PATH`, and an env that reads `process.env` makes its own golden assertions machine-dependent.
+- **Java's run drops `-cp .` when libraries are present.** A command-line `-cp` overrides
+  `CLASSPATH` outright, so the jars would compile in (javac reads the variable) and then be
+  missing at run time. The classpath ends in `.` so `Runner` is still found in the temp dir.
+- **Rust switches shape, not just environment.** Libraries mean a Cargo project, and `run` is
+  `cargo run --offline --release --quiet` rather than a path into `target/`: `CARGO_TARGET_DIR`
+  points into the shared cache, so `./target/release/…` does not exist under the run's `cwd`.
+  The package name is hashed per run — concurrent suites share that target directory, and equal
+  names compile over one another's binary.
+- **The cargo installer pre-warms a build.** `tryCompile` passes no timeout, so a cold
+  dependency build mid-solve is an unbounded wait; paying it at install time puts it inside a
+  budget that reports a slow install as one.
+- **`runSuite` is the only resolver.** A project's `function` check reaches libraries through
+  the same call, so `gradeProjectDir` hands directories to `build` and render checks only.
 
 ### Test runner
 

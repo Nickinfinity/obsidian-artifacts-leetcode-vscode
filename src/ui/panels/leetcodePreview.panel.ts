@@ -16,6 +16,7 @@ import {
 	renderSetups,
 	renderTestCounts,
 } from './leetcodePreview.controls.js';
+import { renderLibChips } from './leetcodePreview.libs.js';
 
 /**
  * Renders the full HTML document for the LeetCode preview panel.
@@ -30,6 +31,7 @@ import {
  *   - description paragraph
  *   - `## Examples` cards (one per parsed example)
  *   - test-count line (`2 public tests · 3 final tests`)
+ *   - declared-library chips, filtered by the selected language
  *   - `# Setup` starter-code blocks
  *   - reference solutions (collapsed behind a `<details>` — spoilers)
  *   - state-gated controls via `renderControls(state, parsed)` — language
@@ -70,6 +72,7 @@ export function renderLeetCodePreviewHtml(
 		renderDescription(parsed),
 		renderExamples(parsed),
 		renderTestCounts(parsed),
+		renderLibChips(parsed),
 		renderSetups(parsed),
 		renderSolutionsSection(parsed),
 		renderControls(state, parsed, activeLangId),
@@ -420,7 +423,7 @@ ${body}
 	// Only the blocks for the active language stay visible.
 	function syncVisibleBlocks() {
 		const lang = currentLang();
-		const blocks = document.querySelectorAll('.setup-block, .solution-block');
+		const blocks = document.querySelectorAll('.setup-block, .solution-block, .lib-block');
 		blocks.forEach((el) => {
 			const match = !lang || el.dataset.language === lang;
 			el.style.display = match ? '' : 'none';
