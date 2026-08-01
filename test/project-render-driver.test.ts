@@ -4,7 +4,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { HARNESS_LIBS, RENDER_RUNNER, renderRunnerCommand, renderRunnerSource } from '../src/services/test-envs/project/render.driver.js';
-import { installLibs, libCacheDir } from '../src/services/test-envs/project/lib-installer.js';
+import { installLibs, libCacheDir } from '../src/services/libs/pnpm.installer.js';
 
 /**
  * JSX/TSX bundle + jsdom render driver (eval-fixes TB.5).

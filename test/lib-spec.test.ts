@@ -1,5 +1,5 @@
 import * as assert from 'node:assert';
-import { packageNameOf, validateLibNames } from '../src/services/lib-spec.helpers.js';
+import { packageNameOf, validateLibNames } from '../src/services/libs/lib-spec.helpers.js';
 
 /**
  * Unit tests for the library-name allowlist — the trust boundary between

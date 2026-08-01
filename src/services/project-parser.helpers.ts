@@ -2,8 +2,8 @@ import type { FileRole, FileSpec, LibSpec, ProjectCheck, TestCase } from '../typ
 import { safeJsonParse } from '../utils/safe-json.js';
 import { BODY_SET_KEYS, RETAINED_FM_KEYS } from './leetcode-config-blocks.helpers.js';
 import { resolveLangId } from './language-map.service.js';
-import { validateLibNames } from './lib-spec.helpers.js';
 import { ecosystemFor } from './libs/lib-ecosystem.js';
+import { validateLibNames } from './libs/lib-spec.helpers.js';
 import { sectionBounds } from './leetcode-section-bounds.helpers.js';
 import { CASE_SECTIONS, extractCaseFences } from './leetcode-sections.helpers.js';
 

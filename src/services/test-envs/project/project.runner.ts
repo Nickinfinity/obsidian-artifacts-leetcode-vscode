@@ -16,7 +16,7 @@ import { testEnvFor } from '../env.registry.js';
 import { runBuildCheck } from './build.check.js';
 import { renderLibsFor, runRenderCheck } from './checks.js';
 import { resolveContained, writeProjectFiles } from './files.writer.js';
-import { installLibs, type InstallOptions } from './lib-installer.js';
+import { installLibs, type InstallOptions } from '../../libs/pnpm.installer.js';
 import { linkModules } from './modules.linker.js';
 
 /**

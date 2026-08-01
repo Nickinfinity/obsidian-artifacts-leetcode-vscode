@@ -14,7 +14,7 @@ import { safeJsonParse } from '../../../utils/safe-json.js';
 import type { CaseOutcome } from '../env.types.js';
 import { parseSentinelLines } from '../sentinel.helpers.js';
 import { resolveContained } from './files.writer.js';
-import { installLibs } from './lib-installer.js';
+import { installLibs } from '../../libs/pnpm.installer.js';
 import { HARNESS_LIBS, RENDER_RUNNER, type RenderCase, renderRunnerSource } from './render.driver.js';
 
 const execFileAsync = promisify(execFile);

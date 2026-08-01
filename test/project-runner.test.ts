@@ -4,7 +4,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { parseLeetCode } from '../src/services/leetcode-parser.service.js';
 import { renderLibsFor } from '../src/services/test-envs/project/checks.js';
-import { libCacheDir } from '../src/services/test-envs/project/lib-installer.js';
+import { libCacheDir } from '../src/services/libs/pnpm.installer.js';
 import { linkModules } from '../src/services/test-envs/project/modules.linker.js';
 import { gradeProjectDir, runProjectChecks } from '../src/services/test-envs/project/project.runner.js';
 

@@ -4,7 +4,8 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { promisify } from 'node:util';
-import { packageNameOf, validateLibNames } from '../../lib-spec.helpers.js';
+import type { LibInstaller, NpmLibSpec, RunArgv } from './lib-ecosystem.js';
+import { packageNameOf, parseNpmSpec, validateLibNames } from './lib-spec.helpers.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -135,13 +136,61 @@ export async function installLibs(libs: readonly string[], options: InstallOptio
 		// add --dir` this same dir at once. Upgrade path: install into
 		// `<key>.tmp-<pid>` then `fs.rename` into place, which also makes the
 		// warm marker atomic instead of merely self-healing (see isWarm below).
-		await run('pnpm', ['add', '--dir', dir, ...PNPM_FLAGS, ...libs], dir);
+		// The cache service pays exactly that for every ecosystem **but pip**,
+		// whose venv console scripts carry absolute shebangs and cannot be
+		// renamed after the fact.
+		await pnpmInstaller.install(dir, specsOf(libs), run);
 		await fs.writeFile(path.join(dir, WARM_MARKER), libs.join('\n'), 'utf-8');
 		return { ok: true, dir };
 	} catch (e) {
 		return { ok: false, reason: `install failed: ${e instanceof Error ? e.message : String(e)}` };
 	}
 }
+
+/**
+ * Re-parse an already-validated list into fields.
+ *
+ * `installLibs` validates the whole list up front, so every entry parses here;
+ * a refusal at this point would mean the two disagreed, which is why they share
+ * one grammar. Kept private — `ensureLibEnv` will parse once and pass the
+ * fields straight to {@link pnpmInstaller}, retiring this bridge.
+ *
+ * @param libs - Specs already through `validateLibNames`.
+ * @returns The parsed fields, refusals dropped.
+ */
+function specsOf(libs: readonly string[]): NpmLibSpec[] {
+	return libs.flatMap(lib => {
+		const parsed = parseNpmSpec(lib);
+		return parsed.ok ? [parsed.spec] : [];
+	});
+}
+
+/** One spec rendered back to the single argv element pnpm reads. */
+function argvElementOf(spec: NpmLibSpec): string {
+	return spec.range === undefined ? spec.name : `${spec.name}@${spec.range}`;
+}
+
+/**
+ * The npm ecosystem's installer: **pnpm**, the package manager this project
+ * uses everywhere else, including the subprocesses the extension spawns.
+ *
+ * `pnpm add --dir <cache>` needs no manifest in place first — it writes its own
+ * `package.json` and `pnpm-lock.yaml` beside the `node_modules` it builds — so
+ * nothing here authors a manifest, and no artifact-derived text can reach one.
+ * Specs travel as **argv elements**, each rendered from validated fields.
+ *
+ * @example
+ * await pnpmInstaller.install('/cache/npm-9f2c', [{ ecosystem: 'npm', name: 'react' }], run);
+ */
+export const pnpmInstaller: LibInstaller<NpmLibSpec> = {
+	ecosystem: 'npm',
+	product: 'node_modules',
+	parseSpec: parseNpmSpec,
+	async install(dir: string, specs: readonly NpmLibSpec[], run: RunArgv): Promise<void> {
+		if (specs.length === 0) { return; }
+		await run('pnpm', ['add', '--dir', dir, ...PNPM_FLAGS, ...specs.map(argvElementOf)], dir);
+	},
+};
 
 /**
  * Whether a previous install of this exact set completed **and is still there**.

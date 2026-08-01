@@ -2,8 +2,8 @@ import * as assert from 'node:assert';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { packageNameOf } from '../src/services/lib-spec.helpers.js';
-import { installLibs, libCacheDir } from '../src/services/test-envs/project/lib-installer.js';
+import { packageNameOf } from '../src/services/libs/lib-spec.helpers.js';
+import { installLibs, libCacheDir } from '../src/services/libs/pnpm.installer.js';
 
 /**
  * Per-run library installer (eval-fixes TB.4).
@@ -276,6 +276,52 @@ suite('project lib installer', () => {
 			const result = await installLibs([], { run: runner.run });
 
 			assert.strictEqual(result.ok, true);
+			assert.deepStrictEqual(runner.calls, []);
+		});
+
+		/**
+		 * `pnpm add --dir` writes its own `package.json` and lockfile. Authoring
+		 * one here would put artifact-derived names inside a JSON file a
+		 * toolchain then obeys, for no gain — so the absence of that write is
+		 * the assertion.
+		 */
+		test('authors no manifest of its own — pnpm writes one', async () => {
+			const runner = spy();
+			const dir = libCacheDir(['react@^19.0.0']);
+			await installLibs(['react@^19.0.0'], { run: runner.run });
+
+			assert.ok(runner.calls[0].args.includes('--dir'), runner.calls[0].args.join(' '));
+			assert.strictEqual(
+				fs.existsSync(path.join(dir, 'package.json')), false,
+				'the installer must not write a package.json — pnpm add --dir writes its own',
+			);
+		});
+	});
+
+	suite('protocol specs — fetch-from-anywhere is refused', () => {
+
+		/**
+		 * pnpm accepts each of these and every one resolves from a location the
+		 * artifact chose, which is exactly what a name-shape allowlist cannot
+		 * bound. They must die at validation, before a subprocess exists.
+		 */
+		const hostile = ['file:../../etc', 'link:/', 'git+ssh://x/y', 'workspace:*'];
+
+		for (const spec of hostile) {
+			test(`'${spec}' spawns nothing at all`, async () => {
+				const runner = spy();
+				const result = await installLibs([spec], { run: runner.run });
+
+				assert.strictEqual(result.ok, false);
+				assert.deepStrictEqual(runner.calls, []);
+			});
+		}
+
+		test('one hostile entry refuses the whole set — no partial install', async () => {
+			const runner = spy();
+			const result = await installLibs(['react@^19.0.0', 'file:../../etc'], { run: runner.run });
+
+			assert.strictEqual(result.ok, false);
 			assert.deepStrictEqual(runner.calls, []);
 		});
 	});
