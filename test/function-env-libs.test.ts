@@ -143,6 +143,17 @@ suite('function envs — library consumption', () => {
 		 * does not exist under the run's `cwd` — and naming the real path would
 		 * put a cache path inside a command string.
 		 */
+		/**
+		 * `compile` and `run` carry different budgets — `COMPILE_TIMEOUT_MS` vs
+		 * the suite's `cases × timeoutMs`. Leaving the build to `cargo run`
+		 * would spend a case budget on a link and fold it into case 0's timing.
+		 */
+		test('the build happens in the compile step, not inside run', () => {
+			const program = rustFunctionEnv.emit(contextFor(rustFunctionEnv, '/cache/cargo-1', libs));
+
+			assert.strictEqual(program.compile, 'cargo build --offline --release --quiet');
+		});
+
 		test('the run command names no path into target/', () => {
 			const program = rustFunctionEnv.emit(contextFor(rustFunctionEnv, '/cache/cargo-1', libs));
 

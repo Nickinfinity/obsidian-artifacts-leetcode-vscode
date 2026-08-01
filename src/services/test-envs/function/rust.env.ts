@@ -100,8 +100,14 @@ function runPackageName(libDir: string, ctx: EnvContext): string {
  * variable seam exists to avoid. Cargo finds its own binary from the same
  * variable.
  *
- * `compile` stays a real step so a broken candidate fails with a readable
- * message before the run; the pre-warmed target keeps it an incremental link.
+ * **`compile` builds, it does not merely fetch.** The two steps carry different
+ * budgets: `compile` gets `COMPILE_TIMEOUT_MS`, while `run` gets the *suite*
+ * budget — `cases × timeoutMs`, capped at 60 s and sized for executing cases,
+ * not for linking a crate. A `cargo fetch` here would have been nearly free and
+ * left the real compile inside `cargo run`, spending a case budget on a build
+ * and folding the build's wall-clock into the first case's timing. Building
+ * first also means a broken candidate fails with a readable message before any
+ * case runs; `cargo run` then only re-checks fingerprints and executes.
  *
  * @param ctx    - The run context; its `parsed.libs.rust` names the crates.
  * @param libDir - Resolved cache directory for this run.
@@ -119,7 +125,7 @@ function cargoProgram(ctx: EnvContext, libDir: string): Partial<EmittedProgram> 
 			{ name: path.join('src', 'solution.rs'), content: candidateContent(ctx) },
 			{ name: path.join('src', 'main.rs'), content: runnerSource(ctx) },
 		],
-		compile: 'cargo fetch --offline',
+		compile: 'cargo build --offline --release --quiet',
 		run: 'cargo run --offline --release --quiet',
 	};
 }
