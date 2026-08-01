@@ -4,7 +4,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { parseLeetCode } from '../src/services/leetcode-parser.service.js';
 import { renderLibsFor } from '../src/services/test-envs/project/checks.js';
-import { libCacheDir } from '../src/services/libs/pnpm.installer.js';
+import { libEnvDir } from '../src/services/libs/lib-cache.service.js';
 import { linkModules } from '../src/services/test-envs/project/modules.linker.js';
 import { gradeProjectDir, runProjectChecks } from '../src/services/test-envs/project/project.runner.js';
 
@@ -328,8 +328,11 @@ suite('project runner', () => {
 			await gradeProjectDir(parsed, runDir, { installRun: countingRun });
 
 			assert.strictEqual(calls.length, 1, 'the installer must run exactly once per grading run — two calls means two cache keys');
-			const expectedKey = libCacheDir(renderLibsFor(['lodash@^4.17.21']));
-			assert.strictEqual(calls[0].cwd, expectedKey);
+			// The install builds in `<key>.tmp-<pid>` and is renamed into place,
+			// so the cwd is a sibling of the key rather than the key itself —
+			// what matters is that it is *this* key's sibling and no other.
+			const expectedKey = libEnvDir('npm', renderLibsFor(['lodash@^4.17.21']));
+			assert.ok(calls[0].cwd.startsWith(expectedKey), `${calls[0].cwd} is not under ${expectedKey}`);
 		});
 
 		test('a language npm cannot serve is skipped, not npm-installed under the same name', async () => {
@@ -343,14 +346,14 @@ suite('project runner', () => {
 			const parsed = parseLeetCode(artifactWithMultiLangLibs());
 			await gradeProjectDir(parsed, runDir, { installRun: countingRun });
 
-			// `installLibs` is npm-only, so `libs.python: [requests@^2.0.0]` must
-			// NOT join the install set — npm would serve the unrelated package of
-			// that name and the allowlist cannot tell them apart. The author is
-			// told instead, at parse time.
+			// This grading path resolves the npm environment only, so
+			// `libs.python: [requests@^2.0.0]` must NOT join the install set —
+			// npm would serve the unrelated package of that name and the
+			// allowlist cannot tell them apart. The author is told instead, at
+			// parse time.
 			assert.strictEqual(calls.length, 1);
-			assert.strictEqual(
-				calls[0].cwd,
-				libCacheDir(['lodash@^4.17.21']),
+			assert.ok(
+				calls[0].cwd.startsWith(libEnvDir('npm', ['lodash@^4.17.21'])),
 				'a non-npm language must not reach the npm install set',
 			);
 			assert.ok(

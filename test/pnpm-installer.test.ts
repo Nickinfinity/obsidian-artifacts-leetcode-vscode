@@ -2,18 +2,24 @@ import * as assert from 'node:assert';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { ensureLibEnv, libEnvDir } from '../src/services/libs/lib-cache.service.js';
+import { pnpmInstaller } from '../src/services/libs/pnpm.installer.js';
 import { packageNameOf } from '../src/services/libs/lib-spec.helpers.js';
-import { installLibs, libCacheDir } from '../src/services/libs/pnpm.installer.js';
 
 /**
- * Per-run library installer (eval-fixes TB.4).
+ * The npm arm of the library cache: pnpm's argv, and the warm probe that
+ * decides whether an install can be skipped.
  *
  * Two properties are load-bearing and both are asserted without touching the
- * network: the allowlist gate runs **before** any subprocess exists, and the
+ * network: the grammar gate runs **before** any subprocess exists, and the
  * command is built as an **argv array** — never a string a shell could reparse.
- * The installer takes an injected runner so these can be observed directly.
+ *
+ * Everything cache-shaped goes through `ensureLibEnv` with the real
+ * `pnpmInstaller` injected, because that is the only path production uses;
+ * `installLibs` and `libCacheDir` were retired when the cache service took
+ * over the key, the warm probe and the install budget.
  */
-suite('project lib installer', () => {
+suite('pnpm installer', () => {
 
 	// Redirect the shared cache at a throwaway dir: these tests must never write
 	// into a developer's real one, and a warm marker left behind would make a
@@ -35,13 +41,13 @@ suite('project lib installer', () => {
 	/**
 	 * Records what would have been spawned, and never spawns it — but does
 	 * create `node_modules` **and a directory per installed package**, the side
-	 * effects of a real `pnpm add` that `isWarm` depends on.
+	 * effects of a real `pnpm add` that the warm probe depends on.
 	 *
 	 * The specs are recovered from the argv rather than passed in, so a call
-	 * site reads as one `installLibs` call and cannot drift from it. A spec is
+	 * site reads as one `ensureLibEnv` call and cannot drift from it. A spec is
 	 * any argument that is neither the subcommand, nor the target directory,
-	 * nor a flag — and the allowlist guarantees no spec starts with `-`, so
-	 * this stays correct as the flag set changes.
+	 * nor a flag — and the grammar guarantees no spec starts with `-`, so this
+	 * stays correct as the flag set changes.
 	 */
 	function spy(): { calls: { file: string; args: string[] }[]; run: (file: string, args: string[], cwd: string) => Promise<void> } {
 		const calls: { file: string; args: string[] }[] = [];
@@ -58,142 +64,88 @@ suite('project lib installer', () => {
 		};
 	}
 
-	// ── Cache directory: pure, vscode-free, stable ────────────────────────────
-
-	suite('libCacheDir', () => {
-
-		test('resolves under the OS temp dir — no vscode context involved', () => {
-			delete process.env.OBSIDIAN_LEETCODE_LIBCACHE;
-			assert.ok(libCacheDir(['react@^19.0.0']).startsWith(os.tmpdir()), libCacheDir(['react@^19.0.0']));
-		});
-
-		test('a warm cache short-circuits the install', async () => {
-			const runner = spy();
-			await installLibs(['react@^19.0.0'], { run: runner.run });
-			await installLibs(['react@^19.0.0'], { run: runner.run });
-			assert.strictEqual(runner.calls.length, 1, 'second call should have hit the warm cache');
-		});
-
-		test('is stable across calls for the same set', () => {
-			assert.strictEqual(libCacheDir(['react@^19.0.0', 'vite@^7']), libCacheDir(['react@^19.0.0', 'vite@^7']));
-		});
-
-		test('ignores declaration order — the same set is the same cache', () => {
-			assert.strictEqual(libCacheDir(['a@1', 'b@2']), libCacheDir(['b@2', 'a@1']));
-		});
-
-		test('a different version is a different cache', () => {
-			assert.notStrictEqual(libCacheDir(['react@^19.0.0']), libCacheDir(['react@^18.0.0']));
-		});
-
-		test('a different set is a different cache', () => {
-			assert.notStrictEqual(libCacheDir(['react@^19.0.0']), libCacheDir(['react@^19.0.0', 'vite@^7']));
-		});
-
-		test('never sits inside the repository', () => {
-			const repoRoot = path.join(__dirname, '..', '..');
-			assert.ok(!libCacheDir(['react@^19.0.0']).startsWith(repoRoot));
-		});
-	});
-
-	// ── Warm requires the packages, not just the marker ───────────────────────
+	/** Resolve through the real npm installer, with the network stubbed out. */
+	async function install(libs: string[], run: ReturnType<typeof spy>['run']) {
+		return ensureLibEnv('npm', libs, { run, installers: { npm: pnpmInstaller } });
+	}
 
 	suite('warm cache requires the declared packages on disk', () => {
 
+		test('a warm cache short-circuits the install', async () => {
+			const runner = spy();
+			await install(['react@^19.0.0'], runner.run);
+			await install(['react@^19.0.0'], runner.run);
+
+			assert.strictEqual(runner.calls.length, 1, 'the second resolve must skip the install');
+		});
+
 		test('a marker with no node_modules is not warm — the install runs again', async () => {
-			const libs = ['left-pad@1.0.0'];
-			const dir = libCacheDir(libs);
+			const runner = spy();
+			const dir = libEnvDir('npm', ['react@^19.0.0']);
 			fs.mkdirSync(dir, { recursive: true });
-			fs.writeFileSync(path.join(dir, '.leet-installed'), libs.join('\n'), 'utf-8');
+			fs.writeFileSync(path.join(dir, '.leet-installed'), 'npm', 'utf-8');
 
-			const runner = spy();
-			const result = await installLibs(libs, { run: runner.run });
+			const result = await install(['react@^19.0.0'], runner.run);
 
-			assert.strictEqual(runner.calls.length, 1, 'a marker-only cache must not read as warm');
 			assert.strictEqual(result.ok, true);
+			assert.strictEqual(runner.calls.length, 1);
 		});
 
-		test('marker plus every package is warm — the install is skipped', async () => {
-			const libs = ['left-pad@2.0.0'];
-			const dir = libCacheDir(libs);
-			fs.mkdirSync(path.join(dir, 'node_modules', 'left-pad'), { recursive: true });
-			fs.writeFileSync(path.join(dir, '.leet-installed'), libs.join('\n'), 'utf-8');
-
-			const runner = spy();
-			const result = await installLibs(libs, { run: runner.run });
-
-			assert.strictEqual(runner.calls.length, 0, 'a genuinely complete cache must skip the install');
-			assert.strictEqual(result.ok, true);
-		});
-
+		/**
+		 * The real bug this closes: macOS prunes `/var/folders` by age, so a
+		 * swept cache kept its marker over an emptied tree and every later run
+		 * skipped the install forever.
+		 */
 		test('a swept cache — marker, empty node_modules — reinstalls', async () => {
-			// The real defect: macOS prunes /var/folders by age, leaving the
-			// marker and an emptied node_modules. Reading that as warm skipped
-			// the install forever, and five vault artifacts failed with
-			// `Cannot find module 'jsdom'`.
-			const libs = ['jsdom@^26.0.0'];
-			const dir = libCacheDir(libs);
-			fs.mkdirSync(path.join(dir, 'node_modules'), { recursive: true });
-			fs.writeFileSync(path.join(dir, '.leet-installed'), libs.join('\n'), 'utf-8');
-
 			const runner = spy();
-			const result = await installLibs(libs, { run: runner.run });
+			await install(['react@^19.0.0'], runner.run);
 
-			assert.strictEqual(runner.calls.length, 1, 'an emptied cache must not read as warm');
-			assert.strictEqual(result.ok, true);
-			assert.ok(fs.existsSync(path.join(dir, 'node_modules', 'jsdom')), 'the reinstall must repair the entry');
+			const dir = libEnvDir('npm', ['react@^19.0.0']);
+			fs.rmSync(path.join(dir, 'node_modules'), { recursive: true });
+			fs.mkdirSync(path.join(dir, 'node_modules'), { recursive: true });
+
+			await install(['react@^19.0.0'], runner.run);
+			assert.strictEqual(runner.calls.length, 2);
 		});
 
 		test('a partly swept cache — one package gone — reinstalls', async () => {
-			// The other real shape: 86 modules present, jsdom missing.
-			const libs = ['react@^19.0.0', 'jsdom@^26.0.0'];
-			const dir = libCacheDir(libs);
-			fs.mkdirSync(path.join(dir, 'node_modules', 'react'), { recursive: true });
-			fs.writeFileSync(path.join(dir, '.leet-installed'), libs.join('\n'), 'utf-8');
-
 			const runner = spy();
-			await installLibs(libs, { run: runner.run });
+			const libs = ['react@^19.0.0', 'jsdom@^26.0.0'];
+			await install(libs, runner.run);
 
-			assert.strictEqual(runner.calls.length, 1, 'one missing declared package must defeat the warm marker');
+			fs.rmSync(path.join(libEnvDir('npm', libs), 'node_modules', 'jsdom'), { recursive: true });
+
+			await install(libs, runner.run);
+			assert.strictEqual(runner.calls.length, 2, 'one missing package must reinstall the set');
 		});
 
 		test('a scoped package is looked for under its scope directory', async () => {
-			// `@types/node@^20` must resolve to node_modules/@types/node, never
-			// to a top-level `@types/node@^20` that no install ever writes.
-			const libs = ['@types/node@^20.0.0'];
-			const dir = libCacheDir(libs);
-			fs.mkdirSync(path.join(dir, 'node_modules', '@types', 'node'), { recursive: true });
-			fs.writeFileSync(path.join(dir, '.leet-installed'), libs.join('\n'), 'utf-8');
-
 			const runner = spy();
-			await installLibs(libs, { run: runner.run });
+			const libs = ['@types/node@^20.0.0'];
+			await install(libs, runner.run);
 
-			assert.strictEqual(runner.calls.length, 0, 'a scoped package present on disk must read as warm');
+			assert.ok(fs.existsSync(path.join(libEnvDir('npm', libs), 'node_modules', '@types', 'node')));
+
+			await install(libs, runner.run);
+			assert.strictEqual(runner.calls.length, 1, 'a scoped package on disk is warm');
 		});
 
-		test('node_modules with no marker is not warm — a Ctrl-C-killed install runs again', async () => {
-			// Mirror of the marker-only poisoned entry: npm writes node_modules
-			// before this module writes the marker, so a kill mid-install leaves
-			// exactly this shape on disk.
-			const libs = ['left-pad@3.0.0'];
-			const dir = libCacheDir(libs);
-			fs.mkdirSync(path.join(dir, 'node_modules'), { recursive: true });
-
-			const runner = spy();
-			const result = await installLibs(libs, { run: runner.run });
-
-			assert.strictEqual(runner.calls.length, 1, 'node_modules alone (no marker) must not read as warm');
-			assert.strictEqual(result.ok, true);
+		test('warmPaths names one path per declared package', () => {
+			assert.deepStrictEqual(
+				pnpmInstaller.warmPaths([
+					{ ecosystem: 'npm', name: 'react', range: '^19.0.0' },
+					{ ecosystem: 'npm', name: '@types/node' },
+				]),
+				[path.join('node_modules', 'react'), path.join('node_modules', '@types/node')],
+			);
 		});
 	});
 
-	// ── Allowlist gate: before any subprocess ─────────────────────────────────
-
-	suite('allowlist gate', () => {
+	suite('grammar gate', () => {
 
 		test('a flag-shaped lib name spawns nothing at all', async () => {
 			const runner = spy();
-			const result = await installLibs(['react@^19.0.0', '--target=/etc'], { run: runner.run });
+			const result = await install(['react@^19.0.0', '--target=/etc'], runner.run);
 
 			assert.strictEqual(result.ok, false);
 			assert.deepStrictEqual(runner.calls, []);
@@ -201,41 +153,47 @@ suite('project lib installer', () => {
 
 		test('a traversal-shaped lib name spawns nothing at all', async () => {
 			const runner = spy();
-			const result = await installLibs(['../../etc/passwd'], { run: runner.run });
+			const result = await install(['../../etc/passwd'], runner.run);
 
 			assert.strictEqual(result.ok, false);
 			assert.deepStrictEqual(runner.calls, []);
 		});
 
 		test('the rejected names are reported, not swallowed', async () => {
-			const result = await installLibs(['--target=/etc'], { run: spy().run });
-			assert.ok(!result.ok && result.reason.includes('--target=/etc'), JSON.stringify(result));
+			const result = await install(['--target=/etc'], spy().run);
+			assert.ok(!result.ok);
+			assert.match(result.reason, /--target=\/etc/);
 		});
 
-		test('the cache is not an allowlist bypass — a bad name fails even for a warm key', async () => {
-			// Seed THIS exact set's own cache dir as genuinely warm (marker +
-			// node_modules) — a different set (e.g. just ['react@^19.0.0'])
-			// warms a different key and never exercises the warm path here at all.
-			const libs = ['react@^19.0.0', '--target=/etc'];
-			const dir = libCacheDir(libs);
-			fs.mkdirSync(path.join(dir, 'node_modules'), { recursive: true });
-			fs.writeFileSync(path.join(dir, '.leet-installed'), libs.join('\n'), 'utf-8');
+		/**
+		 * pnpm accepts each of these and every one resolves from a location the
+		 * artifact chose, which is exactly what a name-shape allowlist cannot
+		 * bound. They must die at validation, before a subprocess exists.
+		 */
+		for (const spec of ['file:../../etc', 'link:/', 'git+ssh://x/y', 'workspace:*']) {
+			test(`the protocol spec '${spec}' spawns nothing at all`, async () => {
+				const runner = spy();
+				const result = await install([spec], runner.run);
 
+				assert.strictEqual(result.ok, false);
+				assert.deepStrictEqual(runner.calls, []);
+			});
+		}
+
+		test('one hostile entry refuses the whole set — no partial install', async () => {
 			const runner = spy();
-			const result = await installLibs(libs, { run: runner.run });
+			const result = await install(['react@^19.0.0', 'file:../../etc'], runner.run);
 
-			assert.strictEqual(result.ok, false, 'a warm cache must not skip the allowlist');
+			assert.strictEqual(result.ok, false);
 			assert.deepStrictEqual(runner.calls, []);
 		});
 	});
-
-	// ── Command shape ─────────────────────────────────────────────────────────
 
 	suite('install command', () => {
 
 		test('runs pnpm, never npm — the package manager this project uses', async () => {
 			const runner = spy();
-			await installLibs(['react@^19.0.0'], { run: runner.run });
+			await install(['react@^19.0.0'], runner.run);
 
 			assert.strictEqual(runner.calls[0].file, 'pnpm');
 			assert.strictEqual(runner.calls[0].args[0], 'add');
@@ -246,7 +204,7 @@ suite('project lib installer', () => {
 			// non-zero over it — without this flag every esbuild install reads
 			// as `install failed`.
 			const runner = spy();
-			await installLibs(['esbuild@^0.25.0'], { run: runner.run });
+			await install(['esbuild@^0.25.0'], runner.run);
 
 			assert.ok(
 				runner.calls[0].args.includes('--config.strict-dep-builds=false'),
@@ -256,7 +214,7 @@ suite('project lib installer', () => {
 
 		test('is an argv array, with every lib as its own element', async () => {
 			const runner = spy();
-			await installLibs(['react@^19.0.0', 'vite@^7.0.0'], { run: runner.run });
+			await install(['react@^19.0.0', 'vite@^7.0.0'], runner.run);
 
 			assert.strictEqual(runner.calls.length, 1);
 			const { args } = runner.calls[0];
@@ -265,18 +223,19 @@ suite('project lib installer', () => {
 			assert.ok(args.every(a => typeof a === 'string'));
 		});
 
-		test('installs into the cache dir for that set', async () => {
+		test('renders each spec from validated fields, not the raw string', async () => {
 			const runner = spy();
-			await installLibs(['react@^19.0.0'], { run: runner.run });
-			assert.ok(runner.calls[0].args.includes(libCacheDir(['react@^19.0.0'])), runner.calls[0].args.join(' '));
+			await install(['@types/node@^20'], runner.run);
+			assert.ok(runner.calls[0].args.includes('@types/node@^20'), runner.calls[0].args.join(' '));
 		});
 
-		test('an empty lib list needs no install at all', async () => {
+		test('installs into a directory belonging to that set’s cache key', async () => {
 			const runner = spy();
-			const result = await installLibs([], { run: runner.run });
+			await install(['react@^19.0.0'], runner.run);
 
-			assert.strictEqual(result.ok, true);
-			assert.deepStrictEqual(runner.calls, []);
+			const key = libEnvDir('npm', ['react@^19.0.0']);
+			const target = runner.calls[0].args[runner.calls[0].args.indexOf('--dir') + 1];
+			assert.ok(target.startsWith(key), `${target} is not under ${key}`);
 		});
 
 		/**
@@ -287,41 +246,19 @@ suite('project lib installer', () => {
 		 */
 		test('authors no manifest of its own — pnpm writes one', async () => {
 			const runner = spy();
-			const dir = libCacheDir(['react@^19.0.0']);
-			await installLibs(['react@^19.0.0'], { run: runner.run });
+			await install(['react@^19.0.0'], runner.run);
 
-			assert.ok(runner.calls[0].args.includes('--dir'), runner.calls[0].args.join(' '));
 			assert.strictEqual(
-				fs.existsSync(path.join(dir, 'package.json')), false,
+				fs.existsSync(path.join(libEnvDir('npm', ['react@^19.0.0']), 'package.json')), false,
 				'the installer must not write a package.json — pnpm add --dir writes its own',
 			);
 		});
-	});
 
-	suite('protocol specs — fetch-from-anywhere is refused', () => {
-
-		/**
-		 * pnpm accepts each of these and every one resolves from a location the
-		 * artifact chose, which is exactly what a name-shape allowlist cannot
-		 * bound. They must die at validation, before a subprocess exists.
-		 */
-		const hostile = ['file:../../etc', 'link:/', 'git+ssh://x/y', 'workspace:*'];
-
-		for (const spec of hostile) {
-			test(`'${spec}' spawns nothing at all`, async () => {
-				const runner = spy();
-				const result = await installLibs([spec], { run: runner.run });
-
-				assert.strictEqual(result.ok, false);
-				assert.deepStrictEqual(runner.calls, []);
-			});
-		}
-
-		test('one hostile entry refuses the whole set — no partial install', async () => {
+		test('an empty lib list needs no install at all', async () => {
 			const runner = spy();
-			const result = await installLibs(['react@^19.0.0', 'file:../../etc'], { run: runner.run });
+			const result = await install([], runner.run);
 
-			assert.strictEqual(result.ok, false);
+			assert.strictEqual(result.ok, true);
 			assert.deepStrictEqual(runner.calls, []);
 		});
 	});

@@ -4,7 +4,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { HARNESS_LIBS, RENDER_RUNNER, renderRunnerCommand, renderRunnerSource } from '../src/services/test-envs/project/render.driver.js';
-import { installLibs, libCacheDir } from '../src/services/libs/pnpm.installer.js';
+import { ensureLibEnv, libEnvDir } from '../src/services/libs/lib-cache.service.js';
 
 /**
  * JSX/TSX bundle + jsdom render driver (eval-fixes TB.5).
@@ -97,7 +97,7 @@ suite('project render driver', () => {
 
 		const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'render-e2e-'));
 		const libs = [...HARNESS_LIBS, 'react@^19.0.0', 'react-dom@^19.0.0'];
-		const installed = await installLibs(libs);
+		const installed = await ensureLibEnv('npm', libs);
 		assert.ok(installed.ok, !installed.ok ? installed.reason : '');
 
 		fs.mkdirSync(path.join(runDir, 'src'));
@@ -114,7 +114,7 @@ suite('project render driver', () => {
 
 		fs.writeFileSync(path.join(runDir, RENDER_RUNNER), renderRunnerSource({
 			entry: 'src/App.jsx',
-			cacheDir: libCacheDir(libs),
+			cacheDir: libEnvDir('npm', libs),
 			cases: [
 				{ index: 0, steps: [{ op: 'text', selector: '#out' }] },
 				{ index: 1, steps: [{ op: 'click', selector: 'button' }, { op: 'text', selector: '#out' }] },
@@ -148,7 +148,7 @@ suite('project render driver', () => {
 		//     that suites script clicks against to assert the no-op.
 		const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'render-e2e-frozen-'));
 		const libs = [...HARNESS_LIBS, 'react@^19.0.0', 'react-dom@^19.0.0'];
-		const installed = await installLibs(libs);
+		const installed = await ensureLibEnv('npm', libs);
 		assert.ok(installed.ok, !installed.ok ? installed.reason : '');
 
 		fs.mkdirSync(path.join(runDir, 'src'));
@@ -168,7 +168,7 @@ suite('project render driver', () => {
 
 		fs.writeFileSync(path.join(runDir, RENDER_RUNNER), renderRunnerSource({
 			entry: 'src/App.jsx',
-			cacheDir: libCacheDir(libs),
+			cacheDir: libEnvDir('npm', libs),
 			cases: [
 				{ index: 0, steps: [
 					{ op: 'change', selector: '#open', value: 'hi' }, { op: 'text', selector: '#out' },

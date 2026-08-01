@@ -122,12 +122,26 @@ export type RunArgv = (
 export interface LibInstaller<S extends ParsedLibSpec = ParsedLibSpec> {
 	readonly ecosystem: LibEcosystem;
 	/**
-	 * Relative path proving a completed install, e.g. `'node_modules'`.
+	 * Whether a finished install can be built elsewhere and moved into place.
 	 *
-	 * Probed alongside the warm marker, because a marker over an
-	 * OS-swept directory reads warm forever otherwise.
+	 * `true` for everything whose product is position-independent, which lets
+	 * the cache service build in a tmp sibling and `rename` — atomic against a
+	 * second window racing the same key. `false` for pip: a venv's console
+	 * scripts carry an **absolute** shebang, so a moved venv has a dead
+	 * `bin/pip`, `pytest` and `uvicorn`.
 	 */
-	readonly product: string;
+	readonly relocatable: boolean;
+	/** What to say when the toolchain is not installed at all (`ENOENT`). */
+	readonly missingTool: string;
+	/**
+	 * Relative paths that must all exist for a previous install to count as
+	 * warm, e.g. `['node_modules/react']`.
+	 *
+	 * Per-spec rather than one fixed product path, because that granularity is
+	 * load-bearing: macOS prunes `/var/folders` by age, and a swept cache that
+	 * kept its marker over an emptied tree read warm forever.
+	 */
+	warmPaths(specs: readonly S[]): readonly string[];
 	/** Validate and parse one raw spec into fields, or explain the refusal. */
 	parseSpec(raw: string): LibSpecParse<S>;
 	/** Install `specs` into `dir` (already created). Argv only, no shell. */

@@ -14,7 +14,7 @@ import { safeJsonParse } from '../../../utils/safe-json.js';
 import type { CaseOutcome } from '../env.types.js';
 import { parseSentinelLines } from '../sentinel.helpers.js';
 import { resolveContained } from './files.writer.js';
-import { installLibs } from '../../libs/pnpm.installer.js';
+import { ensureLibEnv } from '../../libs/lib-cache.service.js';
 import { HARNESS_LIBS, RENDER_RUNNER, type RenderCase, renderRunnerSource } from './render.driver.js';
 
 const execFileAsync = promisify(execFile);
@@ -248,7 +248,7 @@ export async function runRenderCheck(
 
 	let dir = cacheDir;
 	if (!dir) {
-		const installed = await installLibs(renderLibsFor(artifactLibs));
+		const installed = await ensureLibEnv('npm', renderLibsFor(artifactLibs));
 		if (!installed.ok) { return fail(check, installed.reason); }
 		dir = installed.dir;
 	}

@@ -93,7 +93,7 @@ async function linkScopeChildren(cacheModules: string, runModules: string, name:
  *
  * A `build` check spawns its toolchain with `cwd = runDir`; Node/`tsc`/`vite`
  * resolve `node_modules` by walking **up** from `cwd`, and the shared cache
- * (keyed on the lib set, installed once by `installLibs`) is not an ancestor
+ * (keyed on ecosystem + lib set, resolved once by `ensureLibEnv`) is not an ancestor
  * of `runDir` — so without this, resolution fails even though the packages
  * are on disk. Node resolves a symlink to its realpath before walking up for
  * transitive dependencies, so `runDir/node_modules/react` still finds react's
@@ -135,14 +135,14 @@ async function linkScopeChildren(cacheModules: string, runModules: string, name:
  *
  * @param runDir   - Absolute path of the run directory (already created).
  * @param cacheDir - Absolute path of the shared cache for this lib set
- *                   (`libCacheDir(libs)`); its `node_modules` must already exist.
+ *                   (`libEnvDir('npm', libs)`); its `node_modules` must already exist.
  * @returns Nothing. Throws on failure — the caller (`runProjectChecks`) already
  *          catches and maps a throw onto every check red with the reason.
  * @throws Error when `<cacheDir>/node_modules` does not exist or is unreadable,
  *         or when `<runDir>/node_modules` already exists as a symlink.
  *
  * @example
- * await linkModules('/tmp/leet-project-abc', libCacheDir(['react@^19.0.0']));
+ * await linkModules('/tmp/leet-project-abc', libEnvDir('npm', ['react@^19.0.0']));
  */
 export async function linkModules(runDir: string, cacheDir: string): Promise<void> {
 	const runModules = path.join(runDir, 'node_modules');

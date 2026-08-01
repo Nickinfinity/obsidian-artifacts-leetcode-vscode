@@ -10,13 +10,13 @@ import type {
 } from '../../../types/leetcode.types.js';
 import { canonicalJson } from '../../../utils/canonical-json.js';
 import { resolveLangId } from '../../language-map.service.js';
-import { ecosystemFor } from '../../libs/lib-ecosystem.js';
+import { ecosystemFor, type RunArgv } from '../../libs/lib-ecosystem.js';
 import { runSuite } from '../../leetcode-runner.service.js';
 import { testEnvFor } from '../env.registry.js';
 import { runBuildCheck } from './build.check.js';
 import { renderLibsFor, runRenderCheck } from './checks.js';
 import { resolveContained, writeProjectFiles } from './files.writer.js';
-import { installLibs, type InstallOptions } from '../../libs/pnpm.installer.js';
+import { ensureLibEnv } from '../../libs/lib-cache.service.js';
 import { linkModules } from './modules.linker.js';
 
 /**
@@ -94,7 +94,7 @@ export async function runProjectChecks(
  */
 export async function gradeProjectDir(
 	parsed: ParsedLeetCode, runDir: string,
-	options: { publicOnly?: boolean; installRun?: NonNullable<InstallOptions['run']> } = {},
+	options: { publicOnly?: boolean; installRun?: RunArgv } = {},
 ): Promise<ProjectCheckOutcome[]> {
 	const checks = parsed.checks ?? [];
 	if (checks.length === 0) { return []; }
@@ -102,7 +102,7 @@ export async function gradeProjectDir(
 	const libs = installSetFor(parsed, checks);
 	let cacheDir: string | undefined;
 	if (libs.length > 0) {
-		const installed = await installLibs(libs, options.installRun ? { run: options.installRun } : {});
+		const installed = await ensureLibEnv('npm', libs, options.installRun ? { run: options.installRun } : {});
 		if (!installed.ok) {
 			return checks.map(c => ({ name: c.name, passed: false, detail: installed.reason }));
 		}
@@ -147,14 +147,14 @@ function installSetFor(parsed: ParsedLeetCode, checks: ProjectCheck[]): string[]
  * declaring `libs.typescript` must install its own libraries, and scoping this
  * to the render set was the bug that made a render check install a superset
  * under a second cache key. But it **is** restricted to the languages the npm
- * registry serves ({@link ecosystemFor} `=== 'npm'`), because `installLibs`
- * shells out to pnpm and there is no second installer yet: unioning
+ * registry serves ({@link ecosystemFor} `=== 'npm'`), because this grading path
+ * resolves one npm environment and the per-ecosystem grouping is still to come: unioning
  * `libs.python: [requests]` in would install the unrelated npm package of that
  * name rather than the PyPI one, and the name-shape allowlist cannot tell them
  * apart. The parser warns about the skipped language at authoring time, so
  * nothing is silent.
  *
- * Order does not matter: `libCacheDir` sorts before hashing.
+ * Order does not matter: `libEnvDir` sorts before hashing.
  *
  * @param parsed - The artifact, for `libs:`.
  * @returns Deduped npm-installable specs; `[]` when none are declared.
