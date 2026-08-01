@@ -12,3 +12,4 @@ docs/
 
 # Artifacts live in the Obsidian vault, never here (CLAUDE.md, "Artifacts live in the vault")
 examples/
+.vscode/
