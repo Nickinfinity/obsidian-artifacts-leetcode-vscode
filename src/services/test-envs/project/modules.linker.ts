@@ -159,14 +159,14 @@ async function linkScopeChildren(cacheModules: string, runModules: string, name:
  *
  * @param runDir   - Absolute path of the run directory (already created).
  * @param cacheDir - Absolute path of the shared cache for this lib set
- *                   (`libEnvDir('npm', libs)`); its `node_modules` must already exist.
+ *                   (`libEnvDir('pnpm', libs)`); its `node_modules` must already exist.
  * @returns Nothing. Throws on failure — the caller (`runProjectChecks`) already
  *          catches and maps a throw onto every check red with the reason.
  * @throws Error when `<cacheDir>/node_modules` does not exist or is unreadable,
  *         or when `<runDir>/node_modules` already exists as a symlink.
  *
  * @example
- * await linkModules('/tmp/leet-project-abc', libEnvDir('npm', ['react@^19.0.0']));
+ * await linkModules('/tmp/leet-project-abc', libEnvDir('pnpm', ['react@^19.0.0']));
  */
 export async function linkModules(runDir: string, cacheDir: string): Promise<void> {
 	const runModules = path.join(runDir, 'node_modules');

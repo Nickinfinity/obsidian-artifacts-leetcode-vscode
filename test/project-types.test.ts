@@ -33,7 +33,7 @@ suite('project types', () => {
 	});
 
 	test('a build check may omit the optional dir', () => {
-		const check: BuildCheck = { name: 'builds', kind: 'build', argv: ['npm', 'run', 'build'], cases: [], publicCount: 0 };
+		const check: BuildCheck = { name: 'builds', kind: 'build', argv: ['pnpm', 'run', 'build'], cases: [], publicCount: 0 };
 		assert.strictEqual(check.dir, undefined);
 	});
 

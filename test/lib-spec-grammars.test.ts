@@ -33,27 +33,27 @@ suite('lib-spec grammars', () => {
 		return parsed.spec;
 	}
 
-	suite('npm', () => {
+	suite('pnpm', () => {
 
 		test('parses a bare name', () => {
-			assert.deepStrictEqual(specOf('npm', 'react'), { ecosystem: 'npm', name: 'react' });
+			assert.deepStrictEqual(specOf('pnpm', 'react'), { ecosystem: 'pnpm', name: 'react' });
 		});
 
 		test('parses a name with a range', () => {
 			assert.deepStrictEqual(
-				specOf('npm', 'react@^19.0.0'),
-				{ ecosystem: 'npm', name: 'react', range: '^19.0.0' },
+				specOf('pnpm', 'react@^19.0.0'),
+				{ ecosystem: 'pnpm', name: 'react', range: '^19.0.0' },
 			);
 		});
 
 		test('keeps the scope as part of the name', () => {
 			assert.deepStrictEqual(
-				specOf('npm', '@types/node@^20'),
-				{ ecosystem: 'npm', name: '@types/node', range: '^20' },
+				specOf('pnpm', '@types/node@^20'),
+				{ ecosystem: 'pnpm', name: '@types/node', range: '^20' },
 			);
 			assert.deepStrictEqual(
-				specOf('npm', '@types/node'),
-				{ ecosystem: 'npm', name: '@types/node' },
+				specOf('pnpm', '@types/node'),
+				{ ecosystem: 'pnpm', name: '@types/node' },
 			);
 		});
 
@@ -67,7 +67,7 @@ suite('lib-spec grammars', () => {
 				'file:../../etc', 'link:/', 'git+ssh://x/y', 'workspace:*',
 				'https://evil.example/x.tgz',
 			]) {
-				refusalOf('npm', hostile);
+				refusalOf('pnpm', hostile);
 			}
 		});
 	});
@@ -194,7 +194,7 @@ suite('lib-spec grammars', () => {
 
 	suite('shared refusals — every ecosystem', () => {
 
-		const ecosystems: LibEcosystem[] = ['npm', 'pip', 'cargo', 'maven'];
+		const ecosystems: LibEcosystem[] = ['pnpm', 'pip', 'cargo', 'maven'];
 
 		/** The one guard a leading-character anchor cannot express. */
 		test('refuses `..` anywhere', () => {

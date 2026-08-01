@@ -7,7 +7,7 @@ import { pnpmInstaller } from '../src/services/libs/pnpm.installer.js';
 import { packageNameOf } from '../src/services/libs/lib-spec.helpers.js';
 
 /**
- * The npm arm of the library cache: pnpm's argv, and the warm probe that
+ * The pnpm arm of the library cache: pnpm's argv, and the warm probe that
  * decides whether an install can be skipped.
  *
  * Two properties are load-bearing and both are asserted without touching the
@@ -64,9 +64,9 @@ suite('pnpm installer', () => {
 		};
 	}
 
-	/** Resolve through the real npm installer, with the network stubbed out. */
+	/** Resolve through the real pnpm installer, with the network stubbed out. */
 	async function install(libs: string[], run: ReturnType<typeof spy>['run']) {
-		return ensureLibEnv('npm', libs, { run, installers: { npm: pnpmInstaller } });
+		return ensureLibEnv('pnpm', libs, { run, installers: { pnpm: pnpmInstaller } });
 	}
 
 	suite('warm cache requires the declared packages on disk', () => {
@@ -81,9 +81,9 @@ suite('pnpm installer', () => {
 
 		test('a marker with no node_modules is not warm — the install runs again', async () => {
 			const runner = spy();
-			const dir = libEnvDir('npm', ['react@^19.0.0']);
+			const dir = libEnvDir('pnpm', ['react@^19.0.0']);
 			fs.mkdirSync(dir, { recursive: true });
-			fs.writeFileSync(path.join(dir, '.leet-installed'), 'npm', 'utf-8');
+			fs.writeFileSync(path.join(dir, '.leet-installed'), 'pnpm', 'utf-8');
 
 			const result = await install(['react@^19.0.0'], runner.run);
 
@@ -100,7 +100,7 @@ suite('pnpm installer', () => {
 			const runner = spy();
 			await install(['react@^19.0.0'], runner.run);
 
-			const dir = libEnvDir('npm', ['react@^19.0.0']);
+			const dir = libEnvDir('pnpm', ['react@^19.0.0']);
 			fs.rmSync(path.join(dir, 'node_modules'), { recursive: true });
 			fs.mkdirSync(path.join(dir, 'node_modules'), { recursive: true });
 
@@ -113,7 +113,7 @@ suite('pnpm installer', () => {
 			const libs = ['react@^19.0.0', 'jsdom@^26.0.0'];
 			await install(libs, runner.run);
 
-			fs.rmSync(path.join(libEnvDir('npm', libs), 'node_modules', 'jsdom'), { recursive: true });
+			fs.rmSync(path.join(libEnvDir('pnpm', libs), 'node_modules', 'jsdom'), { recursive: true });
 
 			await install(libs, runner.run);
 			assert.strictEqual(runner.calls.length, 2, 'one missing package must reinstall the set');
@@ -124,7 +124,7 @@ suite('pnpm installer', () => {
 			const libs = ['@types/node@^20.0.0'];
 			await install(libs, runner.run);
 
-			assert.ok(fs.existsSync(path.join(libEnvDir('npm', libs), 'node_modules', '@types', 'node')));
+			assert.ok(fs.existsSync(path.join(libEnvDir('pnpm', libs), 'node_modules', '@types', 'node')));
 
 			await install(libs, runner.run);
 			assert.strictEqual(runner.calls.length, 1, 'a scoped package on disk is warm');
@@ -133,8 +133,8 @@ suite('pnpm installer', () => {
 		test('warmPaths names one path per declared package', () => {
 			assert.deepStrictEqual(
 				pnpmInstaller.warmPaths([
-					{ ecosystem: 'npm', name: 'react', range: '^19.0.0' },
-					{ ecosystem: 'npm', name: '@types/node' },
+					{ ecosystem: 'pnpm', name: 'react', range: '^19.0.0' },
+					{ ecosystem: 'pnpm', name: '@types/node' },
 				]),
 				[path.join('node_modules', 'react'), path.join('node_modules', '@types/node')],
 			);
@@ -233,7 +233,7 @@ suite('pnpm installer', () => {
 			const runner = spy();
 			await install(['react@^19.0.0'], runner.run);
 
-			const key = libEnvDir('npm', ['react@^19.0.0']);
+			const key = libEnvDir('pnpm', ['react@^19.0.0']);
 			const target = runner.calls[0].args[runner.calls[0].args.indexOf('--dir') + 1];
 			assert.ok(target.startsWith(key), `${target} is not under ${key}`);
 		});
@@ -249,7 +249,7 @@ suite('pnpm installer', () => {
 			await install(['react@^19.0.0'], runner.run);
 
 			assert.strictEqual(
-				fs.existsSync(path.join(libEnvDir('npm', ['react@^19.0.0']), 'package.json')), false,
+				fs.existsSync(path.join(libEnvDir('pnpm', ['react@^19.0.0']), 'package.json')), false,
 				'the installer must not write a package.json — pnpm add --dir writes its own',
 			);
 		});

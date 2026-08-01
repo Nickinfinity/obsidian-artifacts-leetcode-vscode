@@ -74,7 +74,7 @@ export const LANGUAGES: Record<LangId, LanguageConfig> = {
 		commentPrefix: '//',
 		detectCmd: 'node --version',
 		aliases: ['js', 'node', 'mjs', 'cjs'],
-		ecosystem: 'npm',
+		ecosystem: 'pnpm',
 	},
 	rust: {
 		id: 'rust',
@@ -95,7 +95,7 @@ export const LANGUAGES: Record<LangId, LanguageConfig> = {
 		// a TypeScript toolchain would reject a machine that can run the tests.
 		detectCmd: 'node --version',
 		aliases: ['ts'],
-		ecosystem: 'npm',
+		ecosystem: 'pnpm',
 	},
 };
 

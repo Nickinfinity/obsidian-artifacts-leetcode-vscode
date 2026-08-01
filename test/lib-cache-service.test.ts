@@ -55,7 +55,7 @@ suite('lib cache service', () => {
 			warmPaths: () => ['product'],
 			parseSpec: raw => raw.startsWith('bad')
 				? { ok: false, reason: `'${raw}' refused` }
-				: { ok: true, spec: { ecosystem: 'npm', name: raw } },
+				: { ok: true, spec: { ecosystem: 'pnpm', name: raw } },
 			install: async (dir, parsed) => {
 				dirs.push(dir);
 				specs.push([...parsed]);
@@ -80,7 +80,7 @@ suite('lib cache service', () => {
 		 * and report a green install.
 		 */
 		test('the ecosystem is part of the key', () => {
-			assert.notStrictEqual(libEnvDir('pip', ['react']), libEnvDir('npm', ['react']));
+			assert.notStrictEqual(libEnvDir('pip', ['react']), libEnvDir('pnpm', ['react']));
 			assert.notStrictEqual(libEnvDir('cargo', ['react']), libEnvDir('maven', ['react']));
 		});
 
@@ -90,26 +90,26 @@ suite('lib cache service', () => {
 
 		test('declaration order does not change the key', () => {
 			assert.strictEqual(
-				libEnvDir('npm', ['react@^19.0.0', 'vite@^7.0.0']),
-				libEnvDir('npm', ['vite@^7.0.0', 'react@^19.0.0']),
+				libEnvDir('pnpm', ['react@^19.0.0', 'vite@^7.0.0']),
+				libEnvDir('pnpm', ['vite@^7.0.0', 'react@^19.0.0']),
 			);
 		});
 
 		test('a different version is a different key', () => {
-			assert.notStrictEqual(libEnvDir('npm', ['react@^18']), libEnvDir('npm', ['react@^19']));
+			assert.notStrictEqual(libEnvDir('pnpm', ['react@^18']), libEnvDir('pnpm', ['react@^19']));
 		});
 
 		test('a different set is a different key', () => {
 			assert.notStrictEqual(
-				libEnvDir('npm', ['react@^19.0.0']),
-				libEnvDir('npm', ['react@^19.0.0', 'vite@^7']),
+				libEnvDir('pnpm', ['react@^19.0.0']),
+				libEnvDir('pnpm', ['react@^19.0.0', 'vite@^7']),
 			);
 		});
 
 		test('is stable across calls for the same set', () => {
 			assert.strictEqual(
-				libEnvDir('npm', ['react@^19.0.0', 'vite@^7']),
-				libEnvDir('npm', ['react@^19.0.0', 'vite@^7']),
+				libEnvDir('pnpm', ['react@^19.0.0', 'vite@^7']),
+				libEnvDir('pnpm', ['react@^19.0.0', 'vite@^7']),
 			);
 		});
 
@@ -120,7 +120,7 @@ suite('lib cache service', () => {
 		test('resolves under the OS temp dir — no vscode context involved', () => {
 			delete process.env.OBSIDIAN_LEETCODE_LIBCACHE;
 			try {
-				assert.ok(libEnvDir('npm', ['react@^19.0.0']).startsWith(os.tmpdir()));
+				assert.ok(libEnvDir('pnpm', ['react@^19.0.0']).startsWith(os.tmpdir()));
 			} finally {
 				process.env.OBSIDIAN_LEETCODE_LIBCACHE = cacheRoot;
 			}
@@ -130,7 +130,7 @@ suite('lib cache service', () => {
 			delete process.env.OBSIDIAN_LEETCODE_LIBCACHE;
 			try {
 				const repoRoot = path.resolve(__dirname, '..', '..');
-				assert.ok(!libEnvDir('npm', ['react@^19.0.0']).startsWith(repoRoot));
+				assert.ok(!libEnvDir('pnpm', ['react@^19.0.0']).startsWith(repoRoot));
 			} finally {
 				process.env.OBSIDIAN_LEETCODE_LIBCACHE = cacheRoot;
 			}
@@ -140,16 +140,16 @@ suite('lib cache service', () => {
 	suite('validation precedes everything', () => {
 
 		test('a refused spec never reaches the installer', async () => {
-			const spy = stub('npm');
-			const result = await ensureLibEnv('npm', ['bad-one', 'react'], withStub(spy));
+			const spy = stub('pnpm');
+			const result = await ensureLibEnv('pnpm', ['bad-one', 'react'], withStub(spy));
 
 			assert.strictEqual(result.ok, false);
 			assert.deepStrictEqual(spy.dirs, []);
 		});
 
 		test('the refusal reason names the offending spec', async () => {
-			const spy = stub('npm');
-			const result = await ensureLibEnv('npm', ['bad-one'], withStub(spy));
+			const spy = stub('pnpm');
+			const result = await ensureLibEnv('pnpm', ['bad-one'], withStub(spy));
 
 			assert.ok(!result.ok);
 			assert.match(result.reason, /bad-one/);
@@ -161,14 +161,14 @@ suite('lib cache service', () => {
 		 * unvalidated spec through.
 		 */
 		test('a warm key is not a validation bypass', async () => {
-			const spy = stub('npm');
-			await ensureLibEnv('npm', ['react'], withStub(spy));
+			const spy = stub('pnpm');
+			await ensureLibEnv('pnpm', ['react'], withStub(spy));
 
-			const warm = await ensureLibEnv('npm', ['react'], withStub(spy));
+			const warm = await ensureLibEnv('pnpm', ['react'], withStub(spy));
 			assert.strictEqual(warm.ok, true);
 			assert.strictEqual(spy.dirs.length, 1, 'the second call must skip the install');
 
-			const smuggled = await ensureLibEnv('npm', ['bad-one'], withStub(spy));
+			const smuggled = await ensureLibEnv('pnpm', ['bad-one'], withStub(spy));
 			assert.strictEqual(smuggled.ok, false);
 			assert.strictEqual(spy.dirs.length, 1, 'and must still spawn nothing');
 		});
@@ -182,30 +182,30 @@ suite('lib cache service', () => {
 	suite('warm probe', () => {
 
 		test('a marker with no product reinstalls, repairing the entry', async () => {
-			const spy = stub('npm');
-			await ensureLibEnv('npm', ['react'], withStub(spy));
+			const spy = stub('pnpm');
+			await ensureLibEnv('pnpm', ['react'], withStub(spy));
 
 			// An OS temp sweep takes the contents and leaves the marker behind.
-			fs.rmSync(path.join(libEnvDir('npm', ['react']), 'product'), { recursive: true });
+			fs.rmSync(path.join(libEnvDir('pnpm', ['react']), 'product'), { recursive: true });
 
-			const again = await ensureLibEnv('npm', ['react'], withStub(spy));
+			const again = await ensureLibEnv('pnpm', ['react'], withStub(spy));
 			assert.strictEqual(again.ok, true);
 			assert.strictEqual(spy.dirs.length, 2, 'a swept product must reinstall');
 		});
 
 		test('a product with no marker reinstalls — a killed install is not warm', async () => {
-			const spy = stub('npm');
-			const dir = libEnvDir('npm', ['react']);
+			const spy = stub('pnpm');
+			const dir = libEnvDir('pnpm', ['react']);
 			fs.mkdirSync(path.join(dir, 'product'), { recursive: true });
 
-			const result = await ensureLibEnv('npm', ['react'], withStub(spy));
+			const result = await ensureLibEnv('pnpm', ['react'], withStub(spy));
 			assert.strictEqual(result.ok, true);
 			assert.strictEqual(spy.dirs.length, 1);
 		});
 
 		test('an empty spec set installs nothing and still resolves', async () => {
-			const spy = stub('npm');
-			const result = await ensureLibEnv('npm', [], withStub(spy));
+			const spy = stub('pnpm');
+			const result = await ensureLibEnv('pnpm', [], withStub(spy));
 
 			assert.strictEqual(result.ok, true);
 			assert.deepStrictEqual(spy.dirs, []);
@@ -215,9 +215,9 @@ suite('lib cache service', () => {
 	suite('atomic install', () => {
 
 		test('builds in a tmp sibling, then renames into place', async () => {
-			const spy = stub('npm');
-			const final = libEnvDir('npm', ['react']);
-			const result = await ensureLibEnv('npm', ['react'], withStub(spy));
+			const spy = stub('pnpm');
+			const final = libEnvDir('pnpm', ['react']);
+			const result = await ensureLibEnv('pnpm', ['react'], withStub(spy));
 
 			assert.deepStrictEqual(result, { ok: true, dir: final });
 			assert.notStrictEqual(spy.dirs[0], final, 'the install must not build in the final dir');
@@ -247,12 +247,12 @@ suite('lib cache service', () => {
 		 * on disk.
 		 */
 		test('losing the rename race is success, not a failed install', async () => {
-			const spy = stub('npm');
-			const final = libEnvDir('npm', ['react']);
+			const spy = stub('pnpm');
+			const final = libEnvDir('pnpm', ['react']);
 			fs.mkdirSync(path.join(final, 'product'), { recursive: true });
 			fs.writeFileSync(path.join(final, 'squatter'), 'winner', 'utf-8');
 
-			const result = await ensureLibEnv('npm', ['react'], withStub(spy));
+			const result = await ensureLibEnv('pnpm', ['react'], withStub(spy));
 
 			assert.deepStrictEqual(result, { ok: true, dir: final });
 			assert.strictEqual(
@@ -263,11 +263,11 @@ suite('lib cache service', () => {
 		});
 
 		test('a failed install leaves no half-built directory behind', async () => {
-			const spy = stub('npm', { throws: new Error('boom') });
-			const result = await ensureLibEnv('npm', ['react'], withStub(spy));
+			const spy = stub('pnpm', { throws: new Error('boom') });
+			const result = await ensureLibEnv('pnpm', ['react'], withStub(spy));
 
 			assert.strictEqual(result.ok, false);
-			assert.strictEqual(fs.existsSync(libEnvDir('npm', ['react'])), false);
+			assert.strictEqual(fs.existsSync(libEnvDir('pnpm', ['react'])), false);
 			assert.strictEqual(fs.existsSync(spy.dirs[0]), false);
 		});
 	});
@@ -312,8 +312,8 @@ suite('lib cache service', () => {
 		});
 
 		test('any other failure keeps its own message', async () => {
-			const spy = stub('npm', { throws: new Error('registry returned 500') });
-			const result = await ensureLibEnv('npm', ['react'], withStub(spy));
+			const spy = stub('pnpm', { throws: new Error('registry returned 500') });
+			const result = await ensureLibEnv('pnpm', ['react'], withStub(spy));
 
 			assert.ok(!result.ok);
 			assert.match(result.reason, /registry returned 500/);

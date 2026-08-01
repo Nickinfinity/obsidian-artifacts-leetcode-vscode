@@ -107,9 +107,9 @@ suite('function envs — library consumption', () => {
 		for (const env of [javascriptFunctionEnv, typescriptFunctionEnv]) {
 			test(`${env.language} resolves node modules by NODE_PATH alone`, () => {
 				const before = env.emit(contextFor(env));
-				const after = env.emit(contextFor(env, '/cache/npm-1', { [env.language]: ['left-pad@1.0.0'] }));
+				const after = env.emit(contextFor(env, '/cache/pnpm-1', { [env.language]: ['left-pad@1.0.0'] }));
 
-				assert.deepStrictEqual(after.env, { NODE_PATH: path.join('/cache/npm-1', 'node_modules') });
+				assert.deepStrictEqual(after.env, { NODE_PATH: path.join('/cache/pnpm-1', 'node_modules') });
 				assert.strictEqual(after.pathPrepend, undefined);
 				assert.strictEqual(after.run, before.run, 'the run command must not change');
 				assert.deepStrictEqual(

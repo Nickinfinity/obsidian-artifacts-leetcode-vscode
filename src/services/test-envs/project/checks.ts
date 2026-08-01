@@ -262,7 +262,7 @@ export async function runRenderCheck(
 
 	let dir = cacheDir;
 	if (!dir) {
-		const installed = await ensureLibEnv('npm', renderLibsFor(artifactLibs));
+		const installed = await ensureLibEnv('pnpm', renderLibsFor(artifactLibs));
 		if (!installed.ok) { return fail(check, installed.reason); }
 		dir = installed.dir;
 	}

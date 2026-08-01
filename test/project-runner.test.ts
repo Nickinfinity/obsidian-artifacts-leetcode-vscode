@@ -331,7 +331,7 @@ suite('project runner', () => {
 			// The install builds in `<key>.tmp-<pid>` and is renamed into place,
 			// so the cwd is a sibling of the key rather than the key itself —
 			// what matters is that it is *this* key's sibling and no other.
-			const expectedKey = libEnvDir('npm', renderLibsFor(['lodash@^4.17.21']));
+			const expectedKey = libEnvDir('pnpm', renderLibsFor(['lodash@^4.17.21']));
 			assert.ok(calls[0].cwd.startsWith(expectedKey), `${calls[0].cwd} is not under ${expectedKey}`);
 		});
 
@@ -355,7 +355,7 @@ suite('project runner', () => {
 			const parsed = parseLeetCode(artifactWithMultiLangLibs());
 			await gradeProjectDir(parsed, runDir, { installRun: countingRun });
 
-			const npmKey = libEnvDir('npm', ['lodash@^4.17.21']);
+			const npmKey = libEnvDir('pnpm', ['lodash@^4.17.21']);
 			const pipKey = libEnvDir('pip', ['requests>=2']);
 			assert.ok(calls.some(c => c.cwd.startsWith(npmKey)), 'the npm set must still install');
 			assert.ok(calls.some(c => c.cwd.startsWith(pipKey)), 'the python set must install from pip');

@@ -839,13 +839,15 @@ libs:
 
 #### The language key picks the registry
 
-`LANGUAGES[lang].ecosystem` maps each runnable language to the registry that serves it, and
+`LANGUAGES[lang].ecosystem` maps each runnable language to the toolchain that resolves its
+libraries — the ids are **tool** names (`pnpm`, `pip`, `cargo`, `maven`), because that is what
+gets invoked; the npm *registry* is still where `pnpm`'s packages come from. `ecosystemFor`
 `ecosystemFor` resolves the key the same way a fence info-string is resolved (`py` → python,
 `tsx` → typescript). A key naming no runnable language is **dropped with a warning**.
 
 | Language(s) | Registry | Installed by |
 |---|---|---|
-| `javascript`, `typescript` (and their `*react` display ids) | npm | `pnpm add --dir` |
+| `javascript`, `typescript` (and their `*react` display ids) | `pnpm` | `pnpm add --dir` — packages from registry.npmjs.org; `npm` itself is never invoked |
 | `python` | PyPI | a **venv** in the cache, then `<venv>/bin/python3 -m pip install` |
 | `rust` | crates.io | a generated `Cargo.toml`, then `cargo fetch` + a pre-warm build |
 | `java` | Maven Central | a generated `pom.xml`, then `mvn dependency:copy-dependencies` |
@@ -860,7 +862,7 @@ accepts, parsed into fields — never waved through by one pattern:
 
 | Registry | Write | Fields |
 |---|---|---|
-| npm | `react@^19.0.0`, `@types/node@^20` | name (scope included), range |
+| `pnpm` | `react@^19.0.0`, `@types/node@^20` | name (scope included), range |
 | pip | `numpy`, `"numpy>=2,<3"`, `requests[socks]==2.32.3` | name, extras, predicates |
 | cargo | `serde_json@1.0`, `serde@^1+derive+std` | name, req, features |
 | maven | `com.google.guava:guava:33.3.1-jre` (`:packaging:classifier` optional) | the coordinate segments |
@@ -876,7 +878,7 @@ install subprocess; the rest of that language's list still installs.
 **Refused everywhere**, because each fetches from or reads a location the artifact chose, and
 a name-shape grammar can say nothing about a URL:
 
-- npm `file:` · `link:` · `git+…` · `workspace:` protocol specs
+- `pnpm` `file:` · `link:` · `git+…` · `workspace:` protocol specs
 - pip direct references (`name @ url`), VCS URLs, environment markers (`;`), `-r file` forms
 - cargo inline TOML — `git =`, `path =`, `registry =`, `default-features = false`
 - maven repository or mirror overrides, and the non-reproducible `LATEST` / `RELEASE`

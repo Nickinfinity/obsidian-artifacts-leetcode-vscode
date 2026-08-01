@@ -20,20 +20,20 @@ suite('lib-ecosystem', () => {
 			assert.strictEqual(ecosystemFor('python'), 'pip');
 			assert.strictEqual(ecosystemFor('rust'), 'cargo');
 			assert.strictEqual(ecosystemFor('java'), 'maven');
-			assert.strictEqual(ecosystemFor('javascript'), 'npm');
-			assert.strictEqual(ecosystemFor('typescript'), 'npm');
+			assert.strictEqual(ecosystemFor('javascript'), 'pnpm');
+			assert.strictEqual(ecosystemFor('typescript'), 'pnpm');
 		});
 
 		test('folds the two *react display ids onto their runnable pair', () => {
-			assert.strictEqual(ecosystemFor('typescriptreact'), 'npm');
-			assert.strictEqual(ecosystemFor('javascriptreact'), 'npm');
+			assert.strictEqual(ecosystemFor('typescriptreact'), 'pnpm');
+			assert.strictEqual(ecosystemFor('javascriptreact'), 'pnpm');
 		});
 
 		test('resolves an alias the way a fence info-string would', () => {
 			assert.strictEqual(ecosystemFor('py'), 'pip');
 			assert.strictEqual(ecosystemFor('rs'), 'cargo');
-			assert.strictEqual(ecosystemFor('TypeScript'), 'npm');
-			assert.strictEqual(ecosystemFor('tsx'), 'npm');
+			assert.strictEqual(ecosystemFor('TypeScript'), 'pnpm');
+			assert.strictEqual(ecosystemFor('tsx'), 'pnpm');
 		});
 
 		test('returns undefined for a language no installer can serve', () => {

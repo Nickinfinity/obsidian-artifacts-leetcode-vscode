@@ -600,9 +600,11 @@ still bundles nothing. Everything lives under [src/services/libs/](src/services/
 
 Rules that are load-bearing, not stylistic:
 
-- **`LANGUAGES[lang].ecosystem` is the only map from language to registry.** Read it through
+- **`LANGUAGES[lang].ecosystem` is the only map from language to toolchain.** Read it through
   `ecosystemFor`, which folds `*react` display ids and resolves aliases; never index a raw
-  `libs:` key, which is untrusted text.
+  `libs:` key, which is untrusted text. The ids name the **tool** — `pnpm`, not `npm`, because
+  pnpm is what gets invoked and an id that said otherwise made the name disagree with the
+  behaviour. Packages still come from registry.npmjs.org.
 - **Specs are ecosystem-native and parsed into fields**, never matched by one pattern: a maven
   coordinate is not an npm name, and one grammar would refuse the correct spelling for three
   registries out of four. Every field pattern is anchored, opens with an alphanumeric class,

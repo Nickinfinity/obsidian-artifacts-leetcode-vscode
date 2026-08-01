@@ -2,14 +2,17 @@ import { resolveLangId, runnableLangId } from '../language-map.service.js';
 import { isLangId, LANGUAGES } from '../../types/languages.js';
 
 /**
- * A package registry an artifact's `libs:` can be resolved against.
+ * Which toolchain resolves an artifact's `libs:`, and therefore which grammar
+ * its specs are written in.
  *
- * `'npm'` names the **registry** (registry.npmjs.org), not the tool: the
- * installer behind it is pnpm, and this extension invokes `npm` nowhere.
- * Renaming the id to match the tool would misdescribe what a `libs:` entry
- * is — a spec written in that registry's own notation.
+ * Named after the **tool**, uniformly: `pnpm`, not `npm`, because pnpm is what
+ * this extension actually invokes — it shells `npm` nowhere, and an id saying
+ * otherwise made the one thing a reader checks disagree with the one thing the
+ * code does. The packages still come from registry.npmjs.org, and a spec is
+ * still written in that registry's notation; the id names the client, the way
+ * `pip`, `cargo` and `maven` already did.
  */
-export type LibEcosystem = 'npm' | 'pip' | 'cargo' | 'maven';
+export type LibEcosystem = 'pnpm' | 'pip' | 'cargo' | 'maven';
 
 /**
  * The registry that serves a `libs:` language key, or `undefined` when no
@@ -26,7 +29,7 @@ export type LibEcosystem = 'npm' | 'pip' | 'cargo' | 'maven';
  *
  * @example
  * ecosystemFor('python');          // → 'pip'
- * ecosystemFor('typescriptreact'); // → 'npm'
+ * ecosystemFor('typescriptreact'); // → 'pnpm'
  * ecosystemFor('cobol');           // → undefined
  */
 export function ecosystemFor(languageKey: string): LibEcosystem | undefined {
@@ -34,9 +37,9 @@ export function ecosystemFor(languageKey: string): LibEcosystem | undefined {
 	return isLangId(langId) ? LANGUAGES[langId].ecosystem : undefined;
 }
 
-/** An npm spec: a scoped or unscoped package name with an optional range. */
-export interface NpmLibSpec {
-	readonly ecosystem: 'npm';
+/** An npm-registry spec: a scoped or unscoped package name with an optional range. */
+export interface PnpmLibSpec {
+	readonly ecosystem: 'pnpm';
 	/** Package name, **including** any `@scope/` — the form npm addresses it by. */
 	readonly name: string;
 	/** Version range as written, e.g. `^19.0.0`. Absent means "latest". */
@@ -81,7 +84,7 @@ export interface MavenLibSpec {
  * then narrows to exactly the fields its ecosystem has, and a maven coordinate
  * can never be handed to the pip installer without the compiler saying so.
  */
-export type ParsedLibSpec = NpmLibSpec | PipLibSpec | CargoLibSpec | MavenLibSpec;
+export type ParsedLibSpec = PnpmLibSpec | PipLibSpec | CargoLibSpec | MavenLibSpec;
 
 /**
  * The result of validating one raw spec: the parsed fields, or the reason it

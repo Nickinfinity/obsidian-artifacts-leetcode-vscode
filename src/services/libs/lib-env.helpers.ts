@@ -32,12 +32,12 @@ export interface LibEnvVars {
  * @example
  * libEnvVars('pip', '/cache/pip-9f2c');
  * // → { env: { VIRTUAL_ENV: '/cache/pip-9f2c' }, pathPrepend: '/cache/pip-9f2c/bin' }
- * libEnvVars('npm', '/cache/npm-9f2c');
- * // → { env: { NODE_PATH: '/cache/npm-9f2c/node_modules' } }
+ * libEnvVars('pnpm', '/cache/pnpm-9f2c');
+ * // → { env: { NODE_PATH: '/cache/pnpm-9f2c/node_modules' } }
  */
 export function libEnvVars(ecosystem: LibEcosystem, dir: string): LibEnvVars {
 	switch (ecosystem) {
-		case 'npm':
+		case 'pnpm':
 			// CJS `require` resolution only — which is exactly what the js/ts
 			// function envs' `vm` sandbox uses.
 			// ponytail: does nothing for a bare ESM `import`. Upgrade path when an
@@ -77,7 +77,7 @@ export function libEnvVars(ecosystem: LibEcosystem, dir: string): LibEnvVars {
  * @returns Merged variables and the joined `PATH` prefix (`''` when none).
  *
  * @example
- * mergeLibEnvVars(new Map([['pip', '/cache/pip-1'], ['npm', '/cache/npm-2']]));
+ * mergeLibEnvVars(new Map([['pip', '/cache/pip-1'], ['pnpm', '/cache/pnpm-2']]));
  * // → { env: { VIRTUAL_ENV: '/cache/pip-1', NODE_PATH: '…' }, pathPrepend: '/cache/pip-1/bin' }
  */
 export function mergeLibEnvVars(dirs: ReadonlyMap<LibEcosystem, string>): LibEnvVars {

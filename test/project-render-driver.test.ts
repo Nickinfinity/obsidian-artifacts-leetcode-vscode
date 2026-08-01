@@ -97,7 +97,7 @@ suite('project render driver', () => {
 
 		const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'render-e2e-'));
 		const libs = [...HARNESS_LIBS, 'react@^19.0.0', 'react-dom@^19.0.0'];
-		const installed = await ensureLibEnv('npm', libs);
+		const installed = await ensureLibEnv('pnpm', libs);
 		assert.ok(installed.ok, !installed.ok ? installed.reason : '');
 
 		fs.mkdirSync(path.join(runDir, 'src'));
@@ -114,7 +114,7 @@ suite('project render driver', () => {
 
 		fs.writeFileSync(path.join(runDir, RENDER_RUNNER), renderRunnerSource({
 			entry: 'src/App.jsx',
-			cacheDir: libEnvDir('npm', libs),
+			cacheDir: libEnvDir('pnpm', libs),
 			cases: [
 				{ index: 0, steps: [{ op: 'text', selector: '#out' }] },
 				{ index: 1, steps: [{ op: 'click', selector: 'button' }, { op: 'text', selector: '#out' }] },
@@ -148,7 +148,7 @@ suite('project render driver', () => {
 		//     that suites script clicks against to assert the no-op.
 		const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'render-e2e-frozen-'));
 		const libs = [...HARNESS_LIBS, 'react@^19.0.0', 'react-dom@^19.0.0'];
-		const installed = await ensureLibEnv('npm', libs);
+		const installed = await ensureLibEnv('pnpm', libs);
 		assert.ok(installed.ok, !installed.ok ? installed.reason : '');
 
 		fs.mkdirSync(path.join(runDir, 'src'));
@@ -168,7 +168,7 @@ suite('project render driver', () => {
 
 		fs.writeFileSync(path.join(runDir, RENDER_RUNNER), renderRunnerSource({
 			entry: 'src/App.jsx',
-			cacheDir: libEnvDir('npm', libs),
+			cacheDir: libEnvDir('pnpm', libs),
 			cases: [
 				{ index: 0, steps: [
 					{ op: 'change', selector: '#open', value: 'hi' }, { op: 'text', selector: '#out' },

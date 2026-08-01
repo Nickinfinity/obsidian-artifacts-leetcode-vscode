@@ -90,8 +90,8 @@ suite('project libs — one install per ecosystem', () => {
 		)];
 		assert.deepStrictEqual(
 			roots.map(r => r.split('-')[0]).sort(),
-			['npm', 'pip'],
-			`expected one pip and one npm environment, got ${JSON.stringify(roots)}`,
+			['pip', 'pnpm'],
+			`expected one pip and one pnpm environment, got ${JSON.stringify(roots)}`,
 		);
 	});
 
@@ -101,7 +101,7 @@ suite('project libs — one install per ecosystem', () => {
 
 		const expected = [
 			libEnvDir('pip', ['fastapi>=0.115,<0.116']),
-			libEnvDir('npm', ['react@^19.0.0']),
+			libEnvDir('pnpm', ['react@^19.0.0']),
 		];
 		for (const key of expected) {
 			assert.ok(
@@ -150,7 +150,7 @@ suite('project libs — one install per ecosystem', () => {
 	suite('the consumption seam', () => {
 
 		test('each ecosystem maps to its own variables', () => {
-			assert.deepStrictEqual(libEnvVars('npm', '/c/npm'), {
+			assert.deepStrictEqual(libEnvVars('pnpm', '/c/npm'), {
 				env: { NODE_PATH: path.join('/c/npm', 'node_modules') },
 			});
 			assert.deepStrictEqual(libEnvVars('pip', '/c/pip'), {
@@ -175,7 +175,7 @@ suite('project libs — one install per ecosystem', () => {
 		});
 
 		test('merging several ecosystems joins their PATH prefixes', () => {
-			const merged = mergeLibEnvVars(new Map([['pip', '/c/pip'], ['npm', '/c/npm']] as const));
+			const merged = mergeLibEnvVars(new Map([['pip', '/c/pip'], ['pnpm', '/c/npm']] as const));
 
 			assert.strictEqual(merged.env.VIRTUAL_ENV, '/c/pip');
 			assert.strictEqual(merged.env.NODE_PATH, path.join('/c/npm', 'node_modules'));
@@ -183,7 +183,7 @@ suite('project libs — one install per ecosystem', () => {
 		});
 
 		test('no ecosystem needing a PATH prefix leaves none', () => {
-			assert.strictEqual(mergeLibEnvVars(new Map([['npm', '/c/npm']])).pathPrepend, undefined);
+			assert.strictEqual(mergeLibEnvVars(new Map([['pnpm', '/c/npm']])).pathPrepend, undefined);
 		});
 	});
 });

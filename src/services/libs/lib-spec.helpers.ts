@@ -1,5 +1,5 @@
 import type {
-	CargoLibSpec, LibEcosystem, LibSpecParse, MavenLibSpec, NpmLibSpec, ParsedLibSpec, PipLibSpec,
+	CargoLibSpec, LibEcosystem, LibSpecParse, MavenLibSpec, PnpmLibSpec, ParsedLibSpec, PipLibSpec,
 } from './lib-ecosystem.js';
 
 /**
@@ -64,10 +64,10 @@ function hasTraversal(raw: string): boolean {
  * @returns The parsed fields, or the reason it was refused.
  *
  * @example
- * parseNpmSpec('@types/node@^20');
- * // → { ok: true, spec: { ecosystem: 'npm', name: '@types/node', range: '^20' } }
+ * parsePnpmSpec('@types/node@^20');
+ * // → { ok: true, spec: { ecosystem: 'pnpm', name: '@types/node', range: '^20' } }
  */
-export function parseNpmSpec(raw: string): LibSpecParse<NpmLibSpec> {
+export function parsePnpmSpec(raw: string): LibSpecParse<PnpmLibSpec> {
 	if (hasTraversal(raw)) { return refuse(raw, 'contains a parent-directory segment'); }
 
 	const at = raw.lastIndexOf('@');
@@ -79,8 +79,8 @@ export function parseNpmSpec(raw: string): LibSpecParse<NpmLibSpec> {
 		return refuse(raw, 'does not carry a plain version range');
 	}
 	return { ok: true, spec: range === undefined
-		? { ecosystem: 'npm', name }
-		: { ecosystem: 'npm', name, range } };
+		? { ecosystem: 'pnpm', name }
+		: { ecosystem: 'pnpm', name, range } };
 }
 
 /**
@@ -224,7 +224,7 @@ export function parseMavenSpec(raw: string): LibSpecParse<MavenLibSpec> {
 
 /** One parser per ecosystem — the absence of a fifth entry *is* the scope. */
 const PARSERS: Record<LibEcosystem, (raw: string) => LibSpecParse> = {
-	npm: parseNpmSpec,
+	pnpm: parsePnpmSpec,
 	pip: parsePipSpec,
 	cargo: parseCargoSpec,
 	maven: parseMavenSpec,
@@ -266,7 +266,7 @@ export type LibNameValidation =
  * Validates a list of npm library names before they reach an install
  * subprocess.
  *
- * A thin list-shaped wrapper over {@link parseNpmSpec} — the grammar lives
+ * A thin list-shaped wrapper over {@link parsePnpmSpec} — the grammar lives
  * there, so the parser and this validator can never disagree about what an
  * installable name is.
  *
@@ -280,7 +280,7 @@ export type LibNameValidation =
  * // → { ok: false, invalid: ['--target=/etc'] }
  */
 export function validateLibNames(names: readonly string[]): LibNameValidation {
-	const invalid = names.filter(name => !parseNpmSpec(name).ok);
+	const invalid = names.filter(name => !parsePnpmSpec(name).ok);
 	return invalid.length === 0 ? { ok: true } : { ok: false, invalid };
 }
 

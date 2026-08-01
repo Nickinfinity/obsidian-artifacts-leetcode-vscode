@@ -112,7 +112,7 @@ export async function gradeProjectDir(
 	// Only the npm tree is linked into the run: a `build` check's toolchain
 	// resolves `node_modules` by walking up from `runDir`, and every other
 	// ecosystem is reached through an environment variable instead.
-	const npmDir = dirs.get('npm');
+	const npmDir = dirs.get('pnpm');
 	if (npmDir !== undefined) { await linkModules(runDir, npmDir); }
 
 	const outcomes: ProjectCheckOutcome[] = [];
@@ -142,7 +142,7 @@ export async function gradeProjectDir(
  *
  * @example
  * installSetsFor(parsed, [{ kind: 'build', … }]);
- * // → Map { 'pip' => ['fastapi>=0.115'], 'npm' => ['react@^19.0.0'] }
+ * // → Map { 'pip' => ['fastapi>=0.115'], 'pnpm' => ['react@^19.0.0'] }
  */
 function installSetsFor(
 	parsed: ParsedLeetCode, checks: ProjectCheck[],
@@ -156,7 +156,7 @@ function installSetsFor(
 	}
 
 	if (checks.some(c => c.kind === 'dom-assert' || c.kind === 'css-assert')) {
-		sets.set('npm', renderLibsFor(sets.get('npm') ?? []));
+		sets.set('pnpm', renderLibsFor(sets.get('pnpm') ?? []));
 	}
 	return sets;
 }
@@ -189,7 +189,7 @@ async function runOneCheck(
 			return runBuildCheck(check, runDir, dirs);
 		case 'dom-assert':
 		case 'css-assert':
-			return runRenderCheck(check, runDir, undefined, dirs.get('npm'));
+			return runRenderCheck(check, runDir, undefined, dirs.get('pnpm'));
 		case 'function':
 			// Nothing is threaded in: a function check runs through `runSuite`,
 			// which resolves its own library environment from `parsed.libs`.

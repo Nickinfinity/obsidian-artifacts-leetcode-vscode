@@ -44,7 +44,7 @@ const INSTALL_TIMEOUT_MS = 300_000;
  * Tests inject their own map instead of reaching the network.
  */
 const INSTALLERS: Record<LibEcosystem, LibInstaller> = {
-	npm: pnpmInstaller as LibInstaller,
+	pnpm: pnpmInstaller as LibInstaller,
 	pip: pipInstaller as LibInstaller,
 	cargo: cargoInstaller as LibInstaller,
 	maven: mavenInstaller as LibInstaller,

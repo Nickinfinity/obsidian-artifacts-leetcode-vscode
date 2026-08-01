@@ -1,6 +1,6 @@
 import * as path from 'node:path';
-import type { LibInstaller, NpmLibSpec, RunArgv } from './lib-ecosystem.js';
-import { parseNpmSpec } from './lib-spec.helpers.js';
+import type { LibInstaller, PnpmLibSpec, RunArgv } from './lib-ecosystem.js';
+import { parsePnpmSpec } from './lib-spec.helpers.js';
 
 /**
  * Flags every install carries, ahead of the artifact's own specs.
@@ -29,19 +29,20 @@ const PNPM_FLAGS: readonly string[] = ['--reporter=append-only', '--config.stric
 /**
  * One spec rendered back to the single argv element pnpm reads.
  *
- * @param spec - One parsed npm spec.
+ * @param spec - One parsed npm-registry spec.
  * @returns e.g. `react@^19.0.0`, or the bare name when no range was declared.
  *
  * @example
- * argvElementOf({ ecosystem: 'npm', name: '@types/node', range: '^20' }); // → '@types/node@^20'
+ * argvElementOf({ ecosystem: 'pnpm', name: '@types/node', range: '^20' }); // → '@types/node@^20'
  */
-function argvElementOf(spec: NpmLibSpec): string {
+function argvElementOf(spec: PnpmLibSpec): string {
 	return spec.range === undefined ? spec.name : `${spec.name}@${spec.range}`;
 }
 
 /**
- * The npm ecosystem's installer: **pnpm**, the package manager this project
- * uses everywhere else, including the subprocesses the extension spawns.
+ * The `pnpm` ecosystem's installer — the package manager this project uses
+ * everywhere else, including the subprocesses the extension spawns. Its
+ * packages come from registry.npmjs.org; `npm` itself is never invoked.
  *
  * `pnpm add --dir <cache>` needs no manifest in place first — it writes its own
  * `package.json` and `pnpm-lock.yaml` beside the `node_modules` it builds — so
@@ -53,10 +54,10 @@ function argvElementOf(spec: NpmLibSpec): string {
  * service's build-then-rename.
  *
  * @example
- * await pnpmInstaller.install('/cache/npm-9f2c', [{ ecosystem: 'npm', name: 'react' }], run);
+ * await pnpmInstaller.install('/cache/pnpm-9f2c', [{ ecosystem: 'pnpm', name: 'react' }], run);
  */
-export const pnpmInstaller: LibInstaller<NpmLibSpec> = {
-	ecosystem: 'npm',
+export const pnpmInstaller: LibInstaller<PnpmLibSpec> = {
+	ecosystem: 'pnpm',
 	relocatable: true,
 	missingTool: 'pnpm not found — install pnpm to run library-backed JavaScript/TypeScript exercises',
 
@@ -76,9 +77,9 @@ export const pnpmInstaller: LibInstaller<NpmLibSpec> = {
 	 */
 	warmPaths: specs => specs.map(spec => path.join('node_modules', spec.name)),
 
-	parseSpec: parseNpmSpec,
+	parseSpec: parsePnpmSpec,
 
-	async install(dir: string, specs: readonly NpmLibSpec[], run: RunArgv): Promise<void> {
+	async install(dir: string, specs: readonly PnpmLibSpec[], run: RunArgv): Promise<void> {
 		if (specs.length === 0) { return; }
 		await run('pnpm', ['add', '--dir', dir, ...PNPM_FLAGS, ...specs.map(argvElementOf)], dir);
 	},
