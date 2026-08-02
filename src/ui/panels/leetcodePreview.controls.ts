@@ -1,7 +1,7 @@
 import { resolveLangId } from '../../services/language-map.service.js';
 import { hasFinalTests, publicCount } from '../../services/leetcode-suite.helpers.js';
 import { languagesForType } from '../../services/test-envs/env.registry.js';
-import { PRACTICE_OPTIONS } from '../../types/constants.js';
+import { isMultiFile, PRACTICE_OPTIONS } from '../../types/constants.js';
 import type { ChallengePhase, ParsedLeetCode, ProjectCheck } from '../../types/leetcode.types.js';
 import { escHtml } from '../../utils/html.helpers.js';
 
@@ -431,13 +431,20 @@ function renderSolvedSummary(p: ParsedLeetCode): string {
  */
 export function availableLanguages(p: ParsedLeetCode): string[] {
 	const supported = new Set(languagesForType(p.test.type));
+	// A multi-file type the registry has no env for (`service`) is still
+	// *attemptable*: Solve It writes its `## Files` tree and opens the tabs, and
+	// the language only labels them. Gating it on the registry left the solver
+	// staring at an exercise they could not open. Grading is a separate
+	// question and stays the registry's — a `service` Run Tests / Submit is
+	// refused by `resolveRunSetup`, so nothing can report green.
+	const gateOnRegistry = supported.size > 0 || !isMultiFile(p.test.type);
 	const seen = new Set<string>();
 	const out: string[] = [];
 
 	const declared = [...p.setups.map(s => s.language), ...p.solutions.map(s => s.language)];
 	for (const raw of declared) {
 		const langId = resolveLangId(raw);
-		if (seen.has(langId) || !supported.has(langId)) { continue; }
+		if (seen.has(langId) || (gateOnRegistry && !supported.has(langId))) { continue; }
 		seen.add(langId);
 		out.push(langId);
 	}

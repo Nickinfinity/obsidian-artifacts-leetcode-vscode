@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { END_CHALLENGE_COMMAND, TICK_MS } from '../types/constants.js';
+import { END_CHALLENGE_COMMAND, isMultiFile, TICK_MS } from '../types/constants.js';
 import type { ChallengeState, ParsedLeetCode, PracticeConfig, TimerTick } from '../types/leetcode.types.js';
 import { formatRemaining, timerTick } from './leetcode-challenge.helpers.js';
 import { openExerciseFile } from './exercise-file.service.js';
@@ -113,10 +113,12 @@ export async function startChallenge(
 ): Promise<ChallengeSession> {
 	await endChallenge();
 
-	// A project is a tree, not a buffer: materialise it and open its editable
-	// files, keeping `fileUri` pointed at the primary tab so nothing downstream
-	// needs to know which shape this run has.
-	const project = parsed.test.type === 'project'
+	// A multi-file exercise is a tree, not a buffer: materialise it and open its
+	// editable files, keeping `fileUri` pointed at the primary tab so nothing
+	// downstream needs to know which shape this run has. `service` opens the
+	// same way it parses — it is a tree with no environment, so *Solve It* gives
+	// the solver their files and grading refuses in the run handlers.
+	const project = isMultiFile(parsed.test.type)
 		? await openProjectFiles(context, parsed)
 		: null;
 	const fileUri = project ? project.primary : await openExerciseFile(context, parsed, langId);

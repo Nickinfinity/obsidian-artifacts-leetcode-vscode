@@ -57,7 +57,12 @@ export async function handleRunTests(ctx: PanelCtx): Promise<void> {
 		return;
 	}
 
-	if (session.projectDir) {
+	// `project` only, never every directory-shaped run: a `service` run also
+	// carries a `projectDir`, and grading one here would report its `build`
+	// check green while every `http` check — the half the exercise is actually
+	// about — was dropped at parse time as unimplemented. It falls through to
+	// `resolveRunSetup`, which refuses it by name.
+	if (session.projectDir && ctx.parsed.test.type === 'project') {
 		const outcomes = await gradeLiveProject(ctx, session.projectDir, { publicOnly: true });
 		postResultsHtml(ctx, renderProjectResultsHtml(outcomes));
 		if (outcomes.length > 0 && outcomes.every(o => o.passed)) {

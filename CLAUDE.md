@@ -311,6 +311,17 @@ Behaviour the spec does **not** cover:
   (`structure only — reserved test.type 'service', nothing executed`) rather than printing a
   bare `OK`. `service` is check-graded like `project` but has no env, and measuring it against
   the function floor reported the misleading `structural: missing params`.
+- **`service` opens without grading, and the two questions are answered by different
+  authorities.** *Can it be opened?* is `isMultiFile(type)` ([types/constants.ts](src/types/constants.ts)) —
+  the one home of "this artifact is a file tree", read by the parser, `startChallenge`, and
+  `availableLanguages`, each of which previously asked it with its own `=== 'project'`; that is
+  why `service` parsed a `## Files` tree nothing ever opened. *Can it be graded?* stays the
+  registry's alone, and for `service` the answer is no. So *Solve It* writes the tree and opens
+  the tabs, while Run Tests falls past the `projectDir` branch (which requires `type ===
+  'project'`) into `resolveRunSetup`, which refuses by name. **The `project` gate on that branch
+  is load-bearing:** a service artifact's `http` checks are dropped at parse time as
+  unimplemented, so grading its directory would report the surviving `build` check green and
+  call an ungraded exercise solved.
 
 ### Language registry — the one authority
 
@@ -525,7 +536,8 @@ Rules that are load-bearing, not stylistic:
   incomplete; the fix would be a hardcoded `--allow-build=<pkg>` list in the installer, never one
   read from an artifact.
 
-**The solve flow is a directory, not a buffer.** *Solve It* on a `project` materialises the
+**The solve flow is a directory, not a buffer.** *Solve It* on a **multi-file** type
+(`isMultiFile` — `project` **or** `service`) materialises the
 starter tree into a fresh `globalStorageUri/attempts/project_<slug>_<run>/`
 ([project-file.service.ts](src/services/project-file.service.ts)) and opens every
 `editable`/`readonly` file as a tab (`hidden` files are written, never opened). The session

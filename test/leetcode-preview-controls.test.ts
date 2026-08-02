@@ -136,6 +136,24 @@ suite('leetcodePreview.controls', () => {
             assert.deepStrictEqual(availableLanguages(p), []);
         });
 
+        // `service` has no registered env either, but it is a *file tree*: Solve
+        // It writes `## Files` and opens the tabs, so gating it on the registry
+        // left the exercise impossible to open at all. Grading stays refused
+        // downstream — this only decides what the selector may offer.
+        test('a multi-file type with no env still offers its declared languages', () => {
+            const p = fixture({ test: { type: 'service', timeoutMs: 5000 } });
+            assert.deepStrictEqual(availableLanguages(p), ['javascript', 'python']);
+        });
+
+        test('the multi-file relaxation does not leak into a reserved single-file type', () => {
+            const p = fixture({
+                test:      { type: 'in-place', timeoutMs: 5000 },
+                setups:    [{ language: 'ruby', code: '' }],
+                solutions: [{ language: 'python', code: '' }],
+            });
+            assert.deepStrictEqual(availableLanguages(p), []);
+        });
+
         test('alias headings resolve to canonical ids before filtering', () => {
             const p = fixture({ setups: [{ language: 'js', code: '' }], solutions: [] });
             assert.deepStrictEqual(availableLanguages(p), ['javascript']);

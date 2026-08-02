@@ -200,6 +200,34 @@ export const TEST_TYPES: readonly TestType[] = [
 /** Test type assumed when the artifact declares no `test:` block. */
 export const DEFAULT_TEST_TYPE = 'function';
 
+/** Test types whose artifacts declare a file tree, dependencies and checks. */
+const MULTI_FILE_TYPES = new Set<string>(['project', 'service']);
+
+/**
+ * Is this test type a **file tree**, rather than one candidate function?
+ *
+ * The one authority for that question. Three unrelated concerns ask it — the
+ * parser (does `## Files` / `checks:` get parsed?), the challenge (does *Solve
+ * It* materialise a directory or write one buffer?), and the panel (may the
+ * selector offer a language the registry has no env for?) — and each used to
+ * answer it with its own `=== 'project'`, which is why `service` parsed a file
+ * tree nothing ever opened.
+ *
+ * Distinct from *runnable*: `service` is a tree that opens and does **not**
+ * grade, because no `service` environment is registered. Grading capability
+ * stays the registry's answer alone (`testEnvFor` / `languagesForType`).
+ *
+ * @param type - The artifact's `test.type`.
+ * @returns True for `project` and `service`.
+ *
+ * @example
+ * isMultiFile('service');  // → true
+ * isMultiFile('function'); // → false
+ */
+export function isMultiFile(type: string): boolean {
+	return MULTI_FILE_TYPES.has(type);
+}
+
 /** Per-case execution budget when `test.timeoutMs` is absent or unusable. */
 export const DEFAULT_TEST_TIMEOUT_MS = 5_000;
 

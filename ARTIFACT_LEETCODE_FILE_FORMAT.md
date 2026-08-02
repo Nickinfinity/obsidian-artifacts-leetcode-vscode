@@ -535,7 +535,16 @@ How a test executes is data, not a branch. A **test environment** is a
 |---|---|
 | `function` | `java`, `javascript`, `python`, `rust`, `typescript` |
 | `project` | `java`, `javascript`, `python`, `rust`, `typescript` |
-| `class`, `stdin-stdout`, `in-place`, `service` | *(none — reserved; selector renders empty)* |
+| `class`, `stdin-stdout`, `in-place`, `service` | *(none — reserved)* |
+
+A reserved type has no environment, so nothing grades it. For `class`,
+`stdin-stdout` and `in-place` the selector renders empty and *Solve It* is
+disabled. **`service` is the exception**: it is a *file tree*, so *Solve It*
+writes its `## Files` and opens the tabs, and the selector offers whatever
+languages the artifact declares — the language labels the tabs, it does not
+select a runtime. Run Tests and Submit still refuse it by name
+(`No service test environment for <language>`), so a `service` exercise can be
+opened and edited but never graded, and never reports green.
 
 `project` covers the whole runnable set (`projectEnvs = LANG_IDS.map(projectEnvFor)`),
 because it is graded by `build` and `function` checks against a file tree and any
@@ -621,7 +630,9 @@ explicitly from the CLI, not part of the extension.
 > the render driver and all three check kinds (`dom-assert`, `css-assert`, `build`) ship, and a
 > `project` artifact grades end to end. `service` remains reserved — its fields below parse (it
 > shares the `project` grammar) and nothing executes them, because no `service` environment is
-> registered.
+> registered. It does **open**: *Solve It* materialises its `## Files` tree and opens the tabs,
+> the same path `project` takes, because both are file trees (`isMultiFile`). Grading is the
+> separate question and is refused — see §6.
 > Reference artifacts live in the **Obsidian vault**, not in this repo — see CLAUDE.md,
 > *Artifacts live in the vault*.
 

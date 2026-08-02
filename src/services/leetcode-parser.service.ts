@@ -2,8 +2,8 @@ import type {
 	LeetCodeSummary,
 	LibSpec,
 	ParsedLeetCode,
-	TestTypeId,
 } from '../types/leetcode.types.js';
+import { isMultiFile } from '../types/constants.js';
 import {
 	extractAttempts,
 	extractDescription,
@@ -23,9 +23,6 @@ import { parseFrontmatter } from './leetcode-parser.helpers.js';
 import { parseLibDeclarations, parseProjectArtifact } from './project-parser.helpers.js';
 
 export { defaultPracticeConfig, defaultTestConfig } from './leetcode-parser.helpers.js';
-
-/** Test types whose artifacts declare a file tree, dependencies and checks. */
-const MULTI_FILE_TYPES = new Set<TestTypeId>(['project', 'service']);
 
 /**
  * Parses a LeetCode-flavoured vault `.md` file into a `ParsedLeetCode` structure.
@@ -62,7 +59,7 @@ export function parseLeetCode(content: string): ParsedLeetCode {
 	const fm = parseFrontmatter(configText);
 	// Multi-file grammar is its own concern and its own file — a `function`
 	// artifact never pays for it, and gets none of its fields.
-	const project = MULTI_FILE_TYPES.has(fm.test.type) ? parseProjectArtifact(configText, body) : null;
+	const project = isMultiFile(fm.test.type) ? parseProjectArtifact(configText, body) : null;
 
 	// `libs:` belongs to every test type, not just the multi-file ones: a
 	// `function` exercise can want numpy. A project already parsed its own as
