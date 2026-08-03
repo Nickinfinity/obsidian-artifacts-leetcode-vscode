@@ -156,10 +156,10 @@ export const PRACTICE_OPTIONS: readonly PracticeOption[] = [
 /**
  * Execution strategies a challenge may declare via `test.type`.
  *
- * Only `function` has environments registered (see `test-envs/`). A reserved id
- * parses and validates, but `languagesForType()` resolves it to `[]`, so the
- * panel offers no selectable language — the correct, self-explaining failure
- * rather than a run that dies inside a compiler.
+ * `function` and `project` have environments registered (see `test-envs/`). A
+ * reserved id parses and validates, but `languagesForType()` resolves it to
+ * `[]`, so the panel offers no selectable language — the correct,
+ * self-explaining failure rather than a run that dies inside a compiler.
  *
  * @example
  * TEST_TYPES.find(t => t.id === 'function')?.status; // → 'implemented'

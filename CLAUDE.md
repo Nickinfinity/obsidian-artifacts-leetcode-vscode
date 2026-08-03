@@ -421,9 +421,14 @@ panel shows *"Java setup must be a bare method, not a class"* instead of a compi
 
 A `project` artifact is a **file tree graded by declared checks**
 ([`test-envs/project/`](src/services/test-envs/project/)); *solved = every check green*. It
-is parsed and graded today, registered for `javascript` + `typescript` — the runnable ids;
-`javascriptreact`/`typescriptreact` are display ids with no runtime, and a `.jsx`/`.tsx` file
-maps onto the runnable pair at bundle time.
+is parsed and graded today, registered for **every `LANG_IDS`** (`projectEnvs =
+LANG_IDS.map(projectEnvFor)`) — derived, not hand-listed, because `build` and `function`
+checks are language-agnostic and a second language list is exactly the drift `LANGUAGES`
+exists to prevent. Never `javascriptreact`/`typescriptreact`: those are display ids with no
+runtime, and a `.jsx`/`.tsx` file maps onto its runnable pair at bundle time. The registered
+env is a **capability-matrix entry only** — its `validate` refuses every candidate
+(*"a project exercise is graded as a file tree, not as a single solution buffer"*), because
+grading goes through `gradeProjectDir`, never `runSuite`.
 
 | Piece | File | Owns |
 |---|---|---|
