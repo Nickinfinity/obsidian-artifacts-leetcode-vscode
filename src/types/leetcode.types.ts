@@ -25,21 +25,48 @@ export interface ParamDef {
 }
 
 /**
- * How a challenge's tests are executed.
+ * The **test-type axis**: how a case is delivered and compared.
  *
- * Only `function` has environments registered today; the rest parse and
- * validate but resolve to no language, which is the correct self-explaining
- * failure (the panel offers nothing to select).
+ * One vocabulary, two spellings — `test.type` names it for a single suite,
+ * a check's `kind:` names it per check. They used to be two overlapping
+ * tables (`TEST_TYPES` and `VALID_KINDS`) that both listed `function`
+ * meaning different things; merging them is what lets a multi-package
+ * artifact grade each check by its own kind.
  *
- * - `function`      — call a free function with positional args, compare the return
- * - `class`         — instantiate, invoke a method sequence, compare the returns
- * - `stdin-stdout`  — feed raw stdin, compare trimmed stdout
- * - `in-place`      — compare a mutated argument rather than the return value
- * - `project`       — a multi-file exercise graded by declared `checks:`
- * - `service`       — a `project` whose checks run against booted local servers
+ * Distinct from the **leetcode-type axis** (`LeetcodeTypeId`, which names
+ * what the artifact *is*). One value used to answer both questions, which is
+ * why several ids below are reserved and why `service` could be opened but
+ * never graded.
+ *
+ * - `call`        — call a free function with positional args, compare the return
+ * - `program`     — deliver argv/flags/stdin, compare what the program writes to `$LEET_OUT`
+ * - `http`        — a real request to a booted server, compare status/headers/body
+ * - `build`       — a declared argv exits `0`
+ * - `dom-assert`  — declarative steps against a jsdom mount, compare the observed DOM
+ * - `css-assert`  — as above, comparing a **declared** style property or class
+ * - `class`       — reserved: instantiate, invoke a method sequence, compare the returns
+ * - `in-place`    — reserved: compare a mutated argument rather than the return value
  */
 export type TestTypeId =
-	| 'function' | 'class' | 'stdin-stdout' | 'in-place' | 'project' | 'service';
+	| MergedTestTypeId
+	| LegacyTestTypeId;
+
+/** The vocabulary this extension is moving to — the only ids an artifact should declare. */
+export type MergedTestTypeId =
+	| 'call' | 'program' | 'http' | 'build' | 'dom-assert' | 'css-assert'
+	| 'class' | 'in-place';
+
+/**
+ * Ids retained only until their consumers are rewritten. **Do not add to this.**
+ *
+ * `function` became `call`, `stdin-stdout` was subsumed by `program`, and
+ * `project` / `service` were never test types at all — they described the
+ * artifact's *shape*, which is now the leetcode-type axis (`package` /
+ * `stack`). They stay in the union for exactly as long as the code paths
+ * that still branch on them do, and the derivation in the parser is what
+ * keeps an unmigrated artifact readable after they go.
+ */
+export type LegacyTestTypeId = 'function' | 'stdin-stdout' | 'project' | 'service';
 
 /** One entry in the `TEST_TYPES` capability table. */
 export interface TestType {

@@ -69,12 +69,28 @@ suite('project files writer', () => {
 			assert.throws(() => resolveContained(runDir, 'src/lib/../../node_modules/x'), /node_modules.*reserved/i);
 		});
 
-		test('allows node_modules as a non-root segment', () => {
-			assert.strictEqual(resolveContained(runDir, 'src/node_modules/x'), path.join(runDir, 'src/node_modules/x'));
+		test('rejects node_modules as a non-root segment — a stack artifact links a tree per sub-package (SEC S2)', () => {
+			assert.throws(() => resolveContained(runDir, 'src/node_modules/x'), /node_modules.*reserved/i);
+		});
+
+		test('rejects client/node_modules/react/index.js — the per-sub-package linked-tree case', () => {
+			assert.throws(() => resolveContained(runDir, 'client/node_modules/react/index.js'), /node_modules.*reserved/i);
+		});
+
+		test('rejects a deep segment case-insensitively — client/NODE_MODULES/x', () => {
+			assert.throws(() => resolveContained(runDir, 'client/NODE_MODULES/x'), /node_modules.*reserved/i);
+		});
+
+		test('rejects client/node_moduleſ/x — U+017F folds to "s" under NFKC on APFS (SEC round 2)', () => {
+			assert.throws(() => resolveContained(runDir, 'client/node_moduleſ/x'), /node_modules.*reserved/i);
 		});
 
 		test('allows a root segment that merely contains node_modules as a substring', () => {
 			assert.strictEqual(resolveContained(runDir, 'my_node_modules/x'), path.join(runDir, 'my_node_modules/x'));
+		});
+
+		test('allows a non-root segment that merely contains node_modules as a substring', () => {
+			assert.strictEqual(resolveContained(runDir, 'client/my_node_modules/x'), path.join(runDir, 'client/my_node_modules/x'));
 		});
 
 		// ── case-insensitive filesystems (APFS, NTFS) — SEC round 1 ────────────

@@ -154,21 +154,61 @@ export const PRACTICE_OPTIONS: readonly PracticeOption[] = [
 ];
 
 /**
- * Execution strategies a challenge may declare via `test.type`.
+ * The **one** test-type vocabulary — read by `test.type` and by a check's `kind:`.
  *
- * `function` and `project` have environments registered (see `test-envs/`). A
- * reserved id parses and validates, but `languagesForType()` resolves it to
- * `[]`, so the panel offers no selectable language — the correct,
- * self-explaining failure rather than a run that dies inside a compiler.
+ * Merged from the two tables that used to overlap: this one and
+ * `project-parser`'s `VALID_KINDS`, which both listed `function` meaning
+ * different things. A check now names its kind from exactly this set, which
+ * is what lets one multi-package artifact grade each check differently.
+ *
+ * **`status` means: can anything execute this id *today*?** Precisely — a
+ * registered environment for a `test.type`, or a `runOneCheck` branch for a
+ * check's `kind:`. It is the table's claim about the tree, so it must never
+ * run ahead of the tree: an id marked `implemented` before its implementation
+ * lands contradicts the registry, which is the thing callers actually ask.
+ *
+ * A `reserved` id parses and validates, but nothing is registered, so
+ * `languagesForType()` resolves it to `[]` and the panel offers no selectable
+ * language — the correct, self-explaining failure rather than a run that dies
+ * inside a compiler.
  *
  * @example
- * TEST_TYPES.find(t => t.id === 'function')?.status; // → 'implemented'
+ * TEST_TYPES.find(t => t.id === 'build')?.status; // → 'implemented'
  */
 export const TEST_TYPES: readonly TestType[] = [
 	{
-		id: 'function',
-		status: 'implemented',
+		id: 'call',
+		// Reserved until the function envs register under `call` rather than
+		// the legacy `function`. Marking it implemented while every env still
+		// answers to `function` would make this table disagree with the
+		// registry — and the registry is what `languagesForType` reads.
+		status: 'reserved',
 		description: 'Call a free function with positional args, compare the return value.',
+	},
+	{
+		id: 'program',
+		status: 'reserved',
+		description: 'Deliver a case by argv, named flags or stdin; compare the value the program writes to $LEET_OUT.',
+	},
+	{
+		id: 'http',
+		status: 'reserved',
+		description: 'Send a real request to a server booted on an assigned loopback port; compare status, headers and body.',
+	},
+	{
+		id: 'build',
+		status: 'implemented',
+		description: 'A declared argv exits 0.',
+	},
+	{
+		id: 'dom-assert',
+		status: 'implemented',
+		description: 'Run declarative steps against a jsdom mount, compare the observed DOM value.',
+	},
+	{
+		id: 'css-assert',
+		status: 'implemented',
+		description: 'As dom-assert, comparing a declared style property or class presence — never layout geometry.',
 	},
 	{
 		id: 'class',
@@ -176,26 +216,45 @@ export const TEST_TYPES: readonly TestType[] = [
 		description: 'Instantiate, invoke a method sequence, compare the sequence of returns (LRUCache, MinStack).',
 	},
 	{
-		id: 'stdin-stdout',
-		status: 'reserved',
-		description: 'Feed raw stdin, compare trimmed stdout.',
-	},
-	{
 		id: 'in-place',
 		status: 'reserved',
 		description: 'Compare a mutated argument rather than the return value (removeDuplicates).',
 	},
+
+	// ── Legacy, transitional — removed with the code paths that still branch on them ──
+	{
+		id: 'function',
+		status: 'implemented',
+		description: 'Legacy spelling of `call`. Retained so an unmigrated artifact still parses.',
+	},
+	{
+		id: 'stdin-stdout',
+		status: 'reserved',
+		description: 'Legacy; subsumed by `program`, whose stdin channel delivers the same thing.',
+	},
 	{
 		id: 'project',
 		status: 'implemented',
-		description: 'Multi-file exercise graded by declared checks (function, build) rather than one return value.',
+		description: 'Legacy; never a test type but an artifact *shape*, now the `package` leetcode type.',
 	},
 	{
 		id: 'service',
 		status: 'reserved',
-		description: 'Project whose checks run against locally booted servers (http checks against a live API).',
+		description: 'Legacy; never a test type but an artifact *shape*, now the `stack` leetcode type.',
 	},
 ];
+
+/**
+ * Legacy ids that describe an artifact's **shape**, never a way to deliver a case.
+ *
+ * Named once so a check's `kind:` can exclude them: `kind: project` was never
+ * meaningful, and admitting it just because the id still parses as a
+ * `test.type` would re-create the exact overlap the merge removes. `function`
+ * is deliberately **not** here — it is the legacy spelling of `call` and a
+ * live check kind in the vault until the migration rewrites it.
+ */
+export const SHAPE_TEST_TYPE_IDS: ReadonlySet<string> =
+	new Set<string>(['project', 'service']);
 
 /** Test type assumed when the artifact declares no `test:` block. */
 export const DEFAULT_TEST_TYPE = 'function';

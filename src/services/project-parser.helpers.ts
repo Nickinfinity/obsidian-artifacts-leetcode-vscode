@@ -1,4 +1,5 @@
-import type { FileRole, FileSpec, LibSpec, ProjectCheck, TestCase } from '../types/leetcode.types.js';
+import type { FileRole, FileSpec, LibSpec, ProjectCheck, TestCase, TestTypeId } from '../types/leetcode.types.js';
+import { SHAPE_TEST_TYPE_IDS, TEST_TYPES } from '../types/constants.js';
 import { safeJsonParse } from '../utils/safe-json.js';
 import { BODY_SET_KEYS, RETAINED_FM_KEYS } from './leetcode-config-blocks.helpers.js';
 import { resolveLangId } from './language-map.service.js';
@@ -38,23 +39,63 @@ const TOP_HEADING_RE = /^# /m;
 const FENCE_RE = /```([^\n]*)\r?\n([\s\S]*?)```/g;
 
 const VALID_ROLES = new Set<FileRole>(['editable', 'readonly', 'hidden']);
-const VALID_KINDS = new Set(['function', 'build', 'dom-assert', 'css-assert']);
+
+/**
+ * The kinds a check may declare — **the `ProjectCheck` discriminants**.
+ *
+ * `satisfies readonly TestTypeId[]` keeps the DRY tie the merge exists for: a
+ * check kind must be a declared member of the one test-type vocabulary, so the
+ * hand-kept list that used to sit here — listing `function` meaning something
+ * different from the `function` in `TEST_TYPES` — cannot come back.
+ *
+ * It is deliberately **not** derived from `status === 'implemented'`. That
+ * conflates two different questions: *is this id executable by anything?* and
+ * *can `runOneCheck` dispatch it?* Deriving from status admitted `kind: call`,
+ * which no `case` in `runOneCheck` handles — it fell through to the render
+ * branch and was graded as a `dom-assert`.
+ *
+ * The tie is **one-directional**, deliberately: `satisfies` enforces
+ * vocabulary → kind, so removing an id from `TestTypeId` fails the build here
+ * and the drifting hand-kept list cannot come back. It does *not* enforce
+ * dispatchability — re-adding `call` would still compile. What catches that is
+ * the control-flow narrowing at the tail of `buildCheck`, which is why that is
+ * written as a guard and not a cast. Adding a fifth `ProjectCheck`
+ * discriminant fails the build at `runOneCheck`'s exhaustive switch, not here;
+ * a `CHECK_KINDS` left stale merely drops the new kind as *reserved*, which is
+ * safe but silent.
+ */
+const CHECK_KINDS = ['function', 'build', 'dom-assert', 'css-assert'] as const satisfies readonly TestTypeId[];
+
+/** Membership form of `CHECK_KINDS`, for the untrusted string a `kind:` line carries. */
+const VALID_KINDS: ReadonlySet<string> = new Set<string>(CHECK_KINDS);
 
 /**
  * Check kinds the **format** documents but no environment can execute yet.
  *
- * Kept apart from an unknown kind so the author is told which of two very
+ * Derived as *everything the vocabulary declares that `runOneCheck` cannot
+ * dispatch*, rather than from a second hardcoded `['http']` that had to
+ * remember to say so. The shape ids are excluded because `kind: project` was
+ * never meaningful in the first place — it is an artifact shape, not a way to
+ * deliver a case, so it stays an **unknown** kind rather than a reserved one.
+ *
+ * Kept apart from an *unknown* kind so the author is told which of two very
  * different things happened: `kind: htpp` is a typo they can fix, while
- * `kind: http` is a contract this extension has not implemented — the format
- * spec lists it as planned for `service`, whose environment is not registered.
- * Calling the second one "unknown" sent authors looking for a spelling
- * mistake in a line that was spelled correctly.
+ * `kind: http` is a contract this extension has not implemented yet. Calling
+ * the second one "unknown" sent authors looking for a spelling mistake in a
+ * line that was spelled correctly.
  *
  * Both are still **dropped**: a check nothing can run must not reach the
  * panel's check line, and must never count as a red check for `--starter-red`,
- * which requires a starter to fail *on its merits*.
+ * which requires a starter to fail *on its merits*. T1.6 inverts this drop
+ * into a refusal of the whole artifact (S3); until then the drop stands,
+ * because deleting it here would leave `kind: http` parsing as a valid kind
+ * that nothing implements and nothing refuses.
  */
-const RESERVED_KINDS = new Set(['http']);
+const RESERVED_KINDS: ReadonlySet<string> = new Set(
+	TEST_TYPES
+		.map(t => t.id)
+		.filter(id => !VALID_KINDS.has(id) && !SHAPE_TEST_TYPE_IDS.has(id)),
+);
 
 /** Fields a `checks:` entry may set. Anything else — `__proto__` included — never lands. */
 const CHECK_FIELDS = new Set(['name', 'kind', 'file', 'function', 'argv', 'dir']);
@@ -397,7 +438,16 @@ function buildCheck(fields: Map<string, string>, warn: (m: string) => void): Pro
 		}
 		return { name, kind, file, function: fn, cases: [], publicCount: 0 };
 	}
-	return { name, kind: kind as 'dom-assert' | 'css-assert', file, cases: [], publicCount: 0 };
+	// Narrowed by control flow, never asserted: the `kind as 'dom-assert' |
+	// 'css-assert'` this replaces was sound only while `VALID_KINDS` held
+	// exactly the four discriminants, and silently mislabelled anything a
+	// widened set let through. Unreachable today — and that is the point of
+	// writing it as a guard rather than a cast.
+	if (kind !== 'dom-assert' && kind !== 'css-assert') {
+		warn(`checks: '${name}' has unknown kind '${kind}' — dropped`);
+		return null;
+	}
+	return { name, kind, file, cases: [], publicCount: 0 };
 }
 
 // ── case → check binding ──────────────────────────────────────────────────────
