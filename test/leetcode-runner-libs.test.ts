@@ -39,6 +39,7 @@ suite('runner library seam', () => {
 		const env: TestEnv = {
 			type: 'function',
 			language: 'javascript',
+			leetcodeTypes: ['function'],
 			emit: (ctx: EnvContext): EmittedProgram => {
 				seen.push(ctx);
 				return {

@@ -78,9 +78,25 @@ export const BODY_SET_KEYS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * The D2 keys that **stay** in frontmatter — `LeetCodeSummary` plus the `type`
- * discriminator. The other half of the same partition, so it lives beside
- * `BODY_SET_KEYS` rather than being re-listed by each module that needs it.
+ * The D2 keys that **stay** in frontmatter — `LeetCodeSummary` plus the two
+ * type discriminators, `artifactType` (D11's rename of `type`) and
+ * `leetcodeType` (D1, the leetcode-type axis) — **in the canonical order a
+ * clean artifact writes them in.** `patchFrontmatterField` (T1.12) inserts an
+ * absent key at its index here rather than appending after `tags`, and
+ * `orderViolation` (`frontmatter-order.helpers.ts`, T1.10) walks this same
+ * tuple to report the first out-of-order pair. A `Set`'s iteration order is
+ * insertion order (spec-guaranteed), so `RETAINED_FM_KEYS` falls out of the
+ * tuple below rather than re-listing the same seven names a second time —
+ * order is strictly more information than membership, so the tuple is the
+ * authority and the set is derived, never the reverse.
+ *
+ * **`type` is deliberately not a member of this set any more.** D11 is a hard
+ * cut: a bare `type:` is what `verifyExercise` fails by name, not a second
+ * spelling this set quietly keeps accepting. `type` stays *parseable* —
+ * `isLeetCodeArtifact` (`artifact-migrator.helpers.ts`) still finds it by a raw
+ * regex over frontmatter text, which is how the migrator locates what to
+ * rewrite — but that lookup does not go through this set, so removing `type`
+ * here cannot break it.
  *
  * These must never be declared in a config fence. `parseLeetCode` reads the
  * merged text and `applyScalar` is last-wins, so a fence would win — while
@@ -91,9 +107,12 @@ export const BODY_SET_KEYS: ReadonlySet<string> = new Set([
  * screen forever. `extractConfigBlocks` warns rather than changing precedence:
  * silently reassigning the winner would be a second, invisible rule.
  */
-export const RETAINED_FM_KEYS: ReadonlySet<string> = new Set([
-	'type', 'title', 'difficulty', 'status', 'algorithm', 'tags',
-]);
+export const CANONICAL_FRONTMATTER_ORDER = [
+	'artifactType', 'leetcodeType', 'title', 'difficulty', 'status', 'algorithm', 'tags',
+] as const;
+
+/** `CANONICAL_FRONTMATTER_ORDER`, as the membership set most callers need. */
+export const RETAINED_FM_KEYS: ReadonlySet<string> = new Set(CANONICAL_FRONTMATTER_ORDER);
 
 /** Drop a trailing `\r` so CRLF input parses identically to LF. */
 function stripCr(line: string): string {

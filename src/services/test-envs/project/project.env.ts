@@ -45,6 +45,10 @@ export function projectEnvFor(language: string): TestEnv {
 	return {
 		type: 'project',
 		language,
+		// Both tree shapes: a `package` is one buildable unit and a `stack` is
+		// several, but either way grading is by declared checks against a
+		// directory. Never `function` — that is the axis split this declares.
+		leetcodeTypes: ['package', 'stack'],
 		validate: (_ctx: EnvContext): string | null => NOT_A_BUFFER,
 		// ponytail: trivial program — unreachable while `validate` refuses every
 		// candidate, and replaced wholesale by the real emit in TB.3–TB.7.

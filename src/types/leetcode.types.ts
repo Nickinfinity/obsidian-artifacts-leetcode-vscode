@@ -1,3 +1,5 @@
+import type { LeetcodeTypeId } from './leetcode-type.js';
+
 /**
  * Solve status of a LeetCode problem in the vault.
  *
@@ -452,6 +454,15 @@ export interface ProjectCheckOutcome {
 export interface ParsedLeetCode {
 	/** Display title of the problem */
 	title: string;
+	/**
+	 * The leetcode-type axis (`src/types/leetcode-type.ts`) — what the artifact
+	 * *is*: one buffer, one package, or several. Declared `leetcodeType:` when
+	 * recognised, else derived from the legacy `test.type` scalar (plan §C.6).
+	 * Optional so a hand-built `ParsedLeetCode` fixture elsewhere in the
+	 * codebase (test-envs, codegen, …) does not have to supply it — every value
+	 * that goes through `parseLeetCode` always sets it.
+	 */
+	leetcodeType?: LeetcodeTypeId;
 	/** Canonical difficulty tier */
 	difficulty: LeetCodeDifficulty;
 	/** Identifier of the candidate function the user is expected to implement */
@@ -535,6 +546,12 @@ export interface ParsedLeetCode {
 export interface LeetCodeSummary {
 	/** Display title of the problem */
 	title: string;
+	/**
+	 * The leetcode-type axis — see `ParsedLeetCode.leetcodeType`. Optional for
+	 * the same reason: existing `LeetCodeSummary` fixtures across the codebase
+	 * do not supply it, and `parseFrontmatterOnly` always does.
+	 */
+	leetcodeType?: LeetcodeTypeId;
 	/** Canonical difficulty tier */
 	difficulty: LeetCodeDifficulty;
 	/** Current solve status derived from stored run history */

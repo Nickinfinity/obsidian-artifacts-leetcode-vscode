@@ -71,10 +71,15 @@ export function parseLeetCode(content: string): ParsedLeetCode {
 		? project.libs
 		: emptyToUndefined(parseLibDeclarations(configText.split(/\r?\n/), m => libWarnings.push(m)));
 
-	const warnings = collectWarnings(project?.warnings, legacyKeys, [...config.warnings, ...libWarnings]);
+	// `fm.leetcodeTypeWarning` rides beside the config/lib warnings — it is the
+	// same kind of "declared but unusable, fell back" author-facing problem.
+	const extraWarnings = [...config.warnings, ...libWarnings];
+	if (fm.leetcodeTypeWarning) { extraWarnings.push(fm.leetcodeTypeWarning); }
+	const warnings = collectWarnings(project?.warnings, legacyKeys, extraWarnings);
 
 	return {
 		title:        fm.title ?? '',
+		leetcodeType: fm.leetcodeType,
 		difficulty:   fm.difficulty,
 		functionName: fm.functionName ?? '',
 		functions:    fm.functions,
@@ -187,11 +192,12 @@ export function parseFrontmatterOnly(content: string): LeetCodeSummary {
 	// exactly the point this fast path exists to keep cheap.
 	const fm = parseFrontmatter(splitFrontmatter(content).fmRaw);
 	return {
-		title:      fm.title ?? '',
-		difficulty: fm.difficulty,
-		status:     fm.status,
-		algorithm:  fm.algorithm,
-		tags:       fm.tags ?? [],
+		title:        fm.title ?? '',
+		leetcodeType: fm.leetcodeType,
+		difficulty:   fm.difficulty,
+		status:       fm.status,
+		algorithm:    fm.algorithm,
+		tags:         fm.tags ?? [],
 	};
 }
 

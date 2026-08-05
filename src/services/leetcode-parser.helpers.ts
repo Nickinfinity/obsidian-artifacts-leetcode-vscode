@@ -17,6 +17,8 @@ import type {
 	TestConfig,
 	TestTypeId,
 } from '../types/leetcode.types.js';
+import type { LeetcodeTypeId } from '../types/leetcode-type.js';
+import { resolveLeetcodeType } from './leetcode-type.helpers.js';
 import { resolveLangId } from './language-map.service.js';
 
 const KV_RE = /^(\w+):\s*(.*)$/;
@@ -68,6 +70,16 @@ export interface FM {
 	practice: PracticeConfig;
 	test: TestConfig;
 	tags?: string[];
+	/**
+	 * Resolved leetcode-type axis (plan §C.6) — the declared `leetcodeType:`
+	 * value when recognised, else derived from the raw `test.type` scalar.
+	 * Always set: resolved once, after the whole frontmatter block has been
+	 * scanned, so the resolution never runs ahead of a `test:` block that
+	 * happens to appear later in the text.
+	 */
+	leetcodeType: LeetcodeTypeId;
+	/** Set only when a declared `leetcodeType:` value was not recognised and fell back to the derived one. */
+	leetcodeTypeWarning?: string;
 }
 
 /**
@@ -103,8 +115,11 @@ function scanIndentedBlock(lines: string[], start: number, onLine: (trimmed: str
  *
  * Handles scalar keys line-by-line, plus the indented block keys `params:`,
  * `practice:`, `functions:`, `test:`, and `tags:`. Unknown keys are silently
- * ignored. Invalid `difficulty` and `status` values are dropped (defaults
- * remain in place).
+ * ignored — `artifactType` included, exactly as its predecessor `type` was.
+ * Invalid `difficulty` and `status` values are dropped (defaults remain in
+ * place). `leetcodeType` is resolved once, after the whole block has been
+ * scanned, via `resolveLeetcodeType` — declared when recognised, else derived
+ * from the raw `test.type` scalar (plan §C.6).
  *
  * @param raw - Body of the frontmatter block (no `---` fences).
  * @returns Populated `FM` accumulator.
@@ -119,8 +134,17 @@ export function parseFrontmatter(raw: string): FM {
 		params: [],
 		practice: defaultPracticeConfig(),
 		test: defaultTestConfig(),
+		// Placeholder — resolved for real once the whole block has been
+		// scanned (`leetcodeType:` and `test:` may appear in either order).
+		leetcodeType: 'function',
 	};
 	const lines = raw.split(/\r?\n/);
+
+	// Raw scalars feeding `resolveLeetcodeType`, kept local rather than on
+	// `fm` — they are intermediate inputs to the one resolution below, not
+	// part of the accumulator's public shape.
+	let rawLeetcodeType: string | undefined;
+	let rawTestType: string | undefined;
 
 	let i = 0;
 	while (i < lines.length) {
@@ -151,8 +175,9 @@ export function parseFrontmatter(raw: string): FM {
 		}
 
 		if (key === 'test') {
-			const { test, next } = parseTestBlock(lines, i);
+			const { test, rawType, next } = parseTestBlock(lines, i);
 			fm.test = test;
+			rawTestType = rawType;
 			i = next;
 			continue;
 		}
@@ -164,9 +189,23 @@ export function parseFrontmatter(raw: string): FM {
 			continue;
 		}
 
+		if (key === 'leetcodeType') {
+			rawLeetcodeType = val;
+			i++;
+			continue;
+		}
+
 		applyScalar(fm, key, val);
 		i++;
 	}
+
+	// `artifactType` (like the legacy `type` it replaces) is not read into
+	// `fm` — nothing today needs the discriminator's own value, only that it
+	// is a recognised, retained key (`RETAINED_FM_KEYS`).
+	const resolved = resolveLeetcodeType(rawLeetcodeType, rawTestType);
+	fm.leetcodeType = resolved.leetcodeType;
+	if (resolved.warning) { fm.leetcodeTypeWarning = resolved.warning; }
+
 	return fm;
 }
 
@@ -183,23 +222,26 @@ export function parseFrontmatter(raw: string): FM {
  *
  * @param lines - All frontmatter lines.
  * @param start - Index of the `test:` line.
- * @returns `{ test, next }` — parsed config and the index of the first
- *   non-consumed line.
+ * @returns `{ test, rawType, next }` — parsed config, the `type:` scalar
+ *   exactly as written (before `parseTestType`'s unknown-value fallback —
+ *   `resolveLeetcodeType` needs the raw form, not the collapsed one), and the
+ *   index of the first non-consumed line.
  *
  * @example
  * parseTestBlock(['test:', '  type: function', '  timeoutMs: 2000'], 0);
  */
-function parseTestBlock(lines: string[], start: number): { test: TestConfig; next: number } {
+function parseTestBlock(lines: string[], start: number): { test: TestConfig; rawType?: string; next: number } {
 	const test = defaultTestConfig();
+	let rawType: string | undefined;
 	const next = scanIndentedBlock(lines, start, trimmed => {
 		const kv = KV_RE.exec(trimmed);
 		if (!kv) { return; }
 		const key = kv[1];
 		const val = kv[2].trim();
-		if (key === 'type')           { test.type = parseTestType(val); }
+		if (key === 'type')           { rawType = val; test.type = parseTestType(val); }
 		else if (key === 'timeoutMs') { test.timeoutMs = parseTimeoutMs(val); }
 	});
-	return { test, next };
+	return { test, rawType, next };
 }
 
 /** Validate a `type:` value, falling back to `function` for anything unknown. */

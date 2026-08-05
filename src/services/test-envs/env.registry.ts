@@ -1,4 +1,5 @@
 import type { TestTypeId } from '../../types/leetcode.types.js';
+import type { LeetcodeTypeId } from '../../types/leetcode-type.js';
 import type { TestEnv } from './env.types.js';
 import { javaFunctionEnv } from './function/java.env.js';
 import { javascriptFunctionEnv } from './function/javascript.env.js';
@@ -34,16 +35,46 @@ export function register(env: TestEnv): void {
 /**
  * Look up the environment that can run `type` in `language`.
  *
- * @param type     - Execution strategy from the artifact's `test.type`.
- * @param language - Canonical `languageId`.
- * @returns The env, or `undefined` when the pair is unsupported.
+ * @param type         - Execution strategy from the artifact's `test.type`.
+ * @param language     - Canonical `languageId`.
+ * @param leetcodeType - Optional artifact shape; when given, the env must
+ *   declare it in `leetcodeTypes` or the pair resolves to `undefined`.
+ * @returns The env, or `undefined` when the triple is unsupported.
  *
  * @example
- * testEnvFor('function', 'java');  // → javaFunctionEnv
- * testEnvFor('class', 'java');     // → undefined
+ * testEnvFor('function', 'java');             // → javaFunctionEnv
+ * testEnvFor('function', 'java', 'function'); // → javaFunctionEnv
+ * testEnvFor('function', 'java', 'stack');    // → undefined — wrong shape
+ * testEnvFor('class', 'java');                // → undefined
  */
-export function testEnvFor(type: TestTypeId, language: string): TestEnv | undefined {
-	return registry.get(keyFor(type, language));
+export function testEnvFor(
+	type: TestTypeId, language: string, leetcodeType?: LeetcodeTypeId,
+): TestEnv | undefined {
+	const env = registry.get(keyFor(type, language));
+	if (!env) { return undefined; }
+	return servesShape(env, leetcodeType) ? env : undefined;
+}
+
+/**
+ * Does `env` serve `leetcodeType`, treating an absent argument as "any"?
+ *
+ * The compatibility path from the old two-argument signature: seven call sites
+ * span three phases, so the parameter is **appended and optional** rather than
+ * prepended and required. A required parameter here is a red gate clearable
+ * only by editing four other tasks' files — T3.5 is the last call site to pass
+ * it, and deletes this leniency with the same change.
+ *
+ * @param env          - A registered environment.
+ * @param leetcodeType - The artifact shape, or `undefined` for the legacy path.
+ * @returns True when the env serves that shape, or when no shape was asked for.
+ *
+ * @example
+ * servesShape(javaFunctionEnv, 'function'); // → true
+ * servesShape(javaFunctionEnv, 'stack');    // → false
+ * servesShape(javaFunctionEnv, undefined);  // → true
+ */
+function servesShape(env: TestEnv, leetcodeType?: LeetcodeTypeId): boolean {
+	return leetcodeType === undefined || env.leetcodeTypes.includes(leetcodeType);
 }
 
 /**
@@ -52,17 +83,21 @@ export function testEnvFor(type: TestTypeId, language: string): TestEnv | undefi
  * This drives the panel's language `<select>` directly — there is no second
  * capability table to keep in sync with the registry.
  *
- * @param type - Execution strategy from the artifact's `test.type`.
- * @returns Sorted canonical language ids; `[]` for a reserved type.
+ * @param type         - Execution strategy from the artifact's `test.type`.
+ * @param leetcodeType - Optional artifact shape; when given, only envs
+ *   declaring it contribute a language.
+ * @returns Sorted canonical language ids; `[]` for a reserved type, and `[]`
+ *   when no env serves that shape.
  *
  * @example
- * languagesForType('function'); // → ['java', 'javascript', 'python', 'rust', 'typescript']
- * languagesForType('class');    // → []
+ * languagesForType('function');           // → ['java', 'javascript', 'python', 'rust', 'typescript']
+ * languagesForType('function', 'package'); // → [] — function envs serve one buffer
+ * languagesForType('class');              // → []
  */
-export function languagesForType(type: TestTypeId): string[] {
+export function languagesForType(type: TestTypeId, leetcodeType?: LeetcodeTypeId): string[] {
 	const out: string[] = [];
 	for (const env of registry.values()) {
-		if (env.type === type) { out.push(env.language); }
+		if (env.type === type && servesShape(env, leetcodeType)) { out.push(env.language); }
 	}
 	return out.sort((a, b) => a.localeCompare(b));
 }

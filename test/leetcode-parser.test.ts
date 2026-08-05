@@ -584,6 +584,10 @@ suite('parseFrontmatterOnly', () => {
         const summary = parseFrontmatterOnly(build(fm, body));
         assert.deepStrictEqual(summary, {
             title: 'Two Sum',
+            // No `leetcodeType:` declared and no `test:` block in frontmatter
+            // (this fixture's is in a body fence, which this fast path never
+            // reads) — derives the single-buffer default (plan §C.6).
+            leetcodeType: 'function',
             difficulty: 'medium',
             status: 'solved',
             algorithm: 'hash-map',

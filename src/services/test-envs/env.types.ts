@@ -1,4 +1,5 @@
 import type { ParsedLeetCode, TestCase, TestTypeId } from '../../types/leetcode.types.js';
+import type { LeetcodeTypeId } from '../../types/leetcode-type.js';
 
 /**
  * One test case's outcome, as reported by the generated program over stdout.
@@ -106,6 +107,20 @@ export interface TestEnv {
 	type: TestTypeId;
 	/** Canonical `languageId` this env targets */
 	language: string;
+	/**
+	 * Which artifact shapes this env can grade.
+	 *
+	 * The second axis, kept off the registry key deliberately. Keying
+	 * `(leetcodeType × testType × language)` would be 3 × 8 × 5 = 120 slots
+	 * almost all empty, plus a second list to drift out of sync with the
+	 * first — so the leetcode type is a **filter on this declaration** and the
+	 * absence of a registration is still the capability matrix.
+	 *
+	 * A `function` env serves `['function']`; a check-graded env serves
+	 * `['package', 'stack']`. Nothing serves both — that is the whole point of
+	 * splitting the axes.
+	 */
+	leetcodeTypes: readonly LeetcodeTypeId[];
 	/** External dependencies, e.g. `['junit5']`. Omitted for self-contained envs */
 	requires?: string[];
 	/** Preflight probe — only consulted when `requires` is set */

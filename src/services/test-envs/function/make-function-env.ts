@@ -100,6 +100,10 @@ export function makeFunctionEnv(spec: FunctionEnvSpec): TestEnv {
 	return {
 		type: 'function',
 		language: spec.language,
+		// One candidate buffer, one bare top-level callable — the `buffer`
+		// shape and nothing else. A tree is graded by declared checks, which
+		// is a different door entirely (`gradeProjectDir`, never `runSuite`).
+		leetcodeTypes: ['function'],
 		validate: spec.validate,
 		emit(ctx: EnvContext): EmittedProgram {
 			const files = [
