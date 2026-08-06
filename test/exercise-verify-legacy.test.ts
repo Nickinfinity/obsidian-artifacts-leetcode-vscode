@@ -226,10 +226,18 @@ suite('exercise-verify — legacy frontmatter config', () => {
         assert.strictEqual(result.ok, true, JSON.stringify(result));
     });
 
-    test('SEC: a type: value that is not leetcode, with no artifactType:, is not this rule\'s business', async () => {
+    test('a type: value that is not leetcode, with no artifactType:, fails Rule 3, not Rule 1', async () => {
+        // Rule 1 (checkLegacyType) still has nothing to say here — `type:`
+        // never equals `leetcode`, so it never fires. Rule 3 (T1.15) is what
+        // now fails this artifact, for the separate reason that no
+        // `artifactType: leetcode` is declared at all.
         const md = buildCleanV2Md().replace('artifactType: leetcode', 'type: notes');
         const result = await verifyExercise(md);
-        assert.strictEqual(result.ok, true, JSON.stringify(result));
+        assert.strictEqual(result.ok, false, JSON.stringify(result));
+        if (!result.ok) {
+            assert.ok(!result.reason.startsWith('legacy:'), result.reason);
+            assert.ok(result.reason.includes('artifactType'), result.reason);
+        }
     });
 
     // ── Rule 2: canonical frontmatter key order (T1.10's `orderViolation`, wired in) ──
@@ -242,6 +250,71 @@ suite('exercise-verify — legacy frontmatter config', () => {
         if (!result.ok) {
             assert.ok(result.reason.includes('must come before'), result.reason);
             assert.ok(result.reason.includes('artifactType'), result.reason);
+        }
+    });
+
+    // ── Rule 3: the discriminator's presence and value (T1.15) ─────────────
+
+    // Spec's own test-first assertion #1: neither key present at all.
+    test('an artifact declaring neither type: nor artifactType: fails by name', async () => {
+        const md = buildCleanV2Md().replace('artifactType: leetcode\n', '');
+        const result = await verifyExercise(md);
+        assert.strictEqual(result.ok, false, JSON.stringify(result));
+        if (!result.ok) {
+            assert.ok(result.reason.startsWith('discriminator:'), result.reason);
+            assert.ok(result.reason.includes('required'), result.reason);
+        }
+    });
+
+    // Spec's own test-first assertion #2: present but wrong value.
+    test('artifactType: recipe fails naming the expected value', async () => {
+        const md = buildCleanV2Md().replace('artifactType: leetcode', 'artifactType: recipe');
+        const result = await verifyExercise(md);
+        assert.strictEqual(result.ok, false, JSON.stringify(result));
+        if (!result.ok) {
+            assert.ok(result.reason.includes("'recipe'"), result.reason);
+            assert.ok(result.reason.includes("'leetcode'"), result.reason);
+        }
+    });
+
+    // ── SEC: hostile inputs for the discriminator's presence/value rule ────
+
+    test('SEC: artifactType: with an empty value fails naming the expected value', async () => {
+        const md = buildCleanV2Md().replace('artifactType: leetcode', 'artifactType:');
+        const result = await verifyExercise(md);
+        assert.strictEqual(result.ok, false, JSON.stringify(result));
+        if (!result.ok) { assert.ok(result.reason.includes("expected 'leetcode'"), result.reason); }
+    });
+
+    // `splitFrontmatter` must make this a non-issue: an `artifactType: leetcode`
+    // line at column 0 inside a fenced code block in the BODY is body content,
+    // never frontmatter, so it must not satisfy the rule. Column 0 matters —
+    // the check's own regex only matches a key at the start of a line, so this
+    // fixture must put the line there too, or a scan-the-whole-document
+    // mutation would not be caught by this test.
+    test('SEC: artifactType: leetcode inside a body fence does not satisfy the rule', async () => {
+        const withoutRealDiscriminator = buildCleanV2Md().replace('artifactType: leetcode\ntitle: Sum', 'title: Sum');
+        const md = withoutRealDiscriminator.replace(
+            'Problem description.',
+            'Problem description.\n\n```\nartifactType: leetcode\n```',
+        );
+        const result = await verifyExercise(md);
+        assert.strictEqual(result.ok, false, JSON.stringify(result));
+        if (!result.ok) {
+            assert.ok(result.reason.startsWith('discriminator:'), result.reason);
+            assert.ok(result.reason.includes('required'), result.reason);
+        }
+    });
+
+    // Both keys disagreeing: `artifactType` is what every reader trusts, so
+    // its (wrong) value is what fails — not the fact that `type:` disagrees.
+    test('SEC: type: leetcode and artifactType: recipe disagree — Rule 3 fails on the recipe value', async () => {
+        const md = buildCleanV2Md().replace('artifactType: leetcode', 'artifactType: recipe\ntype: leetcode');
+        const result = await verifyExercise(md);
+        assert.strictEqual(result.ok, false, JSON.stringify(result));
+        if (!result.ok) {
+            assert.ok(result.reason.includes("'recipe'"), result.reason);
+            assert.ok(result.reason.includes("'leetcode'"), result.reason);
         }
     });
 
