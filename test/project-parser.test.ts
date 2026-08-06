@@ -1,5 +1,5 @@
 import * as assert from 'node:assert';
-import { parseProjectArtifact } from '../src/services/project-parser.helpers.js';
+import { parseProjectArtifact, unimplementedCheckKindsFromContent } from '../src/services/project-parser.helpers.js';
 import { parseLeetCode } from '../src/services/leetcode-parser.service.js';
 
 /**
@@ -252,6 +252,68 @@ suite('project parser', () => {
 		test('an unrelated custom key is left alone', () => {
 			const { warnings } = parseProjectArtifact('source: https://example.com\n', '');
 			assert.deepStrictEqual(warnings, []);
+		});
+	});
+
+	// ── unimplementedKinds — the S3 signal ────────────────────────────────────
+
+	/**
+	 * `buildCheck` drops a check whose `kind:` no environment implements, so
+	 * `checks` holds only the survivors. Grading those alone is the false-green
+	 * vector (S3): a `service`-shaped artifact whose `http` checks vanished
+	 * would be graded on a surviving `build` check and reported solved.
+	 *
+	 * The drop was reported only as a free-form warning string, which no
+	 * grading path can rely on. These pin the **structured** signal that
+	 * replaced it.
+	 */
+	suite('unimplementedKinds', () => {
+
+		const HTTP_CHECKS = [
+			'test:',
+			'  type: project',
+			'  checks:',
+			'    - name: app builds',
+			'      kind: build',
+			'      dir: client',
+			'      argv: ["npx", "tsc", "--noEmit"]',
+			'    - name: api contract',
+			'      kind: http',
+			'      file: src/api.ts',
+		].join('\n');
+
+		test('a declared kind no environment implements is recorded, not merely warned about', () => {
+			const { checks, unimplementedKinds } = parseProjectArtifact(HTTP_CHECKS, FILES_SECTION);
+			assert.deepStrictEqual([...unimplementedKinds], ['http']);
+			// And the reason the field has to exist: the dropped check is gone
+			// from `checks`, so a caller reading `checks` alone cannot see it.
+			assert.deepStrictEqual(checks.map(c => c.kind), ['build']);
+		});
+
+		test('an artifact whose kinds are all implemented records none', () => {
+			const { unimplementedKinds } = parseProjectArtifact(FM, FILES_SECTION);
+			assert.deepStrictEqual([...unimplementedKinds], []);
+		});
+
+		test('the same unimplemented kind declared twice is recorded once', () => {
+			const twice = HTTP_CHECKS + [
+				'',
+				'    - name: api errors',
+				'      kind: http',
+				'      file: src/api.ts',
+			].join('\n');
+			assert.deepStrictEqual([...parseProjectArtifact(twice, FILES_SECTION).unimplementedKinds], ['http']);
+		});
+
+		test('re-derives from raw .md text, for a caller holding only the source', () => {
+			const md = ['---', 'type: leetcode', 'title: P', '---', '', 'Body.', '',
+				'```yaml leetcode', HTTP_CHECKS, '```', '', FILES_SECTION].join('\n');
+			assert.deepStrictEqual([...unimplementedCheckKindsFromContent(md)], ['http']);
+		});
+
+		test('an artifact declaring no checks at all re-derives an empty list', () => {
+			const md = ['---', 'type: leetcode', 'title: P', '---', '', 'Body.'].join('\n');
+			assert.deepStrictEqual([...unimplementedCheckKindsFromContent(md)], []);
 		});
 	});
 

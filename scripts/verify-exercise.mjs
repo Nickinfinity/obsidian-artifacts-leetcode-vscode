@@ -9,9 +9,9 @@
 //         independently recomputed positional array ([...## Tests, ...## Final Tests]
 //         order); exit 0 if they agree, non-zero listing each mismatch.
 //   node scripts/verify-exercise.mjs "<file.md>" --starter-red
-//       → `project`/`service` only: grade `## Files` WITHOUT the `# Solutions`
-//         overlays and require at least one red check. Exit 0 = correctly red,
-//         1 = the exercise ships pre-solved. `verifyExercise` already refuses a
+//       → `package`/`stack` only (isMultiFile): grade `## Files` WITHOUT the
+//         `# Solutions` overlays and require at least one red check. Exit 0 = correctly
+//         red, 1 = the exercise ships pre-solved. `verifyExercise` already refuses a
 //         project that is green with *no* overlay at all; this catches the
 //         residual case — overlays exist, but the starter passes anyway.
 //
@@ -59,6 +59,57 @@ const { verifyExercise, compareExpecteds } = await import(pathToFileURL(distHelp
 const { parseLeetCode } = await import(pathToFileURL(join(dist, 'leetcode-parser.service.js')).href);
 const { languagesForType } = await import(
 	pathToFileURL(join(dist, 'test-envs', 'env.registry.js')).href);
+// `isMultiFile` lives under `types/`, a sibling of `services/` — `dist` above
+// already descends into `services`, so this one otherwise-unused root is
+// resolved from `here` directly rather than climbing back out of `dist`.
+const { isMultiFile } = await import(
+	pathToFileURL(join(here, '..', 'dist', 'src', 'types', 'constants.js')).href);
+// The same authority `leetcode-run.handlers.ts` consults before grading a
+// directory (VSX-153 / T1.16): did the artifact declare a check kind nothing
+// implements (S3)? Reused here rather than reimplemented so the CLI and the
+// extension can never disagree about what "gradeable" means.
+const { projectGradeRefusal } = await import(
+	pathToFileURL(join(here, '..', 'dist', 'src', 'commands', 'leetcode-run.helpers.js')).href);
+const { unimplementedCheckKindsFromContent } = await import(
+	pathToFileURL(join(dist, 'project-parser.helpers.js')).href);
+
+/**
+ * The parenthetical after `OK` explaining what this mode did **not** run.
+ *
+ * Two different artifacts reach `OK` without being executed, and D13 requires
+ * both to say so rather than printing a bare `OK`:
+ *
+ * - a `function` artifact whose `test.type` has no registered environment —
+ *   nothing ran at all;
+ * - a `package`/`stack` artifact that declared a check kind nothing
+ *   implements. `buildCheck` drops such a check at parse time, so the checks
+ *   that *did* run are only the survivors, and a green `OK` on the strength
+ *   of a surviving `build` check is exactly the impression S3 exists to
+ *   prevent. Verification still reports `ok` (D13: well-formed and executable
+ *   are different questions) — it just stops implying the whole artifact was
+ *   graded.
+ *
+ * @param md         - Full `.md` artifact text.
+ * @param parsed     - The same artifact, parsed.
+ * @param parsedType - Its resolved `test.type`, for the function-shape message.
+ * @returns The note to append to `OK`, or `''` when everything declared ran.
+ *
+ * @example
+ * structureOnlyNote(md, parsed, 'call'); // → ''
+ */
+function structureOnlyNote(md, parsed, parsedType) {
+	if (isMultiFile(parsed.leetcodeType)) {
+		const dropped = unimplementedCheckKindsFromContent(md);
+		return dropped.length === 0
+			? ''
+			: ` (structure only for kind(s) ${dropped.join(', ')} — no environment implements them,`
+				+ ' so those checks were dropped at parse time and never graded)';
+	}
+	return languagesForType(parsedType, parsed.leetcodeType).length === 0
+		? ` (structure only — no environment for test.type '${parsedType}', so this mode ran`
+			+ ' neither its solutions nor its checks; --starter-red does grade the checks)'
+		: '';
+}
 
 // ── argv ──────────────────────────────────────────────────────────────────────
 const args = process.argv.slice(2);
@@ -115,17 +166,29 @@ if (expectedsPath) {
 // ── Mode: starter must be red ────────────────────────────────────────────────
 if (starterRed) {
 	const parsed = parseLeetCode(md);
-	if (parsed.test.type !== 'project' && parsed.test.type !== 'service') {
-		die(`verify-exercise: --starter-red needs a project/service artifact, got '${parsed.test.type}'`, 2);
+	// Shape-driven (`isMultiFile`/`leetcodeType`), not `test.type === 'project'
+	// || 'service'`: the wave-1.E migration deletes the `type:` line from a
+	// check-graded artifact's `test:` block (D14), so a migrated artifact's
+	// `test.type` no longer names either legacy shape — the old string
+	// comparison would refuse every artifact the migration just wrote.
+	if (!isMultiFile(parsed.leetcodeType)) {
+		die(`verify-exercise: --starter-red needs a package/stack artifact, got leetcodeType '${parsed.leetcodeType}'`, 2);
 	}
+	// Same authority the run handlers' project dispatch consults (VSX-153 /
+	// T1.16): `isMultiFile` alone would grade any multi-file artifact
+	// unconditionally, so this asks whether the artifact declares a check kind
+	// nothing implements (S3) before writing or running anything.
+	const refusal = projectGradeRefusal(md, parsed);
+	if (refusal) { die(`verify-exercise: ${refusal}`, 2); }
+
 	const { runProjectChecks } = await import(
 		pathToFileURL(join(dist, 'test-envs', 'project', 'project.runner.js')).href);
 
 	// This mode grades by check **kind**, so it runs whatever machinery exists for
 	// the kinds declared — independently of whether the `test.type` has an env.
-	// Naming the kinds keeps that explicit: a reserved `service` whose `http`
-	// checks were dropped is graded only on the `build` check that survived, and
-	// the plain verify mode does not grade its checks at all.
+	// The `projectGradeRefusal` call above already refused an artifact declaring
+	// an unimplemented kind (e.g. `http`) outright, so every check reaching this
+	// line is one an environment actually dispatches — no survivor-only grading.
 	const outcomes = await runProjectChecks(parsed, { withSolutions: false });
 	const kinds = [...new Set((parsed.checks ?? []).map(c => c.kind))]
 		.sort((a, b) => a.localeCompare(b)).join(', ');
@@ -142,17 +205,14 @@ if (starterRed) {
 // ── Mode: full harness verify ────────────────────────────────────────────────
 const result = await verifyExercise(md, mdPath);
 if (result.ok) {
-	// `ok` for a reserved `test.type` means well-formed, NOT verified green: no env
-	// is registered, so this mode ran neither its solutions nor its checks. Say
-	// exactly that. "nothing executed" over-claimed — it read as a property of the
-	// artifact, when `--starter-red` will happily grade whatever check kinds it
-	// declares, reserved type or not.
-	const parsedType = parseLeetCode(md).test.type;
-	const note = languagesForType(parsedType).length === 0
-		? ` (structure only — no environment for test.type '${parsedType}', so this mode ran`
-			+ ' neither its solutions nor its checks; --starter-red does grade the checks)'
-		: '';
-	console.log(`OK   ${mdPath}${note}`);
+	// `ok` here means well-formed, NOT verified green. Which parts went ungraded
+	// differs by shape, so `structureOnlyNote` owns that decision — see its
+	// docblock, which is the authority. "nothing executed" over-claimed: it read
+	// as a property of the artifact, when `--starter-red` will happily grade
+	// whatever check kinds it declares.
+	const reparsed = parseLeetCode(md);
+	const parsedType = reparsed.test.type;
+	console.log(`OK   ${mdPath}${structureOnlyNote(md, reparsed, parsedType)}`);
 	process.exit(0);
 }
 die(`FAIL ${result.reason}`, 1);

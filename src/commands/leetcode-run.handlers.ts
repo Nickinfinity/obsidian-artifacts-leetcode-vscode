@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { activeChallenge, type ChallengeSession, claimSubmission, endChallenge, releaseSubmission } from '../services/leetcode-challenge.service.js';
 import { buildExecutable, escapeRe } from '../services/leetcode-candidate.helpers.js';
+import { projectGradeRefusal } from './leetcode-run.helpers.js';
 import { closeExerciseEditor, deleteExerciseFile } from '../services/exercise-file.service.js';
 import { discardProjectAttempt, saveProjectDocuments } from '../services/project-file.service.js';
 import { gradeProjectDir, runProjectChecks } from '../services/test-envs/project/project.runner.js';
@@ -24,7 +25,7 @@ import {
 	renderProjectResultsHtml,
 	renderTestResultsHtml,
 } from '../ui/panels/leetcodePreview.panel.js';
-import { FENCE } from '../types/constants.js';
+import { FENCE, isMultiFile } from '../types/constants.js';
 import { isLangId, LANGUAGES, type LanguageConfig } from '../types/languages.js';
 import type { AttemptEntry, BigOEstimate, ChallengePhase, LeetCodeStatus, ProjectCheckOutcome, TestResult } from '../types/leetcode.types.js';
 import type { PanelCtx } from '../ui/views/leetcodeView.provider.js';
@@ -57,12 +58,22 @@ export async function handleRunTests(ctx: PanelCtx): Promise<void> {
 		return;
 	}
 
-	// `project` only, never every directory-shaped run: a `service` run also
-	// carries a `projectDir`, and grading one here would report its `build`
-	// check green while every `http` check — the half the exercise is actually
-	// about — was dropped at parse time as unimplemented. It falls through to
-	// `resolveRunSetup`, which refuses it by name.
-	if (session.projectDir && ctx.parsed.test.type === 'project') {
+	// Shape-driven, not `test.type === 'project'`: the wave-1.E migration
+	// deletes the `type:` line from every check-graded artifact's `test:`
+	// block (D14), so a migrated artifact's `test.type` collapses to the
+	// default and that string comparison goes false on the very files the
+	// migration just wrote. `isMultiFile` reads the leetcode-type axis
+	// instead, which the migration never touches.
+	//
+	// `isMultiFile` alone would dispatch *every* multi-file artifact into
+	// directory grading unconditionally — a `service` run also carries a
+	// `projectDir`, and grading one whose `http` checks were dropped at parse
+	// time as unimplemented would report its surviving `build` check green
+	// and call an ungraded exercise solved. `projectRunAllowed` (backed by
+	// `projectGradeRefusal`) is consulted before anything is written or run,
+	// so that artifact is refused by name instead (S3).
+	if (session.projectDir && isMultiFile(ctx.parsed.leetcodeType)) {
+		if (!await projectRunAllowed(ctx)) { return; }
 		const outcomes = await gradeLiveProject(ctx, session.projectDir, { publicOnly: true });
 		postResultsHtml(ctx, renderProjectResultsHtml(outcomes));
 		if (outcomes.length > 0 && outcomes.every(o => o.passed)) {
@@ -121,7 +132,9 @@ export async function handleSubmit(ctx: PanelCtx, language: string | undefined):
 	// `wasLive` and `finishChallenge` both key off for the rest of this run.
 	const liveSession = activeChallenge();
 
-	if (ctx.parsed.test.type === 'project') {
+	// Shape-driven, not `test.type === 'project'` — see the matching comment
+	// on the Run Tests dispatch above; the same D14/S3 reasoning applies here.
+	if (isMultiFile(ctx.parsed.leetcodeType)) {
 		await submitProject(ctx, liveSession);
 		return;
 	}
@@ -192,6 +205,32 @@ async function gradeLiveProject(
 }
 
 /**
+ * Read the artifact fresh and ask whether this directory-graded run may
+ * proceed (`projectGradeRefusal`), surfacing the reason as an error toast
+ * when it may not.
+ *
+ * Re-reads from disk rather than trusting `ctx.parsed`: the panel parses the
+ * `.md` once at file-open time and never refreshes it, so `ctx.parsed.checks`
+ * alone cannot answer whether the artifact declares a check kind nothing
+ * implements — the whole point `projectGradeRefusal`'s R2 half exists for.
+ *
+ * @param ctx - Panel session state.
+ * @returns True when the run may proceed; false after showing the refusal.
+ *
+ * @example
+ * if (!await projectRunAllowed(ctx)) { return; }
+ */
+async function projectRunAllowed(ctx: PanelCtx): Promise<boolean> {
+	const raw = await readArtifactContent(ctx.fileUri);
+	const refusal = projectGradeRefusal(raw, ctx.parsed);
+	if (refusal) {
+		void vscode.window.showErrorMessage(refusal);
+		return false;
+	}
+	return true;
+}
+
+/**
  * Submit a `project` exercise — every check, public **and** hidden.
  *
  * Mirrors the function-type Submit's outcomes (solved / attempted / dry run
@@ -211,6 +250,8 @@ async function gradeLiveProject(
  * await submitProject(ctx, activeChallenge());
  */
 async function submitProject(ctx: PanelCtx, liveSession: ChallengeSession | null): Promise<void> {
+	if (!await projectRunAllowed(ctx)) { return; }
+
 	const wasLive = liveSession !== null && liveSession.projectDir !== null;
 	if (wasLive && liveSession && !claimSubmission(liveSession)) { return; }
 
@@ -331,6 +372,16 @@ async function liveBuffer(fileUri: vscode.Uri): Promise<string> {
 }
 
 /**
+ * Read a `.md` artifact's raw bytes from disk, decoded as UTF-8 — always the
+ * saved file, never the live editor buffer (unlike `liveBuffer`). Used by
+ * every reader that needs the artifact's own text rather than a candidate's:
+ * `persistOutcome`'s read-patch-write and `projectRunAllowed`'s R2 check.
+ */
+async function readArtifactContent(fileUri: vscode.Uri): Promise<string> {
+	return new TextDecoder().decode(await vscode.workspace.fs.readFile(fileUri));
+}
+
+/**
  * The source to test: the live attempt buffer, else a stored solution.
  *
  * @param ctx    - Panel session state.
@@ -446,7 +497,7 @@ interface PersistOutcomeArgs {
  */
 async function persistOutcome(args: PersistOutcomeArgs): Promise<void> {
 	const { fileUri, langId, status, duration, wasLive, code, bigO } = args;
-	const raw = new TextDecoder().decode(await vscode.workspace.fs.readFile(fileUri));
+	const raw = await readArtifactContent(fileUri);
 
 	let next = patchFrontmatterField(raw, 'status', status);
 	if (status === 'solved') { next = insertSolvedMeta(next, langId, duration); }

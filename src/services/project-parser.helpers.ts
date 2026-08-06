@@ -1,7 +1,13 @@
 import type { FileRole, FileSpec, LibSpec, ProjectCheck, TestCase, TestTypeId } from '../types/leetcode.types.js';
 import { SHAPE_TEST_TYPE_IDS, TEST_TYPES } from '../types/constants.js';
 import { safeJsonParse } from '../utils/safe-json.js';
-import { BODY_SET_KEYS, RETAINED_FM_KEYS } from './leetcode-config-blocks.helpers.js';
+import {
+	BODY_SET_KEYS,
+	extractConfigBlocks,
+	RETAINED_FM_KEYS,
+	splitFrontmatter,
+	withoutBodySetKeys,
+} from './leetcode-config-blocks.helpers.js';
 import { resolveLangId } from './language-map.service.js';
 import { ecosystemFor } from './libs/lib-ecosystem.js';
 import { parseSpec } from './libs/lib-spec.helpers.js';
@@ -29,6 +35,20 @@ export interface ProjectSections {
 	solutionFiles: FileSpec[];
 	/** Author-facing problems that degraded to a default instead of failing */
 	warnings: string[];
+	/**
+	 * Check `kind`s the artifact declared that no environment implements yet —
+	 * the structured form of the "declares kind '…', which no environment
+	 * implements yet — dropped" warning `buildCheck` already emits.
+	 *
+	 * Exists so a grading path can refuse an artifact **as a whole** (S3, the
+	 * false-green vector): `warnings` is prose written for a human, and a
+	 * refusal decision must never be built by pattern-matching a UX sentence.
+	 * `checks` alone cannot answer this either — a dropped check never joins
+	 * it, so by the time a caller only holds `checks` (the survivors), the
+	 * fact that something was silently dropped is already gone. Deduplicated,
+	 * insertion order.
+	 */
+	unimplementedKinds: readonly string[];
 }
 
 const FILES_RE = /^## Files\s*$/m;
@@ -90,17 +110,20 @@ const VALID_KINDS: ReadonlySet<string> = new Set<string>(CHECK_KINDS);
  * unchanged by T1.6 — it stays the hygiene step that keeps `checks` free of
  * anything nothing can dispatch.
  *
- * **T1.6 adds the refusal that inverts the drop, one file over.**
- * `compatibility.helpers.ts`'s `refusalFor(leetcodeType, testType, language)`
- * is the authority a grading path consults, by name, before it writes
- * anything: when *any* declared check resolves to a refusal, the whole
- * artifact is ungradeable, not just the check that named an unimplemented
- * kind — grading only the survivors is the false-green vector (S3) this
- * exists to close. Wiring that consultation into the run handlers is a later
- * task's job (the `session.projectDir && test.type === 'project'` branch in
- * `leetcode-run.handlers.ts`); until it lands, deleting the drop here would
+ * **T1.16 adds the refusal that inverts the drop, one file over.**
+ * `leetcode-run.helpers.ts`'s `projectGradeRefusal` is the authority a
+ * grading path consults, by name, before it writes anything: when *any*
+ * declared check named a kind that landed here, the whole artifact is
+ * ungradeable, not just the checks that survived — grading only the
+ * survivors is the false-green vector (S3) this exists to close.
+ * `refusalFor` (`compatibility.helpers.ts`) alone cannot see this: once an
+ * artifact's `leetcodeType` has passed the `isMultiFile` gate, it always
+ * resolves an env for the `'project'` test-type key, so a guard that only
+ * consulted `refusalFor` refused nothing — this set, surfaced as
+ * `ProjectSections.unimplementedKinds` / `unimplementedCheckKindsFromContent`,
+ * is what a grading path must consult instead. Deleting the drop here would
  * leave `kind: http` parsing as a valid kind that nothing implements and
- * nothing yet refuses.
+ * nothing refuses.
  */
 const RESERVED_KINDS: ReadonlySet<string> = new Set(
 	TEST_TYPES
@@ -154,11 +177,15 @@ const KNOWN_KEYS = [...RETAINED_FM_KEYS, ...BODY_SET_KEYS];
 export function parseProjectArtifact(configRaw: string, body: string): ProjectSections {
 	const warnings: string[] = [];
 	const warn = (message: string): void => { warnings.push(message); };
+	const unimplementedKinds: string[] = [];
+	const onReservedKind = (kind: string): void => {
+		if (!unimplementedKinds.includes(kind)) { unimplementedKinds.push(kind); }
+	};
 	const lines = configRaw.split(/\r?\n/);
 
 	warnNearMissKeys(lines, warn);
 
-	const checks = parseChecks(lines, warn);
+	const checks = parseChecks(lines, warn, onReservedKind);
 	bindCases(checks, body, warn);
 
 	return {
@@ -169,7 +196,37 @@ export function parseProjectArtifact(configRaw: string, body: string): ProjectSe
 		// function-type artifact; only path-bearing ones overlay a project's tree.
 		solutionFiles: parseFiles(body, SOLUTIONS_RE, TOP_HEADING_RE, warn),
 		warnings,
+		unimplementedKinds,
 	};
+}
+
+/**
+ * Re-derives `ProjectSections.unimplementedKinds` from a whole `.md` file's
+ * raw content — for a caller that holds only the source text, or only a
+ * `ParsedLeetCode` plus that same text, and never the intermediate
+ * `ProjectSections`.
+ *
+ * `leetcode-parser.service.ts`'s `parseLeetCode` runs the identical three
+ * calls internally to build the `configRaw` / `body` pair `parseProjectArtifact`
+ * needs, but does not surface `unimplementedKinds` on `ParsedLeetCode` — so a
+ * run handler or the CLI, which see only the parsed result, cannot tell which
+ * kinds were silently dropped from `checks`. This re-parses from source
+ * rather than trusting a second, unwired field, and rather than pattern
+ * matching the free-form warning text (see `ProjectSections.unimplementedKinds`).
+ *
+ * @param content - Full UTF-8 `.md` artifact text.
+ * @returns Deduplicated, unimplemented check kinds the artifact declared;
+ *   `[]` for an artifact with none (including a `function`-shaped one, whose
+ *   `checks:` — if it declared any at all — is graded by nothing anyway).
+ *
+ * @example
+ * unimplementedCheckKindsFromContent(md); // → ['http']
+ */
+export function unimplementedCheckKindsFromContent(content: string): readonly string[] {
+	const { fmRaw, body } = splitFrontmatter(content);
+	const config = extractConfigBlocks(body);
+	const configRaw = withoutBodySetKeys(fmRaw) + '\n' + config.raw;
+	return parseProjectArtifact(configRaw, body).unimplementedKinds;
 }
 
 // ── ## Files ──────────────────────────────────────────────────────────────────
@@ -370,15 +427,19 @@ function splitOutsideQuotes(body: string): string[] {
  * kind is unknown, or whose required fields are missing, is dropped with a
  * warning rather than half-built.
  *
- * @param lines - Frontmatter lines.
- * @param warn  - Sink for author-facing problems.
+ * @param lines        - Frontmatter lines.
+ * @param warn         - Sink for author-facing problems.
+ * @param onReservedKind - Sink for each `kind:` dropped because it is a
+ *   documented-but-unimplemented reserved id (never for a plain typo).
  * @returns Well-formed checks, cases still empty.
  *
  * @example
- * parseChecks(['test:', '  checks:', '    - name: builds', '      kind: build', '      argv: []'], () => {});
+ * parseChecks(['test:', '  checks:', '    - name: builds', '      kind: build', '      argv: []'], () => {}, () => {});
  * // → [{ name: 'builds', kind: 'build', argv: [], cases: [] }]
  */
-function parseChecks(lines: string[], warn: (m: string) => void): ProjectCheck[] {
+function parseChecks(
+	lines: string[], warn: (m: string) => void, onReservedKind: (kind: string) => void,
+): ProjectCheck[] {
 	const start = lines.findIndex(l => /^\s*checks:/.test(l));
 	if (start === -1) { return []; }
 
@@ -390,7 +451,7 @@ function parseChecks(lines: string[], warn: (m: string) => void): ProjectCheck[]
 
 	const out: ProjectCheck[] = [];
 	for (const entry of splitListEntries(blockLines(lines, start))) {
-		const check = buildCheck(entry, warn);
+		const check = buildCheck(entry, warn, onReservedKind);
 		if (check) { out.push(check); }
 	}
 	return out;
@@ -413,12 +474,15 @@ function splitListEntries(lines: string[]): Map<string, string>[] {
 }
 
 /** Build one check from its field map, or `null` when it cannot be trusted. */
-function buildCheck(fields: Map<string, string>, warn: (m: string) => void): ProjectCheck | null {
+function buildCheck(
+	fields: Map<string, string>, warn: (m: string) => void, onReservedKind: (kind: string) => void,
+): ProjectCheck | null {
 	const name = unquote(fields.get('name') ?? '');
 	const kind = fields.get('kind') ?? '';
 	if (!name) { return null; }
 	if (RESERVED_KINDS.has(kind)) {
 		warn(`checks: '${name}' declares kind '${kind}', which no environment implements yet — dropped`);
+		onReservedKind(kind);
 		return null;
 	}
 	if (!VALID_KINDS.has(kind)) {
