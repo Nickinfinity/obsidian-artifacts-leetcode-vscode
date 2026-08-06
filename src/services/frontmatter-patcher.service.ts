@@ -1,4 +1,5 @@
 import { CANONICAL_FRONTMATTER_ORDER } from './leetcode-config-blocks.helpers.js';
+import { escapeRe } from '../utils/regex.helpers.js';
 
 // ── patchFrontmatterField ─────────────────────────────────────────────────────
 
@@ -74,9 +75,9 @@ function canonicalInsertionOffset(fmBody: string, targetIndex: number): number {
 }
 
 /** Appends `line` to `fmBody`, adding a separating `\n` only when needed. */
-function appendLine(fmBody: string, line: string): string {
-	if (fmBody === '') { return line + '\n'; }
-	return (fmBody.endsWith('\n') ? fmBody : fmBody + '\n') + line + '\n';
+function appendLine(fmBody: string, line: string, eol: string): string {
+	if (fmBody === '') { return line + eol; }
+	return (fmBody.endsWith('\n') ? fmBody : fmBody + eol) + line + eol;
 }
 
 /**
@@ -119,17 +120,29 @@ export function patchFrontmatterField(content: string, field: string, value: str
 	const fmBody    = rest.slice(0, closeMatch.index);
 	const afterFm   = rest.slice(closeMatch.index);
 	const formatted = field + ': ' + yamlQuote(value);
-	const fieldRe   = new RegExp('^' + field + ':.*$', 'gm');
+	// `escapeRe` because this is an exported service taking any `string`: an
+	// unescaped `field` makes the pattern match keys it does not name —
+	// `'status.'` matched and destroyed a `statusX:` line.
+	// `[^\r\n]*`, not `.*$`: `.` matches `\r`, so an `m`-flagged `.*$` swallows
+	// the carriage return and the replacement puts back a bare `\n`, turning
+	// the patched line into the only LF line in a CRLF file.
+	const fieldRe   = new RegExp('^' + escapeRe(field) + String.raw`:[^\r\n]*`, 'm');
+	// The file's own newline, not an assumed `\n`. A CRLF artifact previously
+	// round-tripped untouched because nothing matched; now that both paths
+	// write, an assumed LF leaves the rewritten line as the only LF line in a
+	// CRLF file. `artifact-migrator.helpers.ts` already promises a CRLF file
+	// round-trips unchanged — this is the half that has to keep that promise.
+	const eol = openMatch[0].endsWith('\r\n') ? '\r\n' : '\n';
 
 	let newFmBody: string;
 	if (fieldRe.test(fmBody)) {
-		newFmBody = fmBody.replace(fieldRe, formatted);
+		newFmBody = fmBody.replace(new RegExp(fieldRe.source, 'gm'), formatted);
 	} else {
 		const at = canonicalInsertionOffset(fmBody, canonicalIndex(field));
 		newFmBody = at >= fmBody.length
-			? appendLine(fmBody, formatted)
-			: fmBody.slice(0, at) + formatted + '\n' + fmBody.slice(at);
+			? appendLine(fmBody, formatted, eol)
+			: fmBody.slice(0, at) + formatted + eol + fmBody.slice(at);
 	}
 
-	return '---\n' + newFmBody + afterFm;
+	return openMatch[0] + newFmBody + afterFm;
 }

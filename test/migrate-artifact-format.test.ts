@@ -333,17 +333,44 @@ suite('migrate-artifact-format', () => {
 		assert.strictEqual(after, '---\nartifactType: leetcode\ntitle: X\nreviewer: nick\ndifficulty: medium\nstatus: solved\nalgorithm: kadane\n---\nBody\n');
 	});
 
-	test('T1.12: HOSTILE — CRLF line endings still find the opening fence and insert correctly', () => {
-		// The old opening-fence check was a bare content.startsWith('---\n'),
-		// which never matches a CRLF '---\r\n' opener — the whole patch silently
-		// no-op'd on a Windows-authored file.
+	// Both CRLF cases assert the **whole** string. Three loose `assert.ok`s
+	// stood here first and could not tell a correct patch from one that wrote
+	// a bare `\n` into a CRLF file — mutation-tested: applying the fix left
+	// them all passing, so they pinned nothing about line endings at all.
+	// `migrateArtifact` promises a CRLF file round-trips unchanged; the patcher
+	// is the other half of that promise, so it asserts the same way.
+
+	test('T1.12: HOSTILE — CRLF insert keeps every line ending CRLF, including the new one', () => {
 		const before = '---\r\nartifactType: leetcode\r\ntitle: X\r\ndifficulty: medium\r\nalgorithm: kadane\r\n---\r\nBody\r\n';
-		const after = patchFrontmatterField(before, 'status', 'solved');
-		assert.ok(/^status: solved$/m.test(after), 'status: solved must be present');
-		assert.ok(after.includes('difficulty: medium\r\n'), 'untouched CRLF lines survive verbatim');
-		const statusAt = after.indexOf('status:');
-		const algoAt = after.indexOf('algorithm:');
-		assert.ok(statusAt < algoAt, 'status still lands before algorithm');
+		assert.strictEqual(
+			patchFrontmatterField(before, 'status', 'solved'),
+			'---\r\nartifactType: leetcode\r\ntitle: X\r\ndifficulty: medium\r\nstatus: solved\r\nalgorithm: kadane\r\n---\r\nBody\r\n',
+		);
+	});
+
+	test('T1.12: HOSTILE — CRLF replace-in-place keeps the carriage return', () => {
+		// `.` matches `\r`, so an `m`-flagged `.*$` swallows it and the
+		// replacement puts back a bare `\n`. This is the assertion that catches
+		// that, and it is why the pattern uses `[^\r\n]*`.
+		const before = '---\r\nartifactType: leetcode\r\nstatus: unsolved\r\n---\r\nBody\r\n';
+		assert.strictEqual(
+			patchFrontmatterField(before, 'status', 'solved'),
+			'---\r\nartifactType: leetcode\r\nstatus: solved\r\n---\r\nBody\r\n',
+		);
+	});
+
+	test('T1.12: SEC — a field name carrying regex metacharacters cannot match a key it does not name', () => {
+		// `patchFrontmatterField` is exported and takes any `string`. Unescaped,
+		// `'status.'` compiled to `^status.:` and matched — then destroyed — the
+		// unrelated `statusX:` line.
+		// Escaped, `status.` matches nothing, so it takes the *insert* path and
+		// lands as its own key — `statusX` is left exactly as it was. Unescaped,
+		// `^status.:` matched `statusX:` and overwrote it, losing the value.
+		const before = '---\nstatusX: a\ntitle: T\n---\nBody\n';
+		assert.strictEqual(
+			patchFrontmatterField(before, 'status.', 'solved'),
+			'---\nstatusX: a\ntitle: T\nstatus.: solved\n---\nBody\n',
+		);
 	});
 
 	test('T1.12: HOSTILE — no frontmatter at all is returned unchanged', () => {
