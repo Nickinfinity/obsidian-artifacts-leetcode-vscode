@@ -1,6 +1,7 @@
 import { canonicalJson } from '../utils/canonical-json.js';
 import type { TestCase } from '../types/leetcode.types.js';
 import { VERIFY_RULES } from './exercise-verify/rules.registry.js';
+import { orderViolation } from './frontmatter-order.helpers.js';
 import { legacyFrontmatterKeys, splitFrontmatter } from './leetcode-config-blocks.helpers.js';
 import { parseLeetCode } from './leetcode-parser.service.js';
 
@@ -31,7 +32,7 @@ export interface ExpectedMismatch {
  *
  * This is the uniform harness: it does not judge whether the exercise's
  * algorithm is *interesting* — only that the file is well-formed and its own
- * reference solution(s) actually run green. One check runs here, before the
+ * reference solution(s) actually run green. Three checks run here, before the
  * per-leetcode-type rules are dispatched:
  *
  * 0. Legacy frontmatter config — a D2 body-set key (`function`, `params`,
@@ -39,9 +40,20 @@ export interface ExpectedMismatch {
  *    `parseLeetCode` silently *ignores* such a key rather than reading it, so
  *    a `package`/`stack` artifact with a stripped `libs:` would otherwise
  *    surface as a bare toolchain error (`Cannot find module 'react'`) instead
- *    of naming the real problem. (Room stays here for the next rule that runs
- *    this early — a sibling check beside Rule 0, not folded into it.)
- * 1. Leetcode-type dispatch — `parsed.leetcodeType` (the axis declared in
+ *    of naming the real problem.
+ * 1. Legacy `type:` discriminator — D11's hard cut renamed `type` to
+ *    `artifactType`. A bare `type: leetcode` with no `artifactType:` is
+ *    likewise ignored, not read (`parseFrontmatter` skips both spellings
+ *    equally), so nothing downstream ever observes it missing — this names
+ *    the rename instead of leaving the file to silently mis-verify. A
+ *    near-miss warner would not catch it either (`type` → `tags` is edit
+ *    distance 3), which is exactly why this is its own rule.
+ * 2. Frontmatter key order — `orderViolation` (T1.10,
+ *    `frontmatter-order.helpers.ts`) is the one authority on canonical
+ *    key order; a violation it finds is reported here as its own named
+ *    failure so a mis-ordered artifact fails with a message rather than
+ *    quietly still parsing.
+ * 3. Leetcode-type dispatch — `parsed.leetcodeType` (the axis declared in
  *    `src/types/leetcode-type.ts`) selects a `VerifyRule` from `VERIFY_RULES`
  *    (`./exercise-verify/rules.registry.js`), a `Record<LeetcodeTypeId,
  *    VerifyRule>` compiler-checked exhaustive over every declared type.
@@ -71,11 +83,17 @@ export interface ExpectedMismatch {
 export async function verifyExercise(md: string, path?: string): Promise<VerifyResult> {
 	const fail = (reason: string): VerifyFail => ({ ok: false, reason: path ? `${path}: ${reason}` : reason });
 
-	// Rule 0 first, before the leetcode-type dispatch: a legacy key is silently
-	// ignored by `parseLeetCode`, so nothing downstream ever observes it missing
-	// — this is the only rule that catches it.
+	// Rules 0-2 first, before the leetcode-type dispatch: each catches
+	// something `parseLeetCode` would otherwise silently ignore or that
+	// governs writing rather than parsing.
 	const legacyReason = checkLegacyFrontmatter(md);
 	if (legacyReason) { return fail(legacyReason); }
+
+	const legacyTypeReason = checkLegacyType(md);
+	if (legacyTypeReason) { return fail(legacyTypeReason); }
+
+	const orderReason = checkFrontmatterOrder(md);
+	if (orderReason) { return fail(orderReason); }
 
 	const parsed = parseLeetCode(md);
 
@@ -138,5 +156,66 @@ function checkLegacyFrontmatter(md: string): string | null {
 
 	const named = keys.map(k => `'${k}:'`).join(', ');
 	return `legacy: ${named} declared in frontmatter — move into a 'yaml leetcode' body fence`;
+}
+
+// ── Rule 1: legacy `type:` discriminator (D11's hard cut, enforced) ──────────
+
+/**
+ * A column-0 `key:value` line. No `\s*` before the capture — `.` already
+ * matches whitespace, so a separate `\s*` would overlap it and give the
+ * engine two ways to consume the same run of spaces (S8786); the trailing
+ * `.trim()` at each call site strips the leading space instead.
+ */
+const TOP_LEVEL_KEY_VALUE_RE = /^(\w+):(.*)$/;
+
+/**
+ * Rule 1 — a bare `type: leetcode` with no `artifactType:` declared alongside it.
+ *
+ * D11 renamed the discriminator; unlike `leetcodeType` (derived when absent),
+ * a renamed key is derivable from nothing, so `parseFrontmatter` ignores both
+ * spellings equally rather than reading either — nothing downstream would
+ * ever notice a bare `type:` on its own. This is the only check that names it.
+ *
+ * Fires only when `type:`'s value is exactly `leetcode`: an ordinary vault
+ * note (`type: notes`, no `artifactType:`) is not a legacy leetcode artifact
+ * and this rule has nothing to say about it. An artifact declaring *both*
+ * spellings has already migrated — `artifactType` is what every reader
+ * trusts — so it is left alone too.
+ *
+ * @param md - Full `.md` artifact content (untrusted).
+ * @returns A message naming the rename, or `null` when `artifactType:` is
+ *   present, or `type:` is absent, or its value is not `leetcode`.
+ *
+ * @example
+ * checkLegacyType('---\ntype: leetcode\n---\nBody');
+ * // → "legacy: 'type:' is renamed to 'artifactType:' — declare 'artifactType: leetcode', not 'type: leetcode'"
+ */
+function checkLegacyType(md: string): string | null {
+	const { fmRaw } = splitFrontmatter(md);
+	let hasArtifactType = false;
+	let typeIsLeetcode = false;
+	for (const line of fmRaw.split(/\r?\n/)) {
+		const m = TOP_LEVEL_KEY_VALUE_RE.exec(line);
+		if (!m) { continue; }
+		if (m[1] === 'artifactType') { hasArtifactType = true; }
+		else if (m[1] === 'type' && m[2].trim() === 'leetcode') { typeIsLeetcode = true; }
+	}
+	if (!typeIsLeetcode || hasArtifactType) { return null; }
+	return "legacy: 'type:' is renamed to 'artifactType:' — declare 'artifactType: leetcode', not 'type: leetcode'";
+}
+
+// ── Rule 2: canonical frontmatter key order (T1.10's `orderViolation`) ───────
+
+/**
+ * Rule 2 — wraps `orderViolation` (`frontmatter-order.helpers.ts`, the one
+ * authority on canonical key order) as its own named `verifyExercise` failure.
+ *
+ * @param md - Full `.md` artifact content (untrusted).
+ * @returns `orderViolation`'s message, or `null` when frontmatter is in
+ *   canonical order (or carries no known key out of order).
+ */
+function checkFrontmatterOrder(md: string): string | null {
+	const { fmRaw } = splitFrontmatter(md);
+	return orderViolation(fmRaw);
 }
 

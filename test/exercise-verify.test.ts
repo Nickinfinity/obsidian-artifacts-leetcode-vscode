@@ -52,7 +52,7 @@ suite('exercise-verify', () => {
         { input: { a: 4, b: 4 }, expected: 8 },
     ];
 
-    /** Builds a `type: leetcode` `.md` fixture; every option defaults to a valid, green exercise. */
+    /** Builds an `artifactType: leetcode` `.md` fixture; every option defaults to a valid, green exercise. */
     function buildMd(opts: FixtureOpts = {}): string {
         const {
             title = 'Sum',
@@ -72,7 +72,7 @@ suite('exercise-verify', () => {
         const timeoutLine = timeoutMs !== undefined ? `\n  timeoutMs: ${timeoutMs}` : '';
         const frontmatter = [
             '---',
-            'type: leetcode',
+            'artifactType: leetcode',
             `title: ${title}`,
             'difficulty: easy',
             '---',
@@ -356,7 +356,7 @@ suite('exercise-verify', () => {
 
             return [
                 '---',
-                'type: leetcode',
+                'artifactType: leetcode',
                 `title: ${title}`,
                 'difficulty: medium',
                 '---',

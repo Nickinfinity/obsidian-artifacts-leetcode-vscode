@@ -93,7 +93,7 @@ suite('exercise-verify — legacy frontmatter config', () => {
 
         const frontmatter = [
             '---',
-            'type: leetcode',
+            'artifactType: leetcode',
             'title: Sum',
             'difficulty: easy',
             extraFrontmatter,
@@ -179,6 +179,70 @@ suite('exercise-verify — legacy frontmatter config', () => {
         const result = await verifyExercise(V1_FIXTURE, 'Strings/Bad.md');
         assert.strictEqual(result.ok, false);
         assert.ok(!result.ok && result.reason.startsWith('Strings/Bad.md: '), JSON.stringify(result));
+    });
+
+    // ── Rule 1: legacy `type:` discriminator (D11's hard cut — VSX-122 T1.11) ──
+
+    /** A conforming v2 artifact, but still on the pre-D11 `type:` spelling — no `artifactType:` anywhere. */
+    function buildLegacyTypeMd(): string {
+        return buildCleanV2Md().replace('artifactType: leetcode', 'type: leetcode');
+    }
+
+    test('a bare type: leetcode with no artifactType: fails', async () => {
+        const result = await verifyExercise(buildLegacyTypeMd());
+        assert.strictEqual(result.ok, false);
+    });
+
+    test('the message names the rename', async () => {
+        const result = await verifyExercise(buildLegacyTypeMd());
+        assert.strictEqual(result.ok, false);
+        if (!result.ok) {
+            assert.ok(result.reason.startsWith('legacy:'), result.reason);
+            assert.ok(result.reason.includes('artifactType'), result.reason);
+        }
+    });
+
+    // ── SEC: hostile inputs for the type:/artifactType: axis ───────────────
+
+    test('SEC: a __proto__ key does not crash and does not suppress the legacy-type failure', async () => {
+        const md = buildLegacyTypeMd().replace('type: leetcode', 'type: leetcode\n__proto__: leetcode');
+        const result = await verifyExercise(md);
+        assert.strictEqual(result.ok, false);
+        if (!result.ok) { assert.ok(result.reason.includes('artifactType'), result.reason); }
+    });
+
+    test('SEC: a pathologically long key/value in frontmatter does not hang', async () => {
+        const longLine = `${'a'.repeat(50_000)}: ${'b'.repeat(50_000)}`;
+        const md = buildLegacyTypeMd().replace('type: leetcode', `type: leetcode\n${longLine}`);
+        const start = Date.now();
+        const result = await verifyExercise(md);
+        assert.ok(Date.now() - start < 1000, 'must not hang on a pathologically long frontmatter line');
+        assert.strictEqual(result.ok, false);
+    });
+
+    test('SEC: declaring both type: and artifactType: does not fail — artifactType already wins', async () => {
+        const md = buildCleanV2Md().replace('artifactType: leetcode', 'artifactType: leetcode\ntype: leetcode');
+        const result = await verifyExercise(md);
+        assert.strictEqual(result.ok, true, JSON.stringify(result));
+    });
+
+    test('SEC: a type: value that is not leetcode, with no artifactType:, is not this rule\'s business', async () => {
+        const md = buildCleanV2Md().replace('artifactType: leetcode', 'type: notes');
+        const result = await verifyExercise(md);
+        assert.strictEqual(result.ok, true, JSON.stringify(result));
+    });
+
+    // ── Rule 2: canonical frontmatter key order (T1.10's `orderViolation`, wired in) ──
+
+    test('a frontmatter key out of canonical order fails, naming the violation', async () => {
+        // `title` moved ahead of `artifactType` — canonical order puts artifactType first.
+        const md = buildCleanV2Md().replace('artifactType: leetcode\ntitle: Sum', 'title: Sum\nartifactType: leetcode');
+        const result = await verifyExercise(md);
+        assert.strictEqual(result.ok, false);
+        if (!result.ok) {
+            assert.ok(result.reason.includes('must come before'), result.reason);
+            assert.ok(result.reason.includes('artifactType'), result.reason);
+        }
     });
 
 });

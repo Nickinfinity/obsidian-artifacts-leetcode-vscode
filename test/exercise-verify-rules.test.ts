@@ -27,7 +27,7 @@ suite('exercise-verify — rules registry (leetcode-type axis)', () => {
     test('a package artifact with no ## Files fails with the exact registry message', async () => {
         const md = [
             '---',
-            'type: leetcode',
+            'artifactType: leetcode',
             'title: Widget',
             'difficulty: medium',
             '---',
@@ -53,9 +53,9 @@ suite('exercise-verify — rules registry (leetcode-type axis)', () => {
         const { testBlock = '' } = opts;
         return [
             '---',
-            'type: leetcode',
-            'title: Widget',
+            'artifactType: leetcode',
             'leetcodeType: package',
+            'title: Widget',
             'difficulty: medium',
             '---',
             '',
@@ -127,9 +127,9 @@ suite('exercise-verify — rules registry (leetcode-type axis)', () => {
         // a file tree.
         const md = [
             '---',
-            'type: leetcode',
-            'title: Widget',
+            'artifactType: leetcode',
             'leetcodeType: stack',
+            'title: Widget',
             'difficulty: medium',
             '---',
             '',
