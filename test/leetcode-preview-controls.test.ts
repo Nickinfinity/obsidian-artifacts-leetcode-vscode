@@ -136,12 +136,19 @@ suite('leetcodePreview.controls', () => {
             assert.deepStrictEqual(availableLanguages(p), []);
         });
 
-        // `service` has no registered env either, but it is a *file tree*: Solve
+        // A `stack` has no registered env either, but it is a *file tree*: Solve
         // It writes `## Files` and opens the tabs, so gating it on the registry
         // left the exercise impossible to open at all. Grading stays refused
         // downstream — this only decides what the selector may offer.
+        //
+        // The shape is declared on the **leetcode-type axis**, not by
+        // `test.type: 'service'`. Asking the test-type value a question about
+        // the artifact's shape is the flattening the axis split undoes, and a
+        // fixture that omits `leetcodeType` is read as a buffer — which is what
+        // this assertion caught the moment `isMultiFile` stopped reading
+        // `test.type`.
         test('a multi-file type with no env still offers its declared languages', () => {
-            const p = fixture({ test: { type: 'service', timeoutMs: 5000 } });
+            const p = fixture({ leetcodeType: 'stack', test: { type: 'service', timeoutMs: 5000 } });
             assert.deepStrictEqual(availableLanguages(p), ['javascript', 'python']);
         });
 

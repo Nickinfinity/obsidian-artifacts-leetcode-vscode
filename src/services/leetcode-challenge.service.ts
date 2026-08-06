@@ -118,7 +118,7 @@ export async function startChallenge(
 	// downstream needs to know which shape this run has. `service` opens the
 	// same way it parses — it is a tree with no environment, so *Solve It* gives
 	// the solver their files and grading refuses in the run handlers.
-	const project = isMultiFile(parsed.test.type)
+	const project = isMultiFile(parsed.leetcodeType)
 		? await openProjectFiles(context, parsed)
 		: null;
 	const fileUri = project ? project.primary : await openExerciseFile(context, parsed, langId);

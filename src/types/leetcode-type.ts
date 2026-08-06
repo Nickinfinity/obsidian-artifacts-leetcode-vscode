@@ -48,9 +48,10 @@ export interface LeetcodeType {
 /**
  * The leetcode types, and the shape each one has.
  *
- * The **single** authority for the axis — `MULTI_FILE_TYPES` is derived from
- * the `shape` column rather than kept beside it, because a second list of
- * "which types are trees?" is exactly the drift this table exists to prevent.
+ * The **single** authority for the axis. `isMultiFile` reads the `shape`
+ * column directly; the `MULTI_FILE_TYPES` set that used to sit beside it is
+ * deleted, because a second list of "which types are trees?" is exactly the
+ * drift this table exists to prevent.
  *
  * @example
  * LEETCODE_TYPES.find(row => row.id === 'stack')?.shape; // → 'trees'

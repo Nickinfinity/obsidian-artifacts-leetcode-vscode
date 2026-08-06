@@ -1,4 +1,6 @@
 import type { PracticeOption, TestType } from './leetcode.types.js';
+import type { LeetcodeTypeId } from './leetcode-type.js';
+import { shapeOf } from './leetcode-type.js';
 
 /**
  * Markdown code-fence shorthand → canonical VS Code `languageId`.
@@ -259,32 +261,41 @@ export const SHAPE_TEST_TYPE_IDS: ReadonlySet<string> =
 /** Test type assumed when the artifact declares no `test:` block. */
 export const DEFAULT_TEST_TYPE = 'function';
 
-/** Test types whose artifacts declare a file tree, dependencies and checks. */
-const MULTI_FILE_TYPES = new Set<string>(['project', 'service']);
-
 /**
- * Is this test type a **file tree**, rather than one candidate function?
+ * Is this artifact a **file tree**, rather than one candidate buffer?
  *
- * The one authority for that question. Three unrelated concerns ask it — the
- * parser (does `## Files` / `checks:` get parsed?), the challenge (does *Solve
- * It* materialise a directory or write one buffer?), and the panel (may the
- * selector offer a language the registry has no env for?) — and each used to
- * answer it with its own `=== 'project'`, which is why `service` parsed a file
- * tree nothing ever opened.
+ * The one authority for that question, and it now reads the leetcode type's
+ * own `shape` column instead of a hand-kept set of *test*-type ids. That set
+ * (`MULTI_FILE_TYPES`, `['project', 'service']`) was the flattening this axis
+ * split exists to undo: it asked the test-type value a question about the
+ * artifact's shape, which is why adding a shape meant editing a second list.
  *
- * Distinct from *runnable*: `service` is a tree that opens and does **not**
- * grade, because no `service` environment is registered. Grading capability
+ * Three unrelated concerns ask it — the parser (does `## Files` / `checks:`
+ * get parsed?), the challenge (does *Solve It* materialise a directory or
+ * write one buffer?), and the panel (may the selector offer a language the
+ * registry has no env for?) — and each used to answer it with its own
+ * `=== 'project'`, which is why `service` parsed a file tree nothing ever
+ * opened.
+ *
+ * Distinct from *runnable*: a `stack` is a tree that opens and does **not**
+ * grade, because no environment is registered for it yet. Grading capability
  * stays the registry's answer alone (`testEnvFor` / `languagesForType`).
  *
- * @param type - The artifact's `test.type`.
- * @returns True for `project` and `service`.
+ * @param leetcodeType - The artifact's resolved leetcode type. `undefined` is
+ *   accepted only because the field is still optional on `ParsedLeetCode`; it
+ *   is unreachable for parser output, since `parseLeetCode` always resolves
+ *   it. Answering `false` there is deliberate and pinned by a test, so the
+ *   branch cannot quietly change sense. When the field becomes required,
+ *   **delete the `undefined` case rather than defaulting it at a call site** —
+ *   a defaulted shape opens a `stack` as a single buffer.
+ * @returns True for any shape that is not `buffer`.
  *
  * @example
- * isMultiFile('service');  // → true
+ * isMultiFile('package');  // → true
  * isMultiFile('function'); // → false
  */
-export function isMultiFile(type: string): boolean {
-	return MULTI_FILE_TYPES.has(type);
+export function isMultiFile(leetcodeType: LeetcodeTypeId | undefined): boolean {
+	return leetcodeType !== undefined && shapeOf(leetcodeType) !== 'buffer';
 }
 
 /** Per-case execution budget when `test.timeoutMs` is absent or unusable. */

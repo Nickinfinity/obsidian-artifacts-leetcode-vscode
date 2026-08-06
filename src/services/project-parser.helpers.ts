@@ -86,10 +86,21 @@ const VALID_KINDS: ReadonlySet<string> = new Set<string>(CHECK_KINDS);
  *
  * Both are still **dropped**: a check nothing can run must not reach the
  * panel's check line, and must never count as a red check for `--starter-red`,
- * which requires a starter to fail *on its merits*. T1.6 inverts this drop
- * into a refusal of the whole artifact (S3); until then the drop stands,
- * because deleting it here would leave `kind: http` parsing as a valid kind
- * that nothing implements and nothing refuses.
+ * which requires a starter to fail *on its merits*. This parse-time drop is
+ * unchanged by T1.6 — it stays the hygiene step that keeps `checks` free of
+ * anything nothing can dispatch.
+ *
+ * **T1.6 adds the refusal that inverts the drop, one file over.**
+ * `compatibility.helpers.ts`'s `refusalFor(leetcodeType, testType, language)`
+ * is the authority a grading path consults, by name, before it writes
+ * anything: when *any* declared check resolves to a refusal, the whole
+ * artifact is ungradeable, not just the check that named an unimplemented
+ * kind — grading only the survivors is the false-green vector (S3) this
+ * exists to close. Wiring that consultation into the run handlers is a later
+ * task's job (the `session.projectDir && test.type === 'project'` branch in
+ * `leetcode-run.handlers.ts`); until it lands, deleting the drop here would
+ * leave `kind: http` parsing as a valid kind that nothing implements and
+ * nothing yet refuses.
  */
 const RESERVED_KINDS: ReadonlySet<string> = new Set(
 	TEST_TYPES

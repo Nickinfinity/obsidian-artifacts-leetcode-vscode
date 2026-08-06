@@ -59,7 +59,7 @@ export function parseLeetCode(content: string): ParsedLeetCode {
 	const fm = parseFrontmatter(configText);
 	// Multi-file grammar is its own concern and its own file — a `function`
 	// artifact never pays for it, and gets none of its fields.
-	const project = isMultiFile(fm.test.type) ? parseProjectArtifact(configText, body) : null;
+	const project = isMultiFile(fm.leetcodeType) ? parseProjectArtifact(configText, body) : null;
 
 	// `libs:` belongs to every test type, not just the multi-file ones: a
 	// `function` exercise can want numpy. A project already parsed its own as

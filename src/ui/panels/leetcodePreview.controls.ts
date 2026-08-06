@@ -437,7 +437,7 @@ export function availableLanguages(p: ParsedLeetCode): string[] {
 	// staring at an exercise they could not open. Grading is a separate
 	// question and stays the registry's — a `service` Run Tests / Submit is
 	// refused by `resolveRunSetup`, so nothing can report green.
-	const gateOnRegistry = supported.size > 0 || !isMultiFile(p.test.type);
+	const gateOnRegistry = supported.size > 0 || !isMultiFile(p.leetcodeType);
 	const seen = new Set<string>();
 	const out: string[] = [];
 

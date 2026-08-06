@@ -1,5 +1,6 @@
 import * as assert from 'node:assert';
 import { isContained, isLeetCodeArtifact, migrateArtifact, parseMigrateArgs, unifiedDiff } from '../src/services/artifact-migrator.helpers.js';
+import { patchFrontmatterField } from '../src/services/frontmatter-patcher.service.js';
 import { parseLeetCode } from '../src/services/leetcode-parser.service.js';
 
 /**
@@ -235,6 +236,125 @@ suite('migrate-artifact-format', () => {
 		assert.ok(out.includes('+X'));
 		assert.ok(!out.includes('-a'), 'the common prefix must not appear as a change');
 		assert.ok(!out.includes('-c'), 'the common suffix must not appear as a change');
+	});
+
+	// ── T1.12: isLeetCodeArtifact finds both spellings ────────────────────────
+
+	test('T1.12: isLeetCodeArtifact accepts the v2 artifactType: leetcode spelling too', () => {
+		// D11 renamed type -> artifactType; the migrator must still find a
+		// v2 file to no-op over it, not just a pre-migration v1 one.
+		assert.strictEqual(isLeetCodeArtifact('---\nartifactType: leetcode\ntitle: X\n---\n'), true);
+	});
+
+	test('T1.12: isLeetCodeArtifact still accepts the v1 type: leetcode spelling', () => {
+		assert.strictEqual(isLeetCodeArtifact('---\ntype: leetcode\ntitle: X\n---\n'), true);
+	});
+
+	test('T1.12: isLeetCodeArtifact rejects a note carrying neither spelling', () => {
+		assert.strictEqual(isLeetCodeArtifact('---\nartifactType: snippet\ntitle: X\n---\n'), false);
+	});
+
+	// ── T1.12: patchFrontmatterField inserts at the canonical index ───────────
+
+	test('T1.12: an absent status lands between difficulty and algorithm, not after tags', () => {
+		// This is the behaviour change: 12 of 75 vault artifacts carry no
+		// status:, and appending after tags is what makes the first Submit on
+		// any of them write an order violation T1.11 then fails.
+		const before = [
+			'---',
+			'artifactType: leetcode',
+			'leetcodeType: function',
+			'title: X',
+			'difficulty: medium',
+			'algorithm: kadane',
+			'tags: [a, b]',
+			'---',
+			'Body',
+			'',
+		].join('\n');
+		const after = patchFrontmatterField(before, 'status', 'solved');
+		assert.strictEqual(after, [
+			'---',
+			'artifactType: leetcode',
+			'leetcodeType: function',
+			'title: X',
+			'difficulty: medium',
+			'status: solved',
+			'algorithm: kadane',
+			'tags: [a, b]',
+			'---',
+			'Body',
+			'',
+		].join('\n'));
+	});
+
+	test('T1.12: a present status is replaced in place, not moved', () => {
+		const before = '---\nartifactType: leetcode\ntitle: X\ndifficulty: medium\nstatus: unsolved\nalgorithm: kadane\n---\nBody\n';
+		const after = patchFrontmatterField(before, 'status', 'solved');
+		assert.strictEqual(after, '---\nartifactType: leetcode\ntitle: X\ndifficulty: medium\nstatus: solved\nalgorithm: kadane\n---\nBody\n');
+	});
+
+	test('T1.12: missing neighbours are handled — only artifactType and tags declared', () => {
+		// difficulty/status/algorithm all absent: status (index 4) outranks
+		// nothing present before tags (index 6), so it lands right before tags.
+		const before = '---\nartifactType: leetcode\ntags: [a]\n---\nBody\n';
+		const after = patchFrontmatterField(before, 'status', 'solved');
+		assert.strictEqual(after, '---\nartifactType: leetcode\nstatus: solved\ntags: [a]\n---\nBody\n');
+	});
+
+	test('T1.12: nothing outranks status when it is the last canonical key present — appended at the end', () => {
+		const before = '---\nartifactType: leetcode\ntitle: X\n---\nBody\n';
+		const after = patchFrontmatterField(before, 'status', 'solved');
+		assert.strictEqual(after, '---\nartifactType: leetcode\ntitle: X\nstatus: solved\n---\nBody\n');
+	});
+
+	// ── T1.12: hostile frontmatter ─────────────────────────────────────────────
+
+	test('T1.12: HOSTILE — a duplicate status key is fully replaced, not left half-stale', () => {
+		// applyScalar is last-wins, so leaving the first occurrence patched and
+		// the second (the one the parser actually reads) untouched would make
+		// the write a silent no-op from the parser's point of view.
+		const before = '---\nartifactType: leetcode\nstatus: unsolved\ntitle: X\nstatus: unsolved\n---\nBody\n';
+		const after = patchFrontmatterField(before, 'status', 'solved');
+		assert.strictEqual((after.match(/^status:.*$/gm) ?? []).length, 2, 'both lines still exist');
+		assert.ok(!after.includes('unsolved'), 'no stale duplicate keeps the old value');
+		assert.strictEqual(after, '---\nartifactType: leetcode\nstatus: solved\ntitle: X\nstatus: solved\n---\nBody\n');
+	});
+
+	test('T1.12: HOSTILE — a __proto__ frontmatter key survives untouched and unmoved', () => {
+		const before = '---\nartifactType: leetcode\ntitle: X\n__proto__: evil\ndifficulty: medium\nalgorithm: kadane\n---\nBody\n';
+		const after = patchFrontmatterField(before, 'status', 'solved');
+		assert.strictEqual(after, '---\nartifactType: leetcode\ntitle: X\n__proto__: evil\ndifficulty: medium\nstatus: solved\nalgorithm: kadane\n---\nBody\n');
+	});
+
+	test('T1.12: HOSTILE — an unknown custom key survives untouched and unmoved', () => {
+		const before = '---\nartifactType: leetcode\ntitle: X\nreviewer: nick\ndifficulty: medium\nalgorithm: kadane\n---\nBody\n';
+		const after = patchFrontmatterField(before, 'status', 'solved');
+		assert.strictEqual(after, '---\nartifactType: leetcode\ntitle: X\nreviewer: nick\ndifficulty: medium\nstatus: solved\nalgorithm: kadane\n---\nBody\n');
+	});
+
+	test('T1.12: HOSTILE — CRLF line endings still find the opening fence and insert correctly', () => {
+		// The old opening-fence check was a bare content.startsWith('---\n'),
+		// which never matches a CRLF '---\r\n' opener — the whole patch silently
+		// no-op'd on a Windows-authored file.
+		const before = '---\r\nartifactType: leetcode\r\ntitle: X\r\ndifficulty: medium\r\nalgorithm: kadane\r\n---\r\nBody\r\n';
+		const after = patchFrontmatterField(before, 'status', 'solved');
+		assert.ok(/^status: solved$/m.test(after), 'status: solved must be present');
+		assert.ok(after.includes('difficulty: medium\r\n'), 'untouched CRLF lines survive verbatim');
+		const statusAt = after.indexOf('status:');
+		const algoAt = after.indexOf('algorithm:');
+		assert.ok(statusAt < algoAt, 'status still lands before algorithm');
+	});
+
+	test('T1.12: HOSTILE — no frontmatter at all is returned unchanged', () => {
+		const before = 'Just prose, no frontmatter.';
+		assert.strictEqual(patchFrontmatterField(before, 'status', 'solved'), before);
+	});
+
+	test('T1.12: HOSTILE — frontmatter that is only "---\\n---" still gets the field inserted', () => {
+		const before = '---\n---';
+		const after = patchFrontmatterField(before, 'status', 'solved');
+		assert.strictEqual(after, '---\nstatus: solved\n---');
 	});
 
 });

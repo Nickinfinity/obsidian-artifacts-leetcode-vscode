@@ -47,8 +47,15 @@ const EXECUTION_ANCHORS: readonly RegExp[] = [
 	/^# Setup\s*$/m,
 	/^# Solutions\s*$/m,
 ];
-/** The discriminator. Tested here, never via the parser — `applyScalar` ignores `type:`. */
-const TYPE_LEETCODE_RE = /^type:\s*leetcode\s*$/m;
+/**
+ * The discriminator, either spelling. Tested here, never via the parser —
+ * `applyScalar` ignores `type:`/`artifactType:` entirely. `type` is the v1
+ * spelling and `artifactType` is D11's rename of it (see
+ * `CANONICAL_FRONTMATTER_ORDER` in `leetcode-config-blocks.helpers.ts`); the
+ * migrator must recognise a file under either spelling to find what to
+ * rewrite — a v2 file it can no-op over, not just a pre-migration v1 one.
+ */
+const TYPE_LEETCODE_RE = /^(?:type|artifactType):\s*leetcode\s*$/m;
 
 /** One top-level frontmatter key and the indented lines belonging to it. */
 interface FrontmatterBlock {
