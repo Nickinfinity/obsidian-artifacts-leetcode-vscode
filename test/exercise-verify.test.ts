@@ -211,7 +211,7 @@ suite('exercise-verify', () => {
             // checks, no single function. Measuring it against the function floor
             // reported `structural: missing params`, which named the wrong thing.
             const result = await verifyExercise(buildMd({
-                testType: 'service',
+                testType: 'class',
                 params: [],
                 returns: '',
                 tests: DEFAULT_TESTS.slice(0, 2),
@@ -227,7 +227,7 @@ suite('exercise-verify', () => {
             // request/response sample), not function input/output pairs, so there
             // is nothing in `## Tests` for them to mirror.
             const result = await verifyExercise(buildMd({
-                testType: 'service',
+                testType: 'class',
                 params: [],
                 returns: '',
                 examples: [
