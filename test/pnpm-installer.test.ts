@@ -66,7 +66,14 @@ suite('pnpm installer', () => {
 					// file by file and leaves gutted package directories behind — a stub
 					// that created only the directory modelled the swept state, not a
 					// successful install.
-					fs.writeFileSync(path.join(pkgDir, 'package.json'), `{"name":"${name}"}`, 'utf-8');
+					// A declared `bin`, and the file backing it — real packages ship
+					// executables, and the warm probe checks they survived.
+					fs.mkdirSync(path.join(pkgDir, 'bin'), { recursive: true });
+					fs.writeFileSync(path.join(pkgDir, 'bin', 'cli.js'), '#!/usr/bin/env node\n', 'utf-8');
+					fs.writeFileSync(
+						path.join(pkgDir, 'package.json'),
+						`{"name":"${name}","bin":{"${name}":"./bin/cli.js"}}`, 'utf-8',
+					);
 				}
 			},
 		};
@@ -158,6 +165,35 @@ suite('pnpm installer', () => {
 		 * only an empty `lib/`. A directory probe called it warm; `require`
 		 * called it `MODULE_NOT_FOUND`.
 		 */
+		/**
+		 * The residual half of the sweep defect, and the one that needed a manual
+		 * `rm -rf` to clear: `package.json` survives while the executable it
+		 * declares does not. Both the marker and the per-package path check pass,
+		 * and then a `build` check spawns `tsc` and dies with
+		 * `Cannot find module '…/typescript/bin/tsc'`.
+		 */
+		test('a package whose declared bin was swept is not warm', async () => {
+			const runner = spy();
+			await install(['typescript@^5.9.0'], runner.run);
+
+			const dir = libEnvDir('pnpm', ['typescript@^5.9.0']);
+			fs.rmSync(path.join(dir, 'node_modules', 'typescript', 'bin'), { recursive: true });
+
+			await install(['typescript@^5.9.0'], runner.run);
+			assert.strictEqual(runner.calls.length, 2, 'a gutted executable must reinstall the set');
+		});
+
+		test('an unparseable manifest is not warm — it fails closed', async () => {
+			const runner = spy();
+			await install(['react@^19.0.0'], runner.run);
+
+			const dir = libEnvDir('pnpm', ['react@^19.0.0']);
+			fs.writeFileSync(path.join(dir, 'node_modules', 'react', 'package.json'), '{ not json', 'utf-8');
+
+			await install(['react@^19.0.0'], runner.run);
+			assert.strictEqual(runner.calls.length, 2);
+		});
+
 		test('a package directory stripped of its package.json is not warm', async () => {
 			const runner = spy();
 			const dir = libEnvDir('pnpm', ['react@^19.0.0']);

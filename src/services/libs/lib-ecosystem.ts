@@ -145,6 +145,26 @@ export interface LibInstaller<S extends ParsedLibSpec = ParsedLibSpec> {
 	 * kept its marker over an emptied tree read warm forever.
 	 */
 	warmPaths(specs: readonly S[]): readonly string[];
+	/**
+	 * Optional deeper warm probe, run only after every `warmPaths` entry exists.
+	 *
+	 * `warmPaths` can name a file but cannot express a claim *about* one, and
+	 * the difference is load-bearing: macOS prunes `/var/folders` file by file,
+	 * so a package's `package.json` can survive while the executable it declares
+	 * does not. That entry passes a path probe and then fails the moment a
+	 * `build` check spawns it — observed as `Cannot find module
+	 * '…/typescript/bin/tsc'` on an entry that read warm, and it needed a manual
+	 * `rm -rf` of the cache to clear.
+	 *
+	 * Implement it where a package is more than the sum of the paths a spec can
+	 * name up front. pip has the same shape of problem waiting (a venv's console
+	 * scripts carry absolute shebangs).
+	 *
+	 * @param dir   - The cache directory for this set.
+	 * @param specs - The parsed specs it was built for.
+	 * @returns `true` when the install may still be trusted.
+	 */
+	verifyWarm?(dir: string, specs: readonly S[]): Promise<boolean>;
 	/** Validate and parse one raw spec into fields, or explain the refusal. */
 	parseSpec(raw: string): LibSpecParse<S>;
 	/** Install `specs` into `dir` (already created). Argv only, no shell. */

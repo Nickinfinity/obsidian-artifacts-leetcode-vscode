@@ -1,6 +1,8 @@
+import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import type { LibInstaller, PnpmLibSpec, RunArgv } from './lib-ecosystem.js';
 import { parsePnpmSpec } from './lib-spec.helpers.js';
+import { safeJsonParse } from '../../utils/safe-json.js';
 
 /**
  * Flags every install carries, ahead of the artifact's own specs.
@@ -25,6 +27,70 @@ import { parsePnpmSpec } from './lib-spec.helpers.js';
  * by declaration.
  */
 const PNPM_FLAGS: readonly string[] = ['--reporter=append-only', '--config.strict-dep-builds=false'];
+
+/** The `bin` field of a package manifest: one path, or a name → path map. */
+type BinField = string | Record<string, string>;
+
+/**
+ * Every executable path a manifest's `bin` field declares, relative to the
+ * package directory.
+ *
+ * @param bin - The parsed `bin` value, whatever shape it arrived in.
+ * @returns Relative paths; `[]` for a package declaring no executable.
+ *
+ * @example
+ * binPathsOf({ tsc: './bin/tsc' }); // → ['./bin/tsc']
+ */
+function binPathsOf(bin: unknown): string[] {
+	if (typeof bin === 'string') { return [bin]; }
+	if (bin === null || typeof bin !== 'object') { return []; }
+	return Object.values(bin as Record<string, unknown>).filter((v): v is string => typeof v === 'string');
+}
+
+/**
+ * Whether every executable declared by every installed package is still on disk.
+ *
+ * The gap this closes, measured rather than imagined: macOS prunes
+ * `/var/folders` **file by file**, so `node_modules/typescript/package.json`
+ * survived while the `bin/tsc` it declares did not. The entry passed both the
+ * marker check and the per-package path check, then failed the moment a `build`
+ * check spawned `tsc` — `Cannot find module '…/typescript/bin/tsc'`, on a cache
+ * that reported itself warm. Clearing it needed a manual `rm -rf`.
+ *
+ * Bounded on purpose: only the **declared** packages, and only the executables
+ * their own manifests name. That is where a `build` check's argv actually
+ * points, and it costs one small read per package rather than a walk of the
+ * tree.
+ *
+ * A manifest that cannot be read or parsed counts as **not** warm — an
+ * unreadable package is exactly the state this exists to catch, so it fails
+ * closed.
+ *
+ * @param dir   - The cache directory for this set.
+ * @param specs - The parsed specs it was built for.
+ * @returns `true` when every declared executable resolves.
+ *
+ * @example
+ * await everyDeclaredBinExists('/cache/pnpm-abc', [{ ecosystem: 'pnpm', name: 'typescript' }]);
+ */
+async function everyDeclaredBinExists(dir: string, specs: readonly PnpmLibSpec[]): Promise<boolean> {
+	for (const spec of specs) {
+		const pkgDir = path.join(dir, 'node_modules', spec.name);
+		const manifest = await fs.readFile(path.join(pkgDir, 'package.json'), 'utf-8').catch(() => null);
+		if (manifest === null) { return false; }
+
+		const parsed = safeJsonParse<{ bin?: BinField }>(manifest);
+		if (parsed === null) { return false; }
+
+		for (const relative of binPathsOf(parsed.bin)) {
+			// `access` follows symlinks, so a link into a swept store fails here
+			// exactly as a missing file does — which is the point.
+			const reachable = await fs.access(path.join(pkgDir, relative)).then(() => true, () => false);
+			if (!reachable) { return false; }
+		}
+	}
+	return true;
+}
 
 /**
  * One spec rendered back to the single argv element pnpm reads.
@@ -82,6 +148,8 @@ export const pnpmInstaller: LibInstaller<PnpmLibSpec> = {
 	// failed `require('jsdom')` with `MODULE_NOT_FOUND`. A package is warm when
 	// it is *loadable*, and `package.json` is what makes it loadable.
 	warmPaths: specs => specs.map(spec => path.join('node_modules', spec.name, 'package.json')),
+
+	verifyWarm: (dir, specs) => everyDeclaredBinExists(dir, specs),
 
 	parseSpec: parsePnpmSpec,
 

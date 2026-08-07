@@ -124,7 +124,7 @@ export async function ensureLibEnv(
 
 	const dir = libEnvDir(ecosystem, specs);
 	if (specs.length === 0) { return { ok: true, dir }; }
-	if (await isWarm(dir, installer.warmPaths(parsed.specs))) { return { ok: true, dir }; }
+	if (await isWarm(dir, installer, parsed.specs)) { return { ok: true, dir }; }
 
 	return installEnv(installer, dir, parsed.specs, options.run ?? defaultRun);
 }
@@ -173,15 +173,19 @@ function parseAll(
  * @param warmPaths - Relative paths the installer says must exist.
  * @returns `true` only when the install can safely be skipped.
  */
-async function isWarm(dir: string, warmPaths: readonly string[]): Promise<boolean> {
+async function isWarm(
+	dir: string, installer: LibInstaller, specs: readonly ParsedLibSpec[],
+): Promise<boolean> {
 	const exists = async (target: string): Promise<boolean> =>
 		fs.access(target).then(() => true, () => false);
 
 	if (!await exists(path.join(dir, WARM_MARKER))) { return false; }
-	for (const relative of warmPaths) {
+	for (const relative of installer.warmPaths(specs)) {
 		if (!await exists(path.join(dir, relative))) { return false; }
 	}
-	return true;
+	// The deeper probe runs last: it is the expensive one, and it only makes
+	// sense once every path it would inspect is known to be there.
+	return installer.verifyWarm ? installer.verifyWarm(dir, specs) : true;
 }
 
 /**
@@ -208,9 +212,7 @@ async function installEnv(
 		await fs.mkdir(buildDir, { recursive: true });
 		await installer.install(buildDir, specs, run);
 		await fs.writeFile(path.join(buildDir, WARM_MARKER), installer.ecosystem, 'utf-8');
-		if (buildDir !== dir) {
-			await renameIntoPlace(buildDir, dir, installer.warmPaths(specs));
-		}
+		if (buildDir !== dir) { await renameIntoPlace(buildDir, dir, installer, specs); }
 		return { ok: true, dir };
 	} catch (e) {
 		if (buildDir !== dir) { await discard(buildDir); }
@@ -240,9 +242,12 @@ async function installEnv(
  *
  * @param buildDir  - The tmp directory holding the finished install.
  * @param dir       - Where it belongs.
- * @param warmPaths - Relative paths proving `dir` is usable, from the installer.
+ * @param installer - The ecosystem's installer, for its warm probe.
+ * @param specs     - The parsed specs, for that same probe.
  */
-async function renameIntoPlace(buildDir: string, dir: string, warmPaths: readonly string[]): Promise<void> {
+async function renameIntoPlace(
+	buildDir: string, dir: string, installer: LibInstaller, specs: readonly ParsedLibSpec[],
+): Promise<void> {
 	try {
 		await fs.rename(buildDir, dir);
 		return;
@@ -251,7 +256,7 @@ async function renameIntoPlace(buildDir: string, dir: string, warmPaths: readonl
 		if (code !== 'ENOTEMPTY' && code !== 'EEXIST') { throw e; }
 	}
 
-	if (await isWarm(dir, warmPaths)) { await discard(buildDir); return; }
+	if (await isWarm(dir, installer, specs)) { await discard(buildDir); return; }
 
 	// Stale squatter: swap the good build in, then drop the old tree. The stale
 	// directory is moved aside first so the window in which the key resolves to
