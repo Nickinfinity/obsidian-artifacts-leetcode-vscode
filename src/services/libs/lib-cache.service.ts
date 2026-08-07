@@ -208,7 +208,9 @@ async function installEnv(
 		await fs.mkdir(buildDir, { recursive: true });
 		await installer.install(buildDir, specs, run);
 		await fs.writeFile(path.join(buildDir, WARM_MARKER), installer.ecosystem, 'utf-8');
-		if (buildDir !== dir) { await renameIntoPlace(buildDir, dir); }
+		if (buildDir !== dir) {
+			await renameIntoPlace(buildDir, dir, installer.warmPaths(specs));
+		}
 		return { ok: true, dir };
 	} catch (e) {
 		if (buildDir !== dir) { await discard(buildDir); }
@@ -217,20 +219,54 @@ async function installEnv(
 }
 
 /**
- * Move a finished build into place, treating "already there" as success.
+ * Move a finished build into place.
  *
- * @param buildDir - The tmp directory holding the finished install.
- * @param dir      - Where it belongs.
+ * A collision has **two** causes and they need opposite handling — conflating
+ * them was a live defect that made every affected exercise fail forever:
+ *
+ * - **Another run finished first.** Its directory holds the same set under the
+ *   same key, so the build is redundant and gets discarded. Losing that race
+ *   is success; both runs wanted that directory.
+ * - **A stale directory is squatting the key.** macOS prunes `/var/folders` by
+ *   age, file by file, so a swept entry keeps its directory tree and loses its
+ *   contents. `rename` then fails exactly as it does for a race — and treating
+ *   it as one **threw away the freshly built repair and kept the gutted tree**,
+ *   every run, forever. That is why "a failed check reinstalls, repairing the
+ *   entry in place" was false: the repair was built, then deleted.
+ *
+ * The two are told apart by asking the same question `ensureLibEnv` asks up
+ * front — is what is already there actually warm? Only a warm winner keeps its
+ * directory; a stale one is replaced by the build that just succeeded.
+ *
+ * @param buildDir  - The tmp directory holding the finished install.
+ * @param dir       - Where it belongs.
+ * @param warmPaths - Relative paths proving `dir` is usable, from the installer.
  */
-async function renameIntoPlace(buildDir: string, dir: string): Promise<void> {
+async function renameIntoPlace(buildDir: string, dir: string, warmPaths: readonly string[]): Promise<void> {
 	try {
 		await fs.rename(buildDir, dir);
+		return;
 	} catch (e) {
-		// ENOTEMPTY (Linux) / EEXIST (macOS) both mean another run finished
-		// first. Its directory holds the same set under the same key.
 		const code = (e as NodeJS.ErrnoException).code;
 		if (code !== 'ENOTEMPTY' && code !== 'EEXIST') { throw e; }
+	}
+
+	if (await isWarm(dir, warmPaths)) { await discard(buildDir); return; }
+
+	// Stale squatter: swap the good build in, then drop the old tree. The stale
+	// directory is moved aside first so the window in which the key resolves to
+	// nothing is a rename, not a recursive delete.
+	const stale = `${dir}.stale-${process.pid}`;
+	try {
+		await fs.rename(dir, stale);
+		await fs.rename(buildDir, dir);
+	} catch {
+		// Another run may have repaired it in the meantime; its tree is as good
+		// as ours, so keep whatever is in place rather than fighting over it.
 		await discard(buildDir);
+		return;
+	} finally {
+		await discard(stale);
 	}
 }
 

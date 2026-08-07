@@ -269,6 +269,9 @@ suite('project runner', () => {
 				const pkgDir = path.join(cwd, 'node_modules', pkg);
 				fs.mkdirSync(pkgDir, { recursive: true });
 				fs.writeFileSync(path.join(pkgDir, 'index.js'), 'module.exports = 42;\n');
+				// A real install leaves a `package.json`, and the warm probe now
+				// requires one — a directory alone is what a swept cache looks like.
+				fs.writeFileSync(path.join(pkgDir, 'package.json'), `{"name":"${pkg}","main":"index.js"}`);
 			};
 		}
 

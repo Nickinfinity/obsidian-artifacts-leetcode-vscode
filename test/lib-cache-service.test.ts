@@ -246,11 +246,25 @@ suite('lib cache service', () => {
 		 * loser reports success rather than failing a run whose packages are
 		 * on disk.
 		 */
+		/**
+		 * A real lost race: the winner finishes **while our install is running**,
+		 * so the top-level warm check saw nothing and the collision happens at
+		 * the rename. Its directory is complete — marker and product both — which
+		 * is exactly what distinguishes it from a swept one.
+		 */
 		test('losing the rename race is success, not a failed install', async () => {
-			const spy = stub('pnpm');
 			const final = libEnvDir('pnpm', ['react']);
-			fs.mkdirSync(path.join(final, 'product'), { recursive: true });
-			fs.writeFileSync(path.join(final, 'squatter'), 'winner', 'utf-8');
+			const buildDirs: string[] = [];
+			const spy = stub('pnpm', {
+				install: async (dir: string) => {
+					buildDirs.push(dir);
+					fs.mkdirSync(path.join(dir, 'product'), { recursive: true });
+					// Another run completes first, marker and all.
+					fs.mkdirSync(path.join(final, 'product'), { recursive: true });
+					fs.writeFileSync(path.join(final, '.leet-installed'), 'pnpm', 'utf-8');
+					fs.writeFileSync(path.join(final, 'squatter'), 'winner', 'utf-8');
+				},
+			});
 
 			const result = await ensureLibEnv('pnpm', ['react'], withStub(spy));
 
@@ -259,7 +273,40 @@ suite('lib cache service', () => {
 				fs.readFileSync(path.join(final, 'squatter'), 'utf-8'), 'winner',
 				"the winner's directory must survive intact",
 			);
-			assert.strictEqual(fs.existsSync(spy.dirs[0]), false, 'the loser cleans up its tmp');
+			assert.strictEqual(fs.existsSync(buildDirs[0]), false, 'the loser cleans up its tmp');
+		});
+
+		/**
+		 * The other half of a rename collision, and the one that was a live
+		 * defect: the directory in the way is not a winner at all, it is a
+		 * **swept** entry. macOS prunes `/var/folders` by age, file by file, so
+		 * the tree survives while its contents do not.
+		 *
+		 * Treating that as a lost race discarded the freshly built repair and
+		 * kept the gutted tree — every run, forever, which is why the documented
+		 * "a failed check reinstalls, repairing the entry in place" was false.
+		 * Measured on this vault: 13 of 75 artifacts failed with
+		 * `Cannot find module`, and no number of re-runs fixed one of them.
+		 */
+		test('a stale squatter is replaced by the fresh build, not mistaken for a winner', async () => {
+			const spy = stub('pnpm');
+			const final = libEnvDir('pnpm', ['react']);
+			// Swept: the tree survives, the product and the marker do not.
+			fs.mkdirSync(final, { recursive: true });
+			fs.writeFileSync(path.join(final, 'stale'), 'gutted', 'utf-8');
+
+			const result = await ensureLibEnv('pnpm', ['react'], withStub(spy));
+
+			assert.deepStrictEqual(result, { ok: true, dir: final });
+			assert.ok(
+				fs.existsSync(path.join(final, 'product')),
+				'the replacement must be the completed build',
+			);
+			assert.ok(fs.existsSync(path.join(final, '.leet-installed')), 'marker and all');
+			assert.strictEqual(
+				fs.existsSync(path.join(final, 'stale')), false,
+				'the gutted tree must not survive the swap',
+			);
 		});
 
 		test('a failed install leaves no half-built directory behind', async () => {

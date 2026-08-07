@@ -75,7 +75,13 @@ export const pnpmInstaller: LibInstaller<PnpmLibSpec> = {
 	 * and the probe follows it, so a sweep that took the link's target and left
 	 * the link behind reads cold — exactly what it should do.
 	 */
-	warmPaths: specs => specs.map(spec => path.join('node_modules', spec.name)),
+	// `package.json`, not the package *directory*. macOS prunes `/var/folders`
+	// by age and does it **file by file**, so a swept entry keeps its directory
+	// tree while losing its contents: `node_modules/jsdom` survived holding
+	// nothing but an empty `lib/`, which passed a directory probe and then
+	// failed `require('jsdom')` with `MODULE_NOT_FOUND`. A package is warm when
+	// it is *loadable*, and `package.json` is what makes it loadable.
+	warmPaths: specs => specs.map(spec => path.join('node_modules', spec.name, 'package.json')),
 
 	parseSpec: parsePnpmSpec,
 

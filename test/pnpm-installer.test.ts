@@ -58,7 +58,15 @@ suite('pnpm installer', () => {
 				fs.mkdirSync(path.join(cwd, 'node_modules'), { recursive: true });
 				const specs = args.filter(a => !a.startsWith('-') && a !== 'add' && a !== cwd);
 				for (const spec of specs) {
-					fs.mkdirSync(path.join(cwd, 'node_modules', packageNameOf(spec)), { recursive: true });
+					const name = packageNameOf(spec);
+					const pkgDir = path.join(cwd, 'node_modules', name);
+					fs.mkdirSync(pkgDir, { recursive: true });
+					// `package.json`, not just the directory. The warm probe asks whether
+					// each package is *loadable*, because macOS prunes `/var/folders`
+					// file by file and leaves gutted package directories behind — a stub
+					// that created only the directory modelled the swept state, not a
+					// successful install.
+					fs.writeFileSync(path.join(pkgDir, 'package.json'), `{"name":"${name}"}`, 'utf-8');
 				}
 			},
 		};
@@ -130,14 +138,35 @@ suite('pnpm installer', () => {
 			assert.strictEqual(runner.calls.length, 1, 'a scoped package on disk is warm');
 		});
 
-		test('warmPaths names one path per declared package', () => {
+		test('warmPaths names each declared package\'s package.json, not its directory', () => {
 			assert.deepStrictEqual(
 				pnpmInstaller.warmPaths([
 					{ ecosystem: 'pnpm', name: 'react', range: '^19.0.0' },
 					{ ecosystem: 'pnpm', name: '@types/node' },
 				]),
-				[path.join('node_modules', 'react'), path.join('node_modules', '@types/node')],
+				[
+					path.join('node_modules', 'react', 'package.json'),
+					path.join('node_modules', '@types/node', 'package.json'),
+				],
 			);
+		});
+
+		/**
+		 * The directory is not the package. macOS prunes `/var/folders` file by
+		 * file, so a swept entry keeps `node_modules/jsdom` while losing its
+		 * contents — measured on this vault, that directory survived holding
+		 * only an empty `lib/`. A directory probe called it warm; `require`
+		 * called it `MODULE_NOT_FOUND`.
+		 */
+		test('a package directory stripped of its package.json is not warm', async () => {
+			const runner = spy();
+			const dir = libEnvDir('pnpm', ['react@^19.0.0']);
+			fs.mkdirSync(path.join(dir, 'node_modules', 'react'), { recursive: true });
+			fs.writeFileSync(path.join(dir, '.leet-installed'), 'pnpm', 'utf-8');
+
+			await install(['react@^19.0.0'], runner.run);
+
+			assert.strictEqual(runner.calls.length, 1, 'a gutted package must trigger a reinstall');
 		});
 	});
 
