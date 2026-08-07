@@ -61,7 +61,7 @@ invites a test to guard the copy instead of the real thing.
   done < <(find "$VAULT" -name '*.md' \
              -not -path '*/.obsidian/*' -not -path '*/.git/*' -not -path '*/.trash/*')
   echo "verified $total · failures $fail"
-  [ "$total" -ge "${EXPECTED_ARTIFACTS:-75}" ] || { echo "SWEEP DID NOT SEE THE VAULT: $total"; exit 1; }
+  [ "$total" -ge "${EXPECTED_ARTIFACTS:-76}" ] || { echo "SWEEP DID NOT SEE THE VAULT: $total"; exit 1; }
   ```
   Three things the loop does that a one-line `find -exec` cannot, all of which have bitten:
   **it filters on the `artifactType: leetcode` discriminator** (a vault holds ordinary notes —
@@ -73,9 +73,13 @@ invites a test to guard the copy instead of the real thing.
   candidates reads the very key the format rename rewrote, so a filter left on the old
   `^type: leetcode` spelling now matches **nothing**: the loop prints `verified 0 · failures 0`
   and every gate downstream reads it as green. A pass by vacancy. Measured on this vault:
-  **75** of 76 `.md` files are artifacts (the 76th is `CoderByte/Tests/README.md`, correctly
-  excluded) — 62 `function`, 9 `package`, 4 `stack`. Raise `EXPECTED_ARTIFACTS` as the vault
-  grows; a sweep whose filter can silently select an empty set is not a gate.
+  **76** of 77 `.md` files are artifacts (the odd one out is `CoderByte/Tests/README.md`,
+  correctly excluded) — 63 `function`, 9 `package`, 4 `stack`. **Raise the default in the same
+  change that adds an artifact.** A floor below the true total is worse than no floor: it still
+  passes a sweep that silently missed a dozen files, which is the exact failure it exists to
+  catch. There is also a second sweep — `node scripts/coverage-sweep.mjs "$VAULT"` — which asks
+  the other question, whether every *implemented* cell of the capability matrix has an artifact
+  behind it at all.
 
   `verifyExercise` already enforces everything a parse-only guard could (missing title,
   missing `function:`, the case floors, `params`/`returns`) and more.
