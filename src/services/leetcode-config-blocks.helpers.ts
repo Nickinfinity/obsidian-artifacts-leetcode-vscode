@@ -68,13 +68,25 @@ const DUPLICATE_KEY_WINNER = new Map<string, 'first' | 'last'>([
 
 /**
  * The D2 "moved to the body" key set. The one authority for this list — no
- * other module re-lists these nine names. Exported (not just the
+ * other module re-lists these names. Exported (not just the
  * `legacyFrontmatterKeys` predicate built on it) because W2.2 needs the
  * *complement*: `KNOWN_FM_KEYS` minus this set is what stays a frontmatter
  * scalar, and only the raw list — not a yes/no check — can drive that split.
+ *
+ * `program` joins the set with the `program:` test type: it is execution
+ * configuration like every other member, so it belongs in a body fence, a
+ * frontmatter copy of it must fail `verifyExercise` the same way, and the
+ * near-miss key warner must recognise it rather than reading it as a typo.
+ *
+ * `services` is still the spelling **the parser knows**. The migration renamed
+ * the block to `packages:` on disk and nothing parses that yet, so the two are
+ * deliberately not the same string — see `ARTIFACT_LEETCODE_FILE_FORMAT.md`
+ * §9.3. Swapping this entry before the parser exists would make the migrator
+ * stop recognising the very key it just wrote.
  */
 export const BODY_SET_KEYS: ReadonlySet<string> = new Set([
 	'function', 'functions', 'params', 'returns', 'test', 'practice', 'libs', 'checks', 'services',
+	'program',
 ]);
 
 /**
