@@ -1,11 +1,16 @@
 # LeetCode Exercise `.md` File Format — Authoritative Spec
 
-This file is the **single source of truth** for the on-disk structure of a
-`type: leetcode` vault `.md` file — what an author writes and what the extension
-reads back. The parser (`src/services/leetcode-parser.service.ts` +
+This file is the **single source of truth** for the on-disk structure of an
+`artifactType: leetcode` vault `.md` file — what an author writes and what the
+extension reads back. The parser (`src/services/leetcode-parser.service.ts` +
 `src/services/leetcode-sections.helpers.ts`) implements this format; any writer
 (the author by hand, or the extension's status / attempt writers) must produce
 exactly this shape so `parse(write(x))` round-trips.
+
+> **The discriminator is `artifactType:`, renamed from `type:`.** The rename is a
+> **hard cut**: an artifact still carrying a bare `type: leetcode` and no
+> `artifactType:` fails `verifyExercise` by name (§2.2). The vault was migrated
+> in one pass; a hand-written file must use the new spelling.
 
 > When authoring an exercise, writing a test fixture, or changing a writer, this
 > file — not memory — defines the contract. If the parser and this doc disagree,
@@ -25,16 +30,20 @@ exactly this shape so `parse(write(x))` round-trips.
 
 ## 1. Canonical file structure
 
-**Frontmatter is summary only. Execution configuration lives in the body**, in
-` ```yaml leetcode ` fences placed next to what they configure (§2.5).
+**Frontmatter carries the artifact's *shape* and its summary; execution
+configuration lives in the body**, in ` ```yaml leetcode ` fences placed next to
+what they configure (§2.5). The shape — which of the three leetcode types this
+is — is frontmatter precisely because the picker must read it without parsing
+the body (§2.1).
 
 ~~~md
 ---
-type: leetcode
+artifactType: leetcode
+leetcodeType: function
 title: Two Sum
 difficulty: easy
-algorithm: hash-map
 status: unsolved
+algorithm: hash-map
 tags: [leetcode, arrays, hash-map]
 ---
 
@@ -125,23 +134,46 @@ YAML between the leading `---` fences. It **must** open the file:
 hyphens**). Unknown keys are silently ignored. Invalid `difficulty` / `status`
 values are dropped, leaving the default.
 
-**Frontmatter is summary only and carries no execution configuration.** It holds
-exactly what Obsidian's Properties UI and the exercise picker read — the six
-fields in §2.1 — and nothing else. Everything that governs how the exercise
-*runs* (`function`, `functions`, `params`, `returns`, `test`, `practice`, `libs`,
-`checks`, `services`) lives in body config fences (§2.5).
+**Frontmatter is summary plus shape, and carries no execution configuration.**
+It holds exactly what Obsidian's Properties UI and the exercise picker read —
+the seven fields in §2.2 — and nothing else. Everything that governs how the
+exercise *runs* (`function`, `functions`, `params`, `returns`, `test`,
+`practice`, `libs`, `checks`, `services`) lives in body config fences (§2.5).
 
 The retained set is deliberately **exactly `LeetCodeSummary`**
-([`src/types/leetcode.types.ts`](src/types/leetcode.types.ts)) plus the `type`
-discriminator, which is what keeps `parseFrontmatterOnly` — the picker's
-one-read-per-directory-level fast path — reading frontmatter alone, and keeps
-`patchFrontmatterField(raw, 'status', …)` writing where it always did.
+([`src/types/leetcode.types.ts`](src/types/leetcode.types.ts)) plus the
+`artifactType` discriminator, which is what keeps `parseFrontmatterOnly` — the
+picker's one-read-per-directory-level fast path — reading frontmatter alone, and
+keeps `patchFrontmatterField(raw, 'status', …)` writing where it always did.
+`leetcodeType` joined that set rather than the body for exactly this reason: the
+picker must know whether a row is a buffer or a tree without parsing the body.
 
-### 2.1 Field table
+### 2.1 The two axes
+
+An artifact declares **two independent** things, and they answer different
+questions. One value used to answer both, which is why four test types were
+reserved and why a `service` could be opened but never graded.
+
+| Axis | Answers | Declared in | Authority |
+|---|---|---|---|
+| **Leetcode type** | What *is* this artifact — one buffer, one package, several packages? | frontmatter `leetcodeType` | `LEETCODE_TYPES` ([`src/types/leetcode-type.ts`](src/types/leetcode-type.ts)) |
+| **Test type** | How is a case delivered and compared? | `test.type` (single suite) **or** `checks[].kind` (per check) | `TEST_TYPES` ([`src/types/constants.ts`](src/types/constants.ts)) |
+
+| `leetcodeType` | shape | meaning |
+|---|---|---|
+| `function` | `buffer` | One candidate buffer per language — a bare top-level callable. |
+| `package` | `tree` | One buildable unit in one language: a Java package, a Python package, a Rust crate, a TS/JS package. **One file or many.** May declare libraries. |
+| `stack` | `trees` | Several packages, each with its own language and ecosystem, wired to each other at boot. |
+
+`shape` is the single field `isMultiFile` reads — it is a property of the
+leetcode type, never a hardcoded set of test-type ids.
+
+### 2.2 Field table
 
 | Field | Type | Required | Default | Notes |
 |---|---|---|---|---|
-| `type` | `'leetcode'` | yes | — | Discriminator. **Read by no code path in the parser** — `applyScalar` ignores it and `verifyExercise` never reads it. It exists for Obsidian, and for the migrator's refusal check (§2.5), which therefore does its own frontmatter test rather than asking the parser. |
+| `artifactType` | `'leetcode'` | **yes** | — | Discriminator. **Read, and enforced**: `verifyExercise` fails an artifact where it is absent, where its value is not `leetcode`, or where a bare legacy `type: leetcode` appears without it ([`exercise-verify/frontmatter.rules.ts`](src/services/exercise-verify/frontmatter.rules.ts), Rules 1 and 3). The parser's `applyScalar` still ignores it — it decides whether a file is an exercise at all, not how one runs. |
+| `leetcodeType` | `function`\|`package`\|`stack` | no¹ | *derived* | The shape axis. ¹Absent ⇒ **derived** from a legacy `test.type` (§2.3), so an unmigrated or hand-written file still parses. An unrecognised value falls back to the derived one **and warns**. |
 | `title` | string | yes | `''` | Single line. |
 | `difficulty` | `easy`\|`medium`\|`hard` | no | `easy` | Any other value → `easy`. |
 | `status` | `unsolved`\|`attempted`\|`solved` | no | `unsolved` | **Extension-owned** — auto-written by Submit. Any other value → `unsolved`. |
@@ -150,6 +182,77 @@ one-read-per-directory-level fast path — reading frontmatter alone, and keeps
 
 Every other key is an execution-config key and belongs in a body fence — see
 §2.5 for the list and for what happens when one is left here.
+
+#### Canonical key order — a rule, enforced
+
+**`artifactType` · `leetcodeType` · `title` · `difficulty` · `status` ·
+`algorithm` · `tags`.** `verifyExercise` reports the first out-of-order pair as
+a named failure (`orderViolation`,
+[`frontmatter-order.helpers.ts`](src/services/frontmatter-order.helpers.ts)); the
+order lives in exactly one constant, `CANONICAL_FRONTMATTER_ORDER`.
+
+Three things this rule deliberately does **not** do:
+
+- **It never affects reading.** The parser is order-independent, so a mis-ordered
+  artifact still parses correctly and fails with a message instead of mis-parsing.
+- **It never positions an unknown key.** A custom key (`source:`, a Dataview
+  field) is skipped, not ordered, and never fails an artifact.
+- **It cannot be violated by the extension itself.** `patchFrontmatterField` —
+  the only frontmatter write the extension makes — replaces `status:` in place
+  when it is present and **inserts it at its canonical index** when it is absent
+  (§8), reading that index from the same constant.
+
+### 2.3 Derivation and the hard cut — two mechanisms, deliberately different
+
+| Key | Mechanism |
+|---|---|
+| `leetcodeType` | **Derived when absent.** The shape is recoverable from the legacy `test.type` without ambiguity, so derivation costs nothing and keeps hand-written artifacts working. |
+| `artifactType` | **Hard cut.** A renamed discriminator is derivable from nothing; a bare `type:` is a named `verifyExercise` failure saying what to rename. |
+
+```
+leetcodeType absent  →  test.type function   →  leetcodeType function
+                     →  test.type project    →  leetcodeType package
+                     →  test.type service    →  leetcodeType stack
+                     →  anything else        →  leetcodeType function
+                        (absent, a typo, `__proto__` — all the single-buffer default)
+
+leetcodeType declared but not one of the three ids
+                     →  the derived value is used, and the parse WARNS
+
+frontmatter carries `type: leetcode` and no `artifactType:`
+                     →  verifyExercise FAILS: "legacy: 'type:' is renamed to 'artifactType:'"
+```
+
+**How the two axes are checked against each other, precisely.** There is no
+general "these two values contradict" rule. The leetcode type instead selects a
+**rule set** (`VERIFY_RULES`, keyed on the axis and compiler-exhaustive over it),
+and each set states its own floors — which is what makes an artifact fail with
+`package: no ## Files declared` rather than being measured against the function
+floors it does not have. The one place the axes are read together is the mirror
+rule (§2.5.1).
+
+**Derivation is a default, not a dual read.** It runs on the **raw** declared
+scalar, before the unknown-value fallback — by the time a `TestConfig` exists an
+unrecognised `test.type` has already collapsed to the default, and deriving from
+*that* would turn every unmigrated `project` artifact into a `package` graded as
+a single empty `call` suite. `project` and `service` are accepted **only** as
+derivation inputs and **only** when `leetcodeType` is absent; they are not
+leetcode-type ids and never appear on disk as one.
+
+**Both spellings are findable, and that is not a contradiction.**
+`isLeetCodeArtifact` (the migrator's "is this file mine to rewrite?") accepts
+`type: leetcode` **and** `artifactType: leetcode`; `verifyExercise` ("is this
+file conformant?") requires the new one. Collapsing the two would leave the
+migrator unable to find the files it exists to fix.
+
+**An artifact declaring both keys with the same value passes**, and it passes
+because both rules are narrow by construction. `frontmatter.rules.ts` Rule 1
+fires only on a `type:` whose value is exactly `leetcode` **and** no
+`artifactType:` beside it; Rule 3 only requires `artifactType` to be present and
+to equal `leetcode`. So neither has anything to say about `type: leetcode` +
+`artifactType: leetcode`: the two assert the same thing, there is no wrong
+answer to pick, and `type` is an unknown key thereafter — skipped, never
+positioned, never a failure.
 
 ### 2.5 Config fences
 
@@ -199,7 +302,7 @@ parser does not enforce it. A fence anywhere in the body is read.
 |---|---|---|
 | `function` · `functions` · `params` · `returns` | after the description, before `## Examples` | the signature is what the description just described |
 | `test` · `practice` | immediately before `## Tests` | they govern the suites that follow |
-| `libs` · `services` | before `# Setup` (function) or before `## Files` (project/service) | declared next to the code they install for |
+| `libs` · `packages` | before `# Setup` (a `function` artifact) or before `## Files` (a `package` / `stack`) | declared next to the code they install for |
 | `checks` (nested under `test:`) | with the `test:` block, before `## Tests` | `## Tests` fences bind to checks by `check=` |
 
 **A config fence is written only for a key the file declares.** No `practice:`
@@ -240,14 +343,55 @@ Indented sub-keys, both optional:
 
 | Sub-key | Type | Default | Rule |
 |---|---|---|---|
-| `type` | `TestTypeId` | `function` | Unknown value → `function` (a typo must not make the exercise unrunnable). |
+| `type` | `TestTypeId` | `function` | Unknown value → `function` (a typo must not make the exercise unrunnable). **Declared only by a single-suite artifact** — see the mirror rule below. |
 | `timeoutMs` | number | `5000` | Per case. Clamped to `[100, 60000]`. Suite budget = `cases × timeoutMs`, capped at 60 s. |
+| `checks` | list | — | The per-check grading list of a `package` / `stack` (§9.2). Mutually exclusive with `type` — see below. |
 
-`TestTypeId` ∈ `function` (**implemented**) · `project` (**implemented**, parsed and
-registered for `javascript` + `typescript` — see §9) · `class` ·
-`stdin-stdout` · `in-place` · `service` (reserved — they parse and validate, but no
-environment is registered, so the language selector renders empty and the panel says why).
-`project` and `service` are the multi-file / running-server types.
+**`test.type` and a check's `kind:` draw from one vocabulary** (`TEST_TYPES`,
+[`src/types/constants.ts`](src/types/constants.ts)). They used to be two tables
+that both listed `function` meaning different things; merging them is what lets
+one multi-package artifact grade each check differently.
+
+| id | delivers a case by | status **in the tree today** |
+|---|---|---|
+| `function` | positional args to a named callable via a generated driver | **implemented** — registered for java · javascript · python · rust · typescript |
+| `build` | — | **implemented** as a check `kind:` — a declared argv exits `0` |
+| `dom-assert` | a declarative `RenderStep[]` against a jsdom mount | **implemented** as a check `kind:` |
+| `css-assert` | as above | **implemented** as a check `kind:` — a **declared** style property or class presence |
+| `call` | as `function` | **reserved** — the name `function` becomes, once the environments re-register under it. Declaring it today leaves the artifact with no environment. |
+| `program` | argv, named flags or stdin; compares what the program writes to `$LEET_OUT` | reserved |
+| `http` | a real request to a booted server on an assigned loopback port | reserved |
+| `class` · `in-place` · `stdin-stdout` | — | reserved |
+| `project` · `service` | — | **legacy shape ids, not test types.** Accepted only as derivation inputs (§2.3). `project` is still the registry key the directory-grading path resolves through; neither is a `kind:` a check may declare. |
+
+A **reserved** id parses and validates, but nothing is registered, so
+`languagesForType()` resolves it to `[]`, the language selector renders empty and
+the panel explains itself instead of dying inside a compiler.
+
+#### The two spellings are exclusive — the mirror rule
+
+A `test:` block declaring `checks:` must **not** also declare a genuine `type:`,
+and `verifyExercise` fails it by name
+([`exercise-verify/package.rules.ts`](src/services/exercise-verify/package.rules.ts)):
+
+```
+package: checks declared but test.type is 'in-place' —
+a checks-graded exercise must not also declare a top-level execution strategy
+```
+
+Without it a check-graded artifact that simply omits `type:` inherits the default
+`function`, which the compatibility matrix permits for a `package` — so it
+verifies as a single empty suite with no `params`, no `returns` and no cases,
+while the checks that actually grade it are never consulted, and the mis-parse
+survives all the way to a run.
+
+**An absent `type:` is the target state, not a violation.** The migration deletes
+that line from every `test:` block declaring `checks:`. Two values are therefore
+tolerated beside `checks:` and only these two: the **default** (an absent `type:`
+is indistinguishable from an explicitly declared default, because the parser
+collapses both before the verifier sees them) and the **legacy shape markers**
+`project` / `service`, so an unmigrated artifact is not failed twice for one
+thing. Any other id is a deliberately named strategy and is refused.
 
 #### 2.5.2 `practice:` block
 
@@ -527,35 +671,72 @@ same structural type system at the declaration level the codegen writes to.
 ## 6. Test environments — capability matrix
 
 How a test executes is data, not a branch. A **test environment** is a
-`(test.type × language)` pair. `testEnvFor(type, langId)` returns the pair or
+`(test type × language)` pair that also declares which **leetcode types** it
+serves. `testEnvFor(testType, langId, leetcodeType?)` returns the pair or
 `undefined`; the absence of a pair **is** the capability matrix, and
-`languagesForType(type)` drives the panel's language selector.
+`languagesForType(testType, leetcodeType?)` drives the panel's language selector.
 
-| `test.type` | Languages with an environment |
-|---|---|
-| `function` | `java`, `javascript`, `python`, `rust`, `typescript` |
-| `project` | `java`, `javascript`, `python`, `rust`, `typescript` |
-| `class`, `stdin-stdout`, `in-place`, `service` | *(none — reserved)* |
+**The registry stays keyed `"<testType>::<language>"`** and filters on the env's
+declared `leetcodeTypes`. A three-key table would be 3 × 12 × 5 slots almost all
+empty, plus a second list to drift out of sync with the first. The third argument
+is currently **optional**: omitted, the lookup behaves exactly as it did before
+the axis existed.
 
-A reserved type has no environment, so nothing grades it. For `class`,
-`stdin-stdout` and `in-place` the selector renders empty and *Solve It* is
-disabled. **`service` is the exception**: it is a *file tree*, so *Solve It*
-writes its `## Files` and opens the tabs, and the selector offers whatever
-languages the artifact declares — the language labels the tabs, it does not
-select a runtime. Run Tests and Submit still refuse it by name
-(`No service test environment for <language>`), so a `service` exercise can be
-opened and edited but never graded, and never reports green.
+| leetcode type | test type | Languages with an environment |
+|---|---|---|
+| `function` | `function` | `java`, `javascript`, `python`, `rust`, `typescript` |
+| `package` · `stack` | `project` | `java`, `javascript`, `python`, `rust`, `typescript` |
+| *(any)* | `call`, `program`, `http`, `class`, `in-place`, `stdin-stdout`, `service` | *(none — reserved)* |
 
-`project` covers the whole runnable set (`projectEnvs = LANG_IDS.map(projectEnvFor)`),
-because it is graded by `build` and `function` checks against a file tree and any
-of these languages can declare those. Its two **render** kinds are narrower:
-`dom-assert` / `css-assert` mount a JavaScript bundle in jsdom, so a check whose
-file is python, rust or java is refused at validation, naming the language.
-`javascriptreact` / `typescriptreact` are display ids with no runtime of their
-own, and a `.jsx` / `.tsx` file maps onto the runnable pair at bundle time.
-A `project` is graded by its declared `checks:` rather than one return value, so
-its environment drives the check runner, not the single-function driver
-described below (§9.2).
+Read that table as *the registry today*, not as the format's ambition: `call`,
+`program` and `http` are declared ids with no environment yet, and `project` is
+still the key the directory-grading path resolves through even though it is a
+shape id on disk (§2.5.1).
+
+**A check `kind:` is not looked up here.** `build`, `dom-assert` and `css-assert`
+have **no** registry entry — `languagesForType('build')` is `[]` — because they
+are dispatched per check by `runOneCheck` against an already-written directory,
+not resolved per language before a buffer is compiled. Both questions draw from
+one vocabulary; only one of them goes through the registry.
+
+The `project` envs cover the whole runnable set (`projectEnvs =
+LANG_IDS.map(projectEnvFor)`), derived rather than hand-listed, because `build`
+and `function` checks are language-agnostic. The two **render** kinds are
+narrower: `dom-assert` / `css-assert` mount a JavaScript bundle in jsdom, so a
+check whose file is python, rust or java is refused at validation, naming the
+language. `javascriptreact` / `typescriptreact` are display ids with no runtime
+of their own, and a `.jsx` / `.tsx` file maps onto the runnable pair at bundle
+time.
+
+### 6.1 Opening is one question, grading is another
+
+They are answered by different authorities, and conflating them is what let a
+`service` artifact parse a tree nothing ever opened.
+
+- **Can it be opened?** `isMultiFile(leetcodeType)` — `shape !== 'buffer'`, so
+  `package` and `stack` both materialise their `## Files` tree and open the tabs.
+- **Can it be graded?** The registry, plus a refusal consulted **before anything
+  is written**: an artifact declaring any check `kind:` that no environment
+  implements is **ungradeable as a whole**, not merely stripped of those checks.
+  The reason names the kinds:
+
+  ```
+  checks declare kind(s) no environment implements yet: http —
+  the whole artifact is ungradeable, not just the checks that parsed.
+  ```
+
+  Grading only the survivors is the false-green vector this closes: a tree whose
+  `http` checks were dropped at parse time would otherwise be graded on its
+  surviving `build` check and reported **solved**.
+
+**Verification is a third question, and it deliberately answers differently.**
+`verifyExercise` still reports structure-only `ok` for such an artifact — *well
+formed* and *executable* are not the same claim — and the CLI says so out loud
+rather than printing a bare `OK`:
+
+```
+structure only for kind(s) http — no environment implements them, nothing executed
+```
 
 The five `function` environments are self-contained (the extension ships zero
 runtime dependencies). The solver's code is written verbatim as its own file and
@@ -610,6 +791,14 @@ canonical name when in doubt: `JavaScript`, `Python`, `Java`.
 read-patch-write per Submit, so a manual edit made between a run's start and its
 Submit is preserved everywhere except those three writer-owned spots.
 
+**The extension cannot author an order violation.** `patchFrontmatterField` —
+its only frontmatter write — replaces `status:` **in place** when the key is
+present, and **inserts it at its canonical index** (§2.2) when it is absent,
+reading that index from the same constant the verify rule checks against. This
+is not a detail: a vault artifact that has never been submitted carries no
+`status:`, and appending one before the closing `---` would land it after
+`tags:` — the extension writing a file its own verifier then rejects.
+
 **The extension never writes a config fence.** Config fences are author-owned
 in full: nothing in the extension creates, rewrites, reorders or deletes one.
 The only body writes it makes are `# Attempts` and the solved `<!-- meta: … -->`
@@ -622,24 +811,29 @@ explicitly from the CLI, not part of the extension.
 
 ---
 
-## 9. `project` and `service` — multi-file exercises
+## 9. `package` and `stack` — multi-file exercises
 
-> **Status, precisely.** `project` is **parsed** — `## Files`, `libs:`, `checks:` and the
-> `check=<name>` case binding all land on the parsed artifact, and `project` is
-> `implemented` in `TEST_TYPES`, registered for `javascript` + `typescript`, and **runnable**:
-> the render driver and all three check kinds (`dom-assert`, `css-assert`, `build`) ship, and a
-> `project` artifact grades end to end. `service` remains reserved — its fields below parse (it
-> shares the `project` grammar) and nothing executes them, because no `service` environment is
-> registered. It does **open**: *Solve It* materialises its `## Files` tree and opens the tabs,
-> the same path `project` takes, because both are file trees (`isMultiFile`). Grading is the
-> separate question and is refused — see §6.
+> **These are `leetcodeType` values, not test types** (§2.1). The ids `project` and
+> `service` that used to sit here were an artifact *shape* wearing a test type's clothing;
+> they survive only as derivation inputs (§2.3) and — for `project` — as the registry key
+> the directory-grading path still resolves through. `project/` remains a directory name
+> under `src/services/test-envs/`, never an id an author writes.
+
+> **Status, precisely.** A `package` is **parsed and graded**: `## Files`, `libs:`, `checks:`
+> and the `check=<name>` case binding all land on the parsed artifact, the render driver and
+> all three check kinds (`dom-assert`, `css-assert`, `build`) ship, and it grades end to end.
+> A `stack` **parses and opens** — it is a file tree, so *Solve It* materialises `## Files`
+> and opens the tabs — and its distinguishing machinery, the `packages:` block and the `http`
+> kind, is **not implemented**: `packages:` has no parser (§9.3) and `http` has no
+> environment, so an artifact declaring `kind: http` is refused for grading as a whole (§6.1)
+> while still verifying structure-only `ok`.
 > Reference artifacts live in the **Obsidian vault**, not in this repo — see CLAUDE.md,
 > *Artifacts live in the vault*.
 
-- **`project`** — the exercise is a file *tree*, opened as several editor tabs and graded
-  by declared **checks** rather than one return value.
-- **`service`** — a `project` whose checks run against servers the extension boots on
-  ports it assigns.
+- **`package`** — one buildable unit in one language, opened as several editor tabs and
+  graded by declared **checks** rather than one return value. **One file or many.**
+- **`stack`** — several packages, each with its own language and ecosystem, whose checks run
+  against servers the extension boots on ports it assigns.
 
 ### 9.1 `## Files`
 
@@ -653,7 +847,7 @@ export function filterInStock() { /* … */ }
 
 | Attribute | Values | Meaning |
 |---|---|---|
-| `path` | POSIX-relative | Location inside the run directory. Never absolute, never `..`, and never rooted at `node_modules/` — that name is **reserved**: the run directory's `node_modules` is a symlink into a package cache shared by every exercise, and a declared write through it would leak into all of them. |
+| `path` | POSIX-relative | Location inside the run directory. Never absolute, never `..`, and never containing a `node_modules` segment **at any depth** — that name is **reserved**: a run directory's `node_modules` holds symlinks into a package cache shared by every exercise, and a declared write through one would leak into all of them. A `stack` links a tree per sub-package, so `client/node_modules/react/index.js` is exactly as dangerous as a root-level one. |
 | `role` | `editable` | Written and opened — the solver's work. **The default** when `role=` is absent. |
 | | `readonly` | Written and opened with a **read-only file mode**, not to be edited. VS Code has no per-editor config scope, so file mode is the mechanism. |
 | | `hidden` | Written, never opened — scaffolding the solver should not see. |
@@ -666,10 +860,17 @@ through the usual alias table (`tsx` → `typescriptreact`, `css` → `css`).
 Paths are reported by the parser exactly as written and are normalised and
 containment-asserted by the **writer**, immediately before it writes — one authority, at
 the point of use, rather than a check the parser could be bypassed around. That same
-authority (`resolveContained`) refuses **any** path whose first normalised segment is
-`node_modules`, not a raw-string check — `src/../../node_modules/x` is caught too — and it
+authority (`resolveContained`) refuses any path with a reserved segment at **any** depth,
+per normalised segment and never as a raw-string check — so `client/node_modules/react` is
+caught while `my_node_modules/x` is unaffected (`src/../../node_modules/x` is refused one step
+earlier still, by the escape check, having left the run directory) — and it
 is the one rule shared by the `## Files` writer, a `build` check's `dir:`, and a `function`
 check's `file:`, so the reservation holds no matter which door a path arrives through.
+
+The comparison is **case-folded** (NFKC, then lower-cased), because APFS and NTFS fold case
+and `NODE_MODULES/react/index.js` reached the same directory on disk. Linux consequently
+over-refuses a directory genuinely named `NODE_MODULES` — the deliberate trade, since a
+guard whose safety depends on which machine graded the artifact is worse than a uniform one.
 
 A file **no check references is ungraded scaffolding, explicitly** (the CSS tab exists
 for the solver, not the grader).
@@ -708,7 +909,7 @@ the cases that bind to it:
 ````markdown
 ```yaml leetcode
 test:
-  type: project
+  timeoutMs: 10000             # no `type:` — see the mirror rule, §2.5.1
   checks:
     - name: catalogue filter     # unique; results group by it
       kind: function             # runs on the existing function environments
@@ -721,16 +922,31 @@ test:
 ```
 ````
 
+**No `type:` line.** A check-graded artifact declares `checks:` and nothing else on that
+axis; declaring both is a named verify failure (§2.5.1).
+
 Note the `#` comments above are **inside** a fence and are YAML comments, not
 headings — §3 covers why that distinction is load-bearing for section slicing.
 
+A `kind:` draws from the one test-type vocabulary (§2.5.1), narrowed to the ids
+`runOneCheck` can actually dispatch:
+
 | `kind` | Compares | Status |
 |---|---|---|
-| `function` | one file's export, through the five `function` environments | parsed |
-| `build` | a declared argv **array** exits 0; optional `dir:` runs it in a contained subtree | parsed |
-| `http` | in-host `fetch` against a booted service (`service: <name>`) | planned (`service` only) |
-| `css-assert` | **declared** style: inline/`style` properties and class presence | parsed |
-| `dom-assert` | DOM after mounting the component and firing events | parsed |
+| `function` | one file's export, through the five `function` environments | **dispatched** |
+| `build` | a declared argv **array** exits 0; optional `dir:` runs it in a contained subtree | **dispatched** |
+| `css-assert` | **declared** style: inline/`style` properties and class presence | **dispatched** |
+| `dom-assert` | DOM after mounting the component and firing events | **dispatched** |
+| `http` | a real request to a booted server on an assigned loopback port | **reserved** — parses, then the whole artifact is refused for grading (§6.1) |
+| `call` · `program` · `class` · `in-place` · `stdin-stdout` | — | reserved, as above |
+| `project` · `service` | — | **not kinds at all.** They are shape ids (§2.5.1); a check declaring one is *unknown*, not reserved, and is dropped with a typo-style warning. |
+
+The two are told apart deliberately, because they send an author to different places:
+`kind: htpp` is a spelling mistake they can fix, while `kind: http` is spelled correctly and
+names a contract this extension has not implemented yet. Both are **dropped** from `checks`
+at parse time — a check nothing can run must not reach the panel's check line, and must
+never count as a red check for `--starter-red`, which requires a starter to fail *on its
+merits*. The drop is hygiene; the artifact-level refusal (§6.1) is what makes it safe.
 
 `css-assert` never asserts layout geometry — the render environment is jsdom, which
 computes no layout, so a width-from-box-model assertion is refused rather than silently
@@ -773,16 +989,15 @@ This widened fence applies to **every** artifact, `function` included: a second 
 under `## Tests`, previously ignored in silence, is now appended to the suite, and one
 malformed fence costs only its own cases.
 
-### 9.3 `services:` (`test.type: service`)
+### 9.3 `packages:` (`leetcodeType: stack`)
 
 A body config fence (§2.5), canonically placed before `## Files`:
 
 ````markdown
 ```yaml leetcode
 test:
-  type: service
   runtime: local          # 'docker' reserved
-services:
+packages:
   - name: api
     dir: server
     install: ["pip", "install", "-r", "requirements.txt"]
@@ -800,12 +1015,15 @@ services:
 ```
 ````
 
-> **`services:` has no parser.** `grep -rn "'services'" src/` finds it only in
-> `KNOWN_FM_KEYS` (plus one JSDoc example) — nothing reads the block, and no
-> `service` environment is registered. The fields below are a documented,
-> **not-yet-implemented** contract; the migrator relocates the block as text
-> like any other config key, and the near-miss key warning knows the name. What
-> is written here is what the implementation must satisfy, not what runs today.
+> **`packages:` has no parser, and the key was renamed ahead of one.** The block
+> is spelled `packages:` on disk — the migration renamed it in the four vault
+> artifacts that declare it — but **nothing reads it**: `BODY_SET_KEYS` and the
+> near-miss key warning still know only the old `services`, so `packages:` is
+> currently an ordinary unknown config key, parsed by nothing and warned about by
+> nothing. The rename landed with the vault write rather than with the parser so
+> that the vault is written exactly once; the parser catches up with the `http`
+> test type. **The fields below are a documented, not-yet-implemented contract** —
+> what the implementation must satisfy, not what runs today.
 
 - `install` / `start` are **argv arrays**, never command strings.
 - `${PORT}` is the **only** substitution, templated into argv and injected as a `PORT`
@@ -821,8 +1039,9 @@ the solver's own candidate locally. The argv rules and the per-registry spec gra
 
 ### 9.4 `libs:` — third-party libraries, per registry
 
-A body config fence (§2.5), canonically placed before `# Setup` (function) or
-before `## Files` (project/service) — next to the code it installs for:
+A body config fence (§2.5), canonically placed before `# Setup` (a `function`
+artifact) or before `## Files` (a `package` / `stack`) — next to the code it
+installs for:
 
 ````markdown
 ```yaml leetcode

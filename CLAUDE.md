@@ -38,29 +38,44 @@ invites a test to guard the copy instead of the real thing.
   resolves (`LeetCode/` by default, the vault root when `useVaultRoot` is on).
 - Need an artifact to validate or reproduce something? Create it in the vault under a **`Tests/`**
   tree — the home for smoke and regression artifacts. There are two, and they are not
-  interchangeable: `<vault>/CoderByte/Tests/{function,project,service}/` holds the per-test-type
-  smoke artifacts (including `CoderByte/Tests/project/react-counter.md`, the `project` smoke
+  interchangeable: `<vault>/CoderByte/Tests/{function,project,service}/` holds the smoke
+  artifacts (including `CoderByte/Tests/project/react-counter.md`, the `package` smoke
   artifact used for the F5 pass), and `<vault>/Tests/{Projects,Services}/` holds the larger
   multi-file spikes. **Paths are vault-relative** — the vault root is whatever the extension's
   settings resolve to, never a `/Users/…` literal.
+  **Those directory names are the pre-axes spelling and the artifacts inside them have moved
+  on**: every file under `Tests/project/` now declares `leetcodeType: package` and every file
+  under `Tests/service/` declares `leetcodeType: stack`. New worked examples land under
+  `<vault>/CoderByte/Tests/{function,package,stack}/` — named for the axis, not for the test
+  type that used to stand in for it. Renaming the two legacy directories is a vault-write task
+  in its own right and has deliberately not been folded into a doc change.
 - Tests in `test/` use **inline fixtures** (`CLAUDE.md`, *Code Style*). A test must never walk
   a vault directory or depend on a machine-local absolute path — it would pass or fail
   depending on whose checkout ran it. To sweep real artifacts, loop the CLI instead:
   ```bash
   fail=0; total=0
   while IFS= read -r f; do
-    grep -q '^type: leetcode' "$f" || continue     # a vault holds plain notes too
+    grep -q '^artifactType: leetcode' "$f" || continue   # a vault holds plain notes too
     total=$((total + 1))
     node scripts/verify-exercise.mjs "$f" || { fail=$((fail + 1)); echo "FAILED: $f"; }
   done < <(find "$VAULT" -name '*.md' \
              -not -path '*/.obsidian/*' -not -path '*/.git/*' -not -path '*/.trash/*')
   echo "verified $total · failures $fail"
+  [ "$total" -ge "${EXPECTED_ARTIFACTS:-75}" ] || { echo "SWEEP DID NOT SEE THE VAULT: $total"; exit 1; }
   ```
-  Two things the loop does that a one-line `find -exec` cannot, both of which have bitten:
-  **it filters on the `type: leetcode` discriminator** (a vault holds ordinary notes —
-  `CoderByte/Tests/README.md` is `.md` and is not an exercise), and **it counts failures**.
-  `find … -exec cmd {} \;` discards every exit status, so a fully-broken sweep prints its
-  failures and still exits `0`.
+  Three things the loop does that a one-line `find -exec` cannot, all of which have bitten:
+  **it filters on the `artifactType: leetcode` discriminator** (a vault holds ordinary notes —
+  `CoderByte/Tests/README.md` is `.md` and is not an exercise), **it counts failures**
+  (`find … -exec cmd {} \;` discards every exit status, so a fully-broken sweep prints its
+  failures and still exits `0`), and **it asserts the count**.
+
+  **`failures 0` is only half a pass — `total` is the other half.** The `grep` that selects
+  candidates reads the very key the format rename rewrote, so a filter left on the old
+  `^type: leetcode` spelling now matches **nothing**: the loop prints `verified 0 · failures 0`
+  and every gate downstream reads it as green. A pass by vacancy. Measured on this vault:
+  **75** of 76 `.md` files are artifacts (the 76th is `CoderByte/Tests/README.md`, correctly
+  excluded) — 62 `function`, 9 `package`, 4 `stack`. Raise `EXPECTED_ARTIFACTS` as the vault
+  grows; a sweep whose filter can silently select an empty set is not a gate.
 
   `verifyExercise` already enforces everything a parse-only guard could (missing title,
   missing `function:`, the case floors, `params`/`returns`) and more.
@@ -71,7 +86,7 @@ invites a test to guard the copy instead of the real thing.
 ```bash
 node scripts/verify-exercise.mjs "<file.md>"                      # conformance + own solutions green
 node scripts/verify-exercise.mjs "<file.md>" --expecteds <r.json> # diff stored vs recomputed expecteds
-node scripts/verify-exercise.mjs "<file.md>" --starter-red        # project/service: starter must FAIL
+node scripts/verify-exercise.mjs "<file.md>" --starter-red        # package/stack: starter must FAIL
 node scripts/grade-candidate.mjs "<file.md>" <lang> <candidate>   # grade an EXTERNAL candidate
 ```
 
@@ -94,7 +109,7 @@ recompute cross-check, and cheap enough to run per exercise.
 
 **Obsidian Artifacts: AI LeetCode Trainer** is a standalone, LeetCode-only sibling of the
 core *Obsidian Artifacts: AI Snippets & Tools* extension (Jira **VSX-35** / **VSX-64…68**).
-It turns `type: leetcode` notes in an Obsidian vault into runnable coding challenges: parse
+It turns `artifactType: leetcode` notes in an Obsidian vault into runnable coding challenges: parse
 → generate boilerplate + a per-language test harness → run solutions against JSON test cases
 via local runtimes (Java / Python / JavaScript / Rust / TypeScript) → show pass/fail in a
 preview panel. No
@@ -122,7 +137,7 @@ src/
 ├── extension.ts        # activate() / deactivate(), command + view registration
 ├── commands/           # VS Code command handlers + run orchestration (picker, solveIt, submit)
 ├── services/           # Domain logic: parse, codegen, runner, challenge/timer, vault, attempts
-│   └── test-envs/      # (test type × language) environments — validate/emit/parse a suite
+│   └── test-envs/      # (test type × language) envs, each declaring the leetcode types it serves
 │       ├── function/   # The five `function` envs, all built by makeFunctionEnv(spec)
 │       └── project/    # Multi-file, check-graded: files writer, installer, render driver, check kinds
 ├── ui/
@@ -260,14 +275,36 @@ resolve. See *Library support* below and `ARTIFACT_LEETCODE_FILE_FORMAT.md` §9.
 > [leetcode-sections.helpers.ts](src/services/leetcode-sections.helpers.ts); when doc and
 > parser disagree, the parser wins and the doc is the bug.
 
-Orientation: a `type: leetcode` note carries **summary-only frontmatter** (`type`, `title`,
-`difficulty`, `status`, `algorithm`, `tags` — and nothing else), a description,
-`## Examples`, `## Tests`, `## Final Tests`, `# Setup`, `# Solutions`, and an
-extension-written `# Attempts`.
+Orientation: an `artifactType: leetcode` note carries **summary-and-shape frontmatter**
+(`artifactType`, `leetcodeType`, `title`, `difficulty`, `status`, `algorithm`, `tags` — in
+**that** canonical order, and nothing else), a description, `## Examples`, `## Tests`,
+`## Final Tests`, `# Setup`, `# Solutions`, and an extension-written `# Attempts`.
+
+**Two independent axes, and this is the whole point of the format.** `leetcodeType`
+(frontmatter) says what the artifact **is** — `function` (one buffer) · `package` (one tree)
+· `stack` (several trees); `test.type` or a check's `kind:` says how a case is **delivered
+and compared**. One value used to answer both questions, which is why four test types were
+reserved and why a `service` could be opened but never graded. Three rules fall out, all
+enforced rather than remembered:
+
+- **`artifactType` is a hard cut.** A bare `type: leetcode` with no `artifactType:` is a
+  named `verifyExercise` failure, as is an absent or non-`leetcode` value. A renamed
+  discriminator is derivable from nothing, so it fails loudly instead of guessing.
+- **`leetcodeType` is derived when absent**, from the legacy `test.type`
+  (`function`→`function`, `project`→`package`, `service`→`stack`, anything else→`function`),
+  reading the **raw** scalar before the unknown-value fallback. A default, not a dual read.
+- **The key order is checked.** `orderViolation`
+  ([frontmatter-order.helpers.ts](src/services/frontmatter-order.helpers.ts)) owns the one
+  canonical list; the parser stays order-independent, so a mis-ordered file still parses and
+  fails with a message. `patchFrontmatterField` inserts an absent `status:` at its canonical
+  index rather than appending — otherwise the extension's own Submit would author a file its
+  own verifier rejects (12 vault artifacts carry no `status:`).
 
 **Execution configuration lives in the body**, in ` ```yaml leetcode ` fences placed next to
 what they configure: `function`/`functions`/`params`/`returns` after the description,
 `test`/`practice` before `## Tests`, `libs`/`services` before `# Setup` or `## Files`.
+(`services:` is the key the **parser** knows; the migration renamed it to `packages:` **on
+disk**, and nothing parses that yet — see `ARTIFACT_LEETCODE_FILE_FORMAT.md` §9.3.)
 Placement is convention — the parser is order-independent — but the marker is not: `yaml`
 first (so Obsidian still highlights it), then a **bare** `leetcode` token, because a
 `## Files` entry always carries `path=` and must never be mistaken for config. Fence content
@@ -308,20 +345,37 @@ Behaviour the spec does **not** cover:
   *everything that measures one* is skipped: the run step, the `params`/`returns` presence
   floors, the input-key match, and the `## Examples ⊆ ## Tests` pin. `ok` there means
   **well-formed**, never **executed** — and `verify-exercise.mjs` says so out loud
-  (`structure only — reserved test.type 'service', nothing executed`) rather than printing a
-  bare `OK`. `service` is check-graded like `project` but has no env, and measuring it against
-  the function floor reported the misleading `structural: missing params`.
-- **`service` opens without grading, and the two questions are answered by different
-  authorities.** *Can it be opened?* is `isMultiFile(type)` ([types/constants.ts](src/types/constants.ts)) —
-  the one home of "this artifact is a file tree", read by the parser, `startChallenge`, and
-  `availableLanguages`, each of which previously asked it with its own `=== 'project'`; that is
-  why `service` parsed a `## Files` tree nothing ever opened. *Can it be graded?* stays the
-  registry's alone, and for `service` the answer is no. So *Solve It* writes the tree and opens
-  the tabs, while Run Tests falls past the `projectDir` branch (which requires `type ===
-  'project'`) into `resolveRunSetup`, which refuses by name. **The `project` gate on that branch
-  is load-bearing:** a service artifact's `http` checks are dropped at parse time as
-  unimplemented, so grading its directory would report the surviving `build` check green and
-  call an ungraded exercise solved.
+  (`structure only — no environment for test.type 'class', so this mode ran neither its
+  solutions nor its checks; --starter-red does grade the checks`) rather than a bare `OK`.
+- **Opening and grading are different questions, answered by different authorities — and the
+  answer is now the leetcode-type axis, not a test-type id.** *Can it be opened?* is
+  `isMultiFile(leetcodeType)` ([types/constants.ts](src/types/constants.ts)), which reads
+  `LEETCODE_TYPES[…].shape !== 'buffer'` — the one home of "this artifact is a file tree",
+  read by the parser, `startChallenge` and `availableLanguages`. `MULTI_FILE_TYPES` is
+  **deleted**; a second list of which ids are trees is exactly the drift the table prevents.
+  *Can it be graded?* is the registry, **plus** an artifact-level refusal.
+- **The old `test.type === 'project'` gate is gone from all three dispatch sites** (Run Tests,
+  Submit, `verify-exercise.mjs --starter-red`) and must not be reintroduced. It could not
+  survive the migration: the format now deletes the `type:` line from every check-graded
+  artifact, so all three comparisons went false on exactly the files that need grading.
+  **What replaces it is not `refusalFor`.** That function asks "is this
+  `(leetcodeType × testType × language)` triple registered?", and on the directory path the
+  answer is always yes — the project envs serve both `package` and `stack`, and the path is
+  reached only once `isMultiFile` is true, so a guard consulting it refuses **nothing**. That
+  guard was built twice, gated green twice, and was inert both times. The faithful signal is
+  the **artifact's own dropped kinds**: `projectGradeRefusal`
+  ([leetcode-run.helpers.ts](src/commands/leetcode-run.helpers.ts)) reads the structured
+  `unimplementedKinds` the project parser records and refuses the artifact **as a whole**,
+  by name, before anything is written — *"checks declare kind(s) no environment implements
+  yet: http — the whole artifact is ungradeable, not just the checks that parsed."* Grading
+  only the survivors is the false-green vector: a tree whose `http` checks were dropped at
+  parse time would otherwise pass on its surviving `build` check and be reported **solved**.
+- **Verification deliberately answers differently from grading.** An artifact with an
+  unimplemented kind is refused for grading and still reports structure-only `ok` — *well
+  formed* and *executable* are different claims — and the CLI prints
+  `structure only for kind(s) http — no environment implements them, so those checks were
+  dropped at parse time and never graded`. Four vault artifacts declare `kind: http`; had the
+  refusal failed verification instead, no vault sweep could ever read `failures 0`.
 
 ### Language registry — the one authority
 
@@ -380,9 +434,22 @@ reads stdin and would block forever inside a driver.
 
 How a test *executes* is data, not an `if/else`. A **test environment** is a
 `(test type × language)` pair that validates a candidate, emits a runnable program, and
-parses its output into per-case outcomes. `testEnvFor(type, langId)` returns
-`TestEnv | undefined` — the absence of a pair **is** the matrix, and `languagesForType(type)`
-drives the language selector directly, so there is no second table to keep in sync.
+parses its output into per-case outcomes, and which declares the **leetcode types** it serves.
+`testEnvFor(testType, langId, leetcodeType?)` returns `TestEnv | undefined` — the absence of a
+pair **is** the matrix, and `languagesForType(testType, leetcodeType?)` drives the language
+selector directly, so there is no second table to keep in sync.
+
+**The `Map` stays keyed `"<testType>::<language>"`** and the lookup *filters* on the env's
+declared `leetcodeTypes`. A three-key table would be mostly empty slots plus a second list to
+drift out of sync with the first. The third argument is **optional and appended**, not
+prepended and required: it has seven call sites spread across three phases of work, and a
+required parameter would have made the tree red in a wave that could only be cleared by
+editing four other concerns' files. It becomes required once the last call site passes it.
+
+**A check `kind:` is not resolved here.** `build` / `dom-assert` / `css-assert` have no
+registry entry at all (`languagesForType('build')` is `[]`) — they are dispatched per check by
+`runOneCheck` against an already-written directory. Both draw from the one `TEST_TYPES`
+vocabulary; only one of them goes through the registry.
 
 The five `function` envs come from `makeFunctionEnv(spec)`
 ([make-function-env.ts](src/services/test-envs/function/make-function-env.ts)), which owns
@@ -417,14 +484,16 @@ returns a plain user-facing message (or `null`) — a Java method wrapped in the
 `class`, a Python `def` nested in a class, a JS buffer that never names the function — so the
 panel shows *"Java setup must be a bare method, not a class"* instead of a compiler dump.
 
-### The `project` test type — checks, not one return value
+### `package` and `stack` — checks, not one return value
 
-A `project` artifact is a **file tree graded by declared checks**
+A `package` (and a `stack`) is a **file tree graded by declared checks**
 ([`test-envs/project/`](src/services/test-envs/project/)); *solved = every check green*. It
 is parsed and graded today, registered for **every `LANG_IDS`** (`projectEnvs =
 LANG_IDS.map(projectEnvFor)`) — derived, not hand-listed, because `build` and `function`
 checks are language-agnostic and a second language list is exactly the drift `LANGUAGES`
-exists to prevent. Never `javascriptreact`/`typescriptreact`: those are display ids with no
+exists to prevent. **`project` survives only as the registry key and the directory name**
+under `src/services/test-envs/`; on disk the axis is `leetcodeType: package | stack`, and
+those envs declare `leetcodeTypes: ['package', 'stack']`. Never `javascriptreact`/`typescriptreact`: those are display ids with no
 runtime, and a `.jsx`/`.tsx` file maps onto its runnable pair at bundle time. The registered
 env is a **capability-matrix entry only** — its `validate` refuses every candidate
 (*"a project exercise is graded as a file tree, not as a single solution buffer"*), because
@@ -442,10 +511,21 @@ grading goes through `gradeProjectDir`, never `runSuite`.
 
 Rules that are load-bearing, not stylistic:
 
-- **`verifyExercise` branches on `project` before the function rules.** `project` is
-  `implemented`, so `languagesForType` is non-empty and `reserved` computes `false`; without
-  that branch a check-graded exercise is measured against `params`/`returns` and the 6/3 case
-  floors it does not have.
+- **`verifyExercise` dispatches on the leetcode type, through a registry — it does not branch.**
+  `VERIFY_RULES: Record<LeetcodeTypeId, VerifyRule>`
+  ([`exercise-verify/rules.registry.ts`](src/services/exercise-verify/rules.registry.ts)) is
+  compiler-exhaustive over the axis, and the function floors (`params`/`returns`, 6 public / 3
+  final, `## Examples ⊆ ## Tests`) live in `function.rules.ts` **and nowhere else** — so a
+  check-graded exercise is never measured against floors it does not have. Adding a type extends
+  the table, never a conditional chain. Four **frontmatter** rules run before any of that, in
+  `frontmatter.rules.ts`: legacy body-set keys, the legacy `type:` rename, canonical key order,
+  and the discriminator's presence and value.
+- **`package.rules.ts` owns the mirror rule:** `checks:` present ⟺ no genuine `test.type`. An
+  absent `type:` is the target state — the migration deletes that line — so the default and the
+  legacy shape markers (`project`/`service`) are tolerated and only a deliberately named strategy
+  is refused. Without it a check-graded artifact that omits `type:` inherits the default
+  `function`, verifies as a single empty `call` suite with no params and no cases, and the checks
+  that actually grade it are never consulted.
 - **Nothing artifact-authored becomes code.** The render driver embeds the entry path, cache
   dir and every case as JSON literals; a case is a declarative `RenderStep[]`
   (`click`/`change`/`text`/`count`/`attr`/`style`), never a snippet to eval.
@@ -480,14 +560,21 @@ Rules that are load-bearing, not stylistic:
   `node_modules/.vite`, `.cache` — mutate what every other exercise resolves from; a cache per
   exercise would isolate them but lose the dedup the lib-set key already buys. Resolution works
   because Node realpaths a symlink *before* walking up for transitive deps.
-- **`node_modules` is a reserved first path segment, matched case-insensitively.** No
-  artifact-declared path — `## Files` `path=`, a `build` check's `dir:`, a `function` or render
-  check's `file:` — may resolve inside it, because a write through a link escapes into the
-  shared cache. The rule lives in `resolveContained` so all four inputs inherit it. The case
-  fold is load-bearing, not tidiness: APFS and NTFS fold case, so `NODE_MODULES/react/index.js`
-  reached the same directory on disk and was a live cache-poisoning vector. Linux consequently
-  over-refuses a directory genuinely named `NODE_MODULES` — the deliberate trade, since a guard
-  whose safety depends on which machine graded the artifact is worse than a uniform one.
+- **`node_modules` is a reserved path segment at *every* depth, matched case-insensitively.**
+  No artifact-declared path — `## Files` `path=`, a `build` check's `dir:`, a `function` or
+  render check's `file:` — may resolve inside one, because a write through a link escapes into
+  the shared cache. The rule lives in `resolveContained` so all four inputs inherit it, and it
+  is per **normalised segment**, never a substring: `client/node_modules/react/index.js` is
+  refused while `my_node_modules/x` is untouched. (`src/../../node_modules/x` is refused too,
+  but by the earlier *escape* check — it leaves the run directory before any segment is read.)
+  **First-segment-only was safe exactly as long as there was one linked tree at the run root**
+  — a `stack` links a tree per sub-package, so a deeper `node_modules` is a real door into the
+  cache. The fold is `normalize('NFKC')` then `toLowerCase()`, and both halves are load-bearing:
+  APFS and NTFS fold case, so `NODE_MODULES/react/index.js` reached the same directory on disk;
+  and `.toLowerCase()` alone is not Unicode case folding, so `node_moduleſ` (U+017F) walked
+  straight through it and poisoned the shared cache end to end. Linux consequently over-refuses
+  a directory genuinely named `NODE_MODULES` — the deliberate trade, since a guard whose safety
+  depends on which machine graded the artifact is worse than a uniform one.
 - **One install per grading run, under one cache key.** `gradeProjectDir` installs the union of
   **every** `parsed.libs[lang]` (all languages — a `libs.python` project must not silently
   install nothing), widened to `renderLibsFor(...)` **only** when a `dom-assert`/`css-assert`
@@ -497,14 +584,24 @@ Rules that are load-bearing, not stylistic:
   *different* key — two cold installs per React exercise, and a linked tree the render driver
   did not resolve from. An empty set installs nothing, links nothing, and leaves no
   `node_modules` in the solver's folder.
-- **Warm means the packages are on disk, not that the marker is.** `isWarm` checks
-  `.leet-installed` **and** a directory per declared spec (`packageNameOf`, the one authority for
-  stripping an `@version`). Trusting the marker alone was a live bug: macOS prunes `/var/folders`
-  by age, so a swept entry kept its marker over an emptied `node_modules` and every later run
-  skipped the install forever — one cache dir read warm holding a single module, another held 86
-  with `jsdom` gone, and five vault artifacts failed with `Cannot find module 'jsdom'`. A failed
-  check reinstalls, repairing the entry in place. Top-level declared packages only; a swept
-  *transitive* dep still reads warm, and npm's reify repairs it on the next reinstall.
+- **Warm means the packages are on disk, not that the marker is — and the probe has to be
+  deep enough to notice.** `isWarm` checks `.leet-installed`, **then** every path the installer
+  declares (`warmPaths`), **then** its optional `verifyWarm`. Each layer was added because the
+  one above it read warm over a broken tree: macOS prunes `/var/folders` **file by file**, so a
+  swept entry keeps its directory skeleton and loses its contents. Probing for a *directory* per
+  spec therefore proved nothing — pnpm now declares `node_modules/<name>/package.json` per spec,
+  and `verifyWarm` additionally checks that every declared **executable** still exists, because
+  a swept `typescript/bin/tsc` sat behind a perfectly present `package.json`.
+- **A failed probe now genuinely repairs the entry — it did not before, and the old text here
+  said it did.** The mechanism, not just the probe, was broken: a relocatable install is built
+  in `<key>.tmp-<pid>` and renamed, and a failing rename was treated as a lost race, so the
+  freshly built repair was **deleted** and the gutted tree kept — every run, forever. Two
+  consecutive verify passes produced the identical `Cannot find module 'jsdom'`; 13 of 75 vault
+  artifacts failed that way. The fix asks the same question up front: only a **warm** winner
+  keeps its directory, a stale squatter is swapped out for the build that just succeeded.
+  **If a cache-shaped failure looks self-healing, prove it heals — run it twice and compare.**
+  Remaining ceiling: top-level declared packages only; a swept *transitive* dep still reads
+  warm, and the package manager's own reify repairs that on the next reinstall this triggers.
 - **`linkModules` never trusts `fs.mkdir(…, { recursive: true })`.** It succeeds silently when
   `runDir/node_modules` is already a symlink to a directory, and every later write then lands in
   the link target. Unreachable in the harness (a fresh `mkdtemp`), but the solve flow keeps its
@@ -541,8 +638,8 @@ Rules that are load-bearing, not stylistic:
   incomplete; the fix would be a hardcoded `--allow-build=<pkg>` list in the installer, never one
   read from an artifact.
 
-**The solve flow is a directory, not a buffer.** *Solve It* on a **multi-file** type
-(`isMultiFile` — `project` **or** `service`) materialises the
+**The solve flow is a directory, not a buffer.** *Solve It* on a **multi-file** leetcode type
+(`isMultiFile(leetcodeType)` — `package` **or** `stack`) materialises the
 starter tree into a fresh `globalStorageUri/attempts/project_<slug>_<run>/`
 ([project-file.service.ts](src/services/project-file.service.ts)) and opens every
 `editable`/`readonly` file as a tab (`hidden` files are written, never opened). The session
@@ -568,17 +665,27 @@ and it is **enforced, not remembered**:
   *Solve It* → *Submit* marked a run solved with nothing written.
 - `--starter-red` catches the residual case the rule above cannot: overlays exist, but the
   starter passes anyway. Opt-in, because it costs a second full grading run. It accepts a
-  `project` **or** a `service` artifact and exits `2` on anything else — so a sweep of every
-  check-graded artifact in the vault is both trees' `project/` and `service/` folders, not just
-  the projects.
+  `package` **or** a `stack` artifact — it dispatches on `isMultiFile(leetcodeType)`, not on a
+  test-type id — and exits `2` on anything else, so a sweep of every check-graded artifact in
+  the vault is both trees' folders, not just the projects.
+  **It exits `2` a second way, and that one is not bad input:** it consults
+  `projectGradeRefusal` before grading anything, so an artifact declaring a kind nothing
+  implements is refused by name. Four vault artifacts declare `kind: http` and exit `2` for
+  exactly that reason — read the message, not the status.
+- **`--starter-red` cannot yet tell "the starter genuinely failed" from "the toolchain is
+  broken", and it reports both as red.** Its pass condition is *some check failed*, so a
+  `Cannot find module 'jsdom'` from a swept cache satisfies it exactly as an incomplete starter
+  does. It is the **only** evidence a check-graded exercise ships unsolved, so read a red
+  result together with the failure detail rather than the exit status alone.
 - **A fence without `path=` is not an overlay.** It parses into `solutionFiles` as nothing at
   all — the failure mode is silent, and it has now bitten three artifacts (the Next.js spike,
-  and both `service` spikes, where the fences are deliberately fragments and say so).
+  and both `stack` spikes, where the fences are deliberately fragments and say so).
 
-`<vault>/CoderByte/Tests/project/react-counter.md` is the smoke artifact: the smallest `project`
-that grades green through `verify-exercise.mjs`, and the file to open for an F5 pass. It ships
-**unsolved** like every other exercise — a stub in `## Files`, the working component in a
-`path=`-carrying `# Solutions` fence.
+`<vault>/CoderByte/Tests/project/react-counter.md` is the smoke artifact: the smallest
+`leetcodeType: package` that grades green through `verify-exercise.mjs`, and the file to open
+for an F5 pass. (The folder keeps its pre-axes name; the artifact inside declares the axis.)
+It ships **unsolved** like every other exercise — a stub in `## Files`, the working component
+in a `path=`-carrying `# Solutions` fence.
 
 **Rust has no serde.** Results serialise through a local `LeetJson` trait (compact, key-sorted
 JSON — `i32`/`f64`/`bool`/`String`/`Vec<T>`/`Option<T>`/`HashMap<String, T>`), not `{:?}` Debug:
