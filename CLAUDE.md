@@ -942,6 +942,17 @@ every setup/solution block whose `data-language` ≠ the selection; `data-langua
 > format, and the ledger. This section stays the authority on *how to write the code*; that
 > file is the authority on *how a plan is structured and executed*.
 
+> **Dispatching workers in parallel? Disjoint `Owns` is not enough.** `tsc` compiles one
+> project, so a sibling worker's half-finished refactor reddens *your* gate: a worker sees
+> missing exports it did not cause, and cannot tell a real regression from a neighbour's
+> in-flight edit. Measured on this repo — two workers with genuinely disjoint file sets, one
+> mid-refactor, and the combined `dist/test/**/*.test.js` run red for both. Two consequences,
+> and the second is the dangerous one: a worker may report a red tree it did not break, **and a
+> worker may read a green tree as evidence when a sibling has not landed yet**. So either give
+> each worker its own git worktree, or — cheaper and usually enough — tell every parallel
+> worker to **gate only its own suite in isolation** and leave the combined gate to the
+> orchestrator at wave close. Never gate a wave until every worker in it has finished.
+
 - **TDD — test first, where it makes sense.** For any pure, `vscode`-free unit (parsers,
   codegen, env `emit`/`validate`, suite selection, helpers) write the failing test **before**
   the code. `test/*.test.ts` is the pattern: `node:assert`, Mocha **TDD** (`suite`/`test`),
