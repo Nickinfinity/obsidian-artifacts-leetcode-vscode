@@ -1,11 +1,12 @@
 import { SOLUTION_MARKER } from '../types/constants.js';
 import { isLangId, type LangId } from '../types/languages.js';
 import type { ParsedLeetCode } from '../types/leetcode.types.js';
-import { javaBoilerplate, javaHarness } from './codegen/java.codegen.js';
-import { jsBoilerplate, jsHarness } from './codegen/javascript.codegen.js';
-import { pythonBoilerplate, pythonHarness } from './codegen/python.codegen.js';
-import { rustBoilerplate, rustHarness } from './codegen/rust.codegen.js';
-import { tsBoilerplate, tsHarness } from './codegen/typescript.codegen.js';
+import { javaBoilerplate, javaHarness, javaProgramBoilerplate } from './codegen/java.codegen.js';
+import { jsBoilerplate, jsHarness, jsProgramBoilerplate } from './codegen/javascript.codegen.js';
+import { pythonBoilerplate, pythonHarness, pythonProgramBoilerplate } from './codegen/python.codegen.js';
+import { rustBoilerplate, rustHarness, rustProgramBoilerplate } from './codegen/rust.codegen.js';
+import { tsBoilerplate, tsHarness, tsProgramBoilerplate } from './codegen/typescript.codegen.js';
+import type { ProgramConfig } from './program-config.helpers.js';
 
 /** Primitive → language-native lookup. */
 const PRIMITIVES: Record<string, Record<string, string>> = {
@@ -136,22 +137,46 @@ export function generateTestHarness(parsed: ParsedLeetCode, language: string): s
  * Per-runnable-language code generators, keyed by `LangId`. Adding a runnable
  * language is one entry here (plus a `TYPE_SYNTAX` row) rather than a new branch
  * in every `if (lang === …)` cascade. Presence in this map is exactly what makes
- * `generateBoilerplate` / `generateTestHarness` emit for a language.
+ * `generateBoilerplate` / `generateTestHarness` / `generateProgramBoilerplate`
+ * emit for a language.
  */
 interface LangCodegen {
 	/** Runnable stdin/stdout wrapper carrying a `<<SOLUTION>>` marker. */
 	boilerplate(parsed: ParsedLeetCode): string;
 	/** Assert-based test harness for the parsed cases. */
 	harness(parsed: ParsedLeetCode): string;
+	/** `program`-type wrapper: reads the declared channel, writes `$LEET_OUT`. */
+	programBoilerplate(parsed: ParsedLeetCode, config: ProgramConfig): string;
 }
 
 const LANG_CODEGEN: Record<LangId, LangCodegen> = {
-	java:       { boilerplate: javaBoilerplate,   harness: javaHarness },
-	python:     { boilerplate: pythonBoilerplate, harness: pythonHarness },
-	javascript: { boilerplate: jsBoilerplate,     harness: jsHarness },
-	rust:       { boilerplate: rustBoilerplate,   harness: rustHarness },
-	typescript: { boilerplate: tsBoilerplate,     harness: tsHarness },
+	java:       { boilerplate: javaBoilerplate,   harness: javaHarness,   programBoilerplate: javaProgramBoilerplate },
+	python:     { boilerplate: pythonBoilerplate, harness: pythonHarness, programBoilerplate: pythonProgramBoilerplate },
+	javascript: { boilerplate: jsBoilerplate,     harness: jsHarness,     programBoilerplate: jsProgramBoilerplate },
+	rust:       { boilerplate: rustBoilerplate,   harness: rustHarness,   programBoilerplate: rustProgramBoilerplate },
+	typescript: { boilerplate: tsBoilerplate,     harness: tsHarness,     programBoilerplate: tsProgramBoilerplate },
 };
+
+/**
+ * Generates the `program`-type Layer-1 starter: same signature shape as
+ * {@link generateBoilerplate}, but the emitted `main` reads its case from the
+ * channel declared in `config` (never a fixed stdin reader when the channel
+ * is `argv`/`flags`) and writes the graded answer to `$LEET_OUT`
+ * (`out-channel.ts`) instead of stdout — the defining trait of the `program`
+ * test type over `call`.
+ *
+ * @param parsed   - Parsed LeetCode artifact (function name, params, returns).
+ * @param language - Target language id.
+ * @param config   - Parsed `program:` block (channel + optional flags).
+ * @returns Program-shaped boilerplate containing exactly one `<<SOLUTION>>`
+ *   marker, or `''` for a language with no registered codegen.
+ *
+ * @example
+ * generateProgramBoilerplate(parsed, 'java', { channel: 'argv' });
+ */
+export function generateProgramBoilerplate(parsed: ParsedLeetCode, language: string, config: ProgramConfig): string {
+	return isLangId(language) ? LANG_CODEGEN[language].programBoilerplate(parsed, config) : '';
+}
 
 /**
  * Converts a JSON value into a language-specific source-code literal.
