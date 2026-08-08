@@ -162,8 +162,17 @@ suite('lib installers', () => {
 			}
 		});
 
-		test('warm means resolved *and* built — a swept target is cold', () => {
-			assert.deepStrictEqual(cargoInstaller.warmPaths([]), ['Cargo.lock', 'target']);
+		/**
+		 * C19: a bare `target` directory survives a file-level sweep — macOS
+		 * prunes `/var/folders` file by file, so the directory skeleton keeps
+		 * existing while the binary inside it is gone. The probe must name the
+		 * built artifact itself, not the directory holding it.
+		 */
+		test('warm means resolved *and* built — a swept release binary is cold', () => {
+			assert.deepStrictEqual(
+				cargoInstaller.warmPaths([]),
+				['Cargo.lock', path.join('target', 'release', 'leet_warm')],
+			);
 		});
 	});
 
@@ -210,6 +219,34 @@ suite('lib installers', () => {
 			assert.strictEqual(
 				mavenInstaller.missingTool,
 				'mvn not found — install Maven to run library-backed Java exercises',
+			);
+		});
+
+		/**
+		 * C19: a bare `jars/` directory survives a file-level sweep, so the
+		 * probe must name the jar file `copy-dependencies` actually writes —
+		 * `<artifactId>-<version>.jar` under the plugin's own defaults.
+		 */
+		test('warm paths name the jar file per coordinate, not the bare directory', () => {
+			const specs = specsOf<MavenLibSpec>('maven', ['com.google.guava:guava:33.3.1-jre']);
+			assert.deepStrictEqual(
+				mavenInstaller.warmPaths(specs),
+				[path.join('jars', 'guava-33.3.1-jre.jar')],
+			);
+		});
+
+		test('warm path includes the classifier when declared', () => {
+			const specs = specsOf<MavenLibSpec>('maven', ['org.x:y:1.0:jar:sources']);
+			assert.deepStrictEqual(mavenInstaller.warmPaths(specs), [path.join('jars', 'y-1.0-sources.jar')]);
+		});
+
+		test('one warm path per coordinate, in declaration order', () => {
+			const specs = specsOf<MavenLibSpec>('maven', [
+				'com.google.guava:guava:33.3.1-jre', 'org.x:y:1.0',
+			]);
+			assert.deepStrictEqual(
+				mavenInstaller.warmPaths(specs),
+				[path.join('jars', 'guava-33.3.1-jre.jar'), path.join('jars', 'y-1.0.jar')],
 			);
 		});
 	});

@@ -70,6 +70,49 @@ export function renderPomXml(specs: readonly MavenLibSpec[]): string {
 }
 
 /**
+ * The extension `dependency:copy-dependencies` gives a copied jar.
+ *
+ * Maven derives this from a coordinate's `type` through its own
+ * `ArtifactHandler` registry, which for a handful of types (`test-jar`,
+ * `java-source`, `javadoc`, `ejb-client`) rewrites both the extension *and*
+ * the classifier rather than using the type text verbatim — e.g. a bare
+ * `type: java-source` resolves to extension `jar` with an auto-added
+ * `sources` classifier. Every other type resolves to itself (`jar` — the
+ * default — plus `war`, `ear`, `pom`, `rar`, `par`, …), which is how a
+ * sources/javadoc jar is actually addressed as a *dependency* in practice:
+ * declared type `jar` with an explicit `sources`/`javadoc` classifier, the
+ * same shape this installer's own fixture (`org.x:y:1.0:jar:sources`) uses.
+ * Those four aliasing types are not resolved correctly here — declaring one
+ * leaves the entry permanently cold rather than silently wrong, since the
+ * probed filename is never the one Maven actually wrote.
+ *
+ * @param spec - One parsed coordinate.
+ * @returns The extension `copy-dependencies` writes the jar with.
+ */
+function extensionFor(spec: MavenLibSpec): string {
+	return spec.packaging ?? 'jar';
+}
+
+/**
+ * The exact filename `dependency:copy-dependencies` writes for one
+ * coordinate, under the plugin's own defaults — `stripVersion=false`,
+ * `stripClassifier=false`, `prependGroupId=false` — confirmed against the
+ * goal's parameter reference rather than assumed.
+ *
+ * @param spec - One parsed coordinate.
+ * @returns e.g. `guava-33.3.1-jre.jar`, or `y-1.0-sources.jar` with a classifier.
+ *
+ * @example
+ * jarFileName({ ecosystem: 'maven', groupId: 'com.google.guava',
+ *   artifactId: 'guava', version: '33.3.1-jre' });
+ * // → 'guava-33.3.1-jre.jar'
+ */
+function jarFileName(spec: MavenLibSpec): string {
+	const classifier = spec.classifier === undefined ? '' : `-${spec.classifier}`;
+	return `${spec.artifactId}-${spec.version}${classifier}.${extensionFor(spec)}`;
+}
+
+/**
  * The maven ecosystem's installer: a generated pom, resolved once, its jars
  * copied into one flat directory a `CLASSPATH` can point at.
  *
@@ -84,7 +127,12 @@ export const mavenInstaller: LibInstaller<MavenLibSpec> = {
 	ecosystem: 'maven',
 	relocatable: true,
 	missingTool: 'mvn not found — install Maven to run library-backed Java exercises',
-	warmPaths: () => [JARS_SUBDIR],
+
+	// One path per copied jar, not the bare `jars/` directory: macOS prunes
+	// `/var/folders` file by file, so a swept entry can keep the directory
+	// while every jar inside it is gone — a directory probe proved nothing.
+	warmPaths: specs => specs.map(spec => path.join(JARS_SUBDIR, jarFileName(spec))),
+
 	parseSpec: parseMavenSpec,
 
 	async install(dir: string, specs: readonly MavenLibSpec[], run: RunArgv): Promise<void> {

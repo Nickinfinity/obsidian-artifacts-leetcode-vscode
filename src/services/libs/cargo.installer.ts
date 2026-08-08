@@ -16,6 +16,17 @@ const WARM_MAIN = 'fn main() {}\n';
 export const CARGO_TARGET_SUBDIR = 'target';
 
 /**
+ * The pre-warm binary's path, relative to the cache dir — what the warm probe
+ * checks instead of the bare `target` directory.
+ *
+ * `cargo build --release` links `leet_warm` (no name-mangling: a snake_case
+ * package name is already a valid binary name) under `target/release/`. POSIX
+ * only, matching the rest of this codebase's toolchain assumptions — no other
+ * installer or `build` check here accounts for a `.exe` suffix either.
+ */
+export const WARM_BINARY = path.join(CARGO_TARGET_SUBDIR, 'release', WARM_PACKAGE);
+
+/**
  * One dependency rendered as a `[dependencies]` entry.
  *
  * Rendered from **validated fields**, never from author text: a crate name, a
@@ -92,10 +103,13 @@ export const cargoInstaller: LibInstaller<CargoLibSpec> = {
 	relocatable: true,
 	missingTool: 'cargo not found — install Rust to run library-backed Rust exercises',
 
-	// `Cargo.lock` proves resolution finished; `target` proves the pre-warm
-	// build did. Without the second, a swept target reads warm and hands the
-	// first solve the cold build this installer exists to avoid.
-	warmPaths: () => ['Cargo.lock', CARGO_TARGET_SUBDIR],
+	// `Cargo.lock` proves resolution finished; the release binary proves the
+	// pre-warm build did. A bare `target` directory is not enough — macOS
+	// prunes `/var/folders` file by file, so a swept target can keep its
+	// directory skeleton while the binary inside it is gone, and a directory
+	// probe would read that as warm and hand the first solve the cold build
+	// this installer exists to avoid.
+	warmPaths: () => ['Cargo.lock', WARM_BINARY],
 
 	parseSpec: parseCargoSpec,
 

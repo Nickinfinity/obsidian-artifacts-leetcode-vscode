@@ -2,8 +2,10 @@ import * as assert from 'node:assert';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import type { LibEcosystem, LibInstaller, ParsedLibSpec } from '../src/services/libs/lib-ecosystem.js';
+import type { LibEcosystem, LibInstaller, ParsedLibSpec, RunArgv } from '../src/services/libs/lib-ecosystem.js';
+import { cargoInstaller } from '../src/services/libs/cargo.installer.js';
 import { ensureLibEnv, libEnvDir } from '../src/services/libs/lib-cache.service.js';
+import { mavenInstaller } from '../src/services/libs/maven.installer.js';
 
 /**
  * Unit tests for the one cache door every install goes through.
@@ -259,10 +261,16 @@ suite('lib cache service', () => {
 				install: async (dir: string) => {
 					buildDirs.push(dir);
 					fs.mkdirSync(path.join(dir, 'product'), { recursive: true });
-					// Another run completes first, marker and all.
+					// Another run completes first, marker and all. Its marker carries a
+					// **count**, because `installEnv` writes one into the build dir before
+					// the rename — so a genuine race winner is always countable, and that
+					// is what separates it from a legacy or swept squatter.
 					fs.mkdirSync(path.join(final, 'product'), { recursive: true });
-					fs.writeFileSync(path.join(final, '.leet-installed'), 'pnpm', 'utf-8');
+					fs.writeFileSync(path.join(final, 'product', 'index.js'), '// entry', 'utf-8');
 					fs.writeFileSync(path.join(final, 'squatter'), 'winner', 'utf-8');
+					// Two files, and the count says two — the marker excludes itself.
+					fs.writeFileSync(
+						path.join(final, '.leet-installed'), JSON.stringify({ files: 2 }), 'utf-8');
 				},
 			});
 
@@ -364,6 +372,152 @@ suite('lib cache service', () => {
 
 			assert.ok(!result.ok);
 			assert.match(result.reason, /registry returned 500/);
+		});
+	});
+
+	/**
+	 * C19 — the real maven and cargo installers, driven through `ensureLibEnv`
+	 * with only the subprocess seam stubbed. Everything else — the pom/manifest
+	 * files, the warm-path check, the marker — runs for real against a real
+	 * `mkdtemp` directory, because the whole defect is about what genuinely
+	 * survives on disk; a mocked `stat` would have passed against the broken
+	 * `warmPaths: () => ['jars']` / `['Cargo.lock', 'target']` just as easily.
+	 */
+	suite('a swept product directory reads cold (C19)', () => {
+
+		test('an emptied jars/ directory reads cold for maven, not warm', async () => {
+			let installs = 0;
+			const run: RunArgv = async (_file, _args, cwd) => {
+				installs++;
+				const jarsDir = path.join(cwd, 'jars');
+				fs.mkdirSync(jarsDir, { recursive: true });
+				fs.writeFileSync(path.join(jarsDir, 'guava-33.3.1-jre.jar'), 'fake-jar-bytes');
+			};
+			const opts = { installers: { maven: mavenInstaller as LibInstaller }, run };
+			const specs = ['com.google.guava:guava:33.3.1-jre'];
+
+			const first = await ensureLibEnv('maven', specs, opts);
+			assert.strictEqual(first.ok, true);
+			assert.strictEqual(installs, 1);
+
+			// macOS sweep: the `jars/` directory itself survives, the jar inside
+			// it does not.
+			if (first.ok) { fs.rmSync(path.join(first.dir, 'jars', 'guava-33.3.1-jre.jar')); }
+
+			const second = await ensureLibEnv('maven', specs, opts);
+			assert.strictEqual(second.ok, true);
+			assert.strictEqual(installs, 2, 'an emptied jars/ dir must reinstall, not read warm');
+		});
+
+		test('an emptied target/release/ reads cold for cargo, not warm', async () => {
+			let installs = 0;
+			const run: RunArgv = async (_file, args, cwd, env) => {
+				if (args[0] === 'fetch') {
+					installs++;
+					fs.writeFileSync(path.join(cwd, 'Cargo.lock'), 'fake-lock');
+				} else if (args[0] === 'build') {
+					const releaseDir = path.join(env?.CARGO_TARGET_DIR ?? '', 'release');
+					fs.mkdirSync(releaseDir, { recursive: true });
+					fs.writeFileSync(path.join(releaseDir, 'leet_warm'), 'fake-binary');
+				}
+			};
+			const opts = { installers: { cargo: cargoInstaller as LibInstaller }, run };
+			const specs = ['serde@^1'];
+
+			const first = await ensureLibEnv('cargo', specs, opts);
+			assert.strictEqual(first.ok, true);
+			assert.strictEqual(installs, 1);
+
+			// macOS sweep: `target/release/` survives, the binary inside it does not.
+			if (first.ok) { fs.rmSync(path.join(first.dir, 'target', 'release', 'leet_warm')); }
+
+			const second = await ensureLibEnv('cargo', specs, opts);
+			assert.strictEqual(second.ok, true);
+			assert.strictEqual(installs, 2, 'an emptied target/release/ must reinstall, not read warm');
+		});
+	});
+
+	/**
+	 * C20 — a swept *transitive* file, one `warmPaths` cannot name up front
+	 * because no spec predicts it. Built against real `mkdtemp` trees: the stub
+	 * installer writes real nested files, the test deletes one with a real
+	 * `fs.rmSync`, and the assertion is on a real second install being spawned.
+	 */
+	suite('a swept transitive file reads cold, via the recorded file count (C20)', () => {
+
+		/** A stub installer whose install writes a small real file tree. */
+		function treeStub(buildTree: (dir: string) => void) {
+			const dirs: string[] = [];
+			const installer: LibInstaller = {
+				ecosystem: 'pnpm',
+				relocatable: true,
+				missingTool: 'pnpm-tool not found',
+				warmPaths: () => ['product'],
+				parseSpec: raw => ({ ok: true, spec: { ecosystem: 'pnpm', name: raw } }),
+				install: async dir => { dirs.push(dir); buildTree(dir); },
+			};
+			return { dirs, installers: { pnpm: installer } };
+		}
+
+		test('a file removed from inside an installed package drops the count below what was recorded', async () => {
+			const spy = treeStub(dir => {
+				fs.mkdirSync(path.join(dir, 'product', 'nested'), { recursive: true });
+				fs.writeFileSync(path.join(dir, 'product', 'index.js'), '// entry');
+				fs.writeFileSync(path.join(dir, 'product', 'nested', 'transitive.js'), '// dep');
+			});
+
+			const first = await ensureLibEnv('pnpm', ['react'], spy);
+			assert.strictEqual(first.ok, true);
+			assert.strictEqual(spy.dirs.length, 1);
+
+			// The declared warm path (`product/`) still exists — only a file
+			// nested inside it is gone, exactly like the real iconv-lite defect.
+			if (first.ok) { fs.rmSync(path.join(first.dir, 'product', 'nested', 'transitive.js')); }
+
+			const second = await ensureLibEnv('pnpm', ['react'], spy);
+			assert.strictEqual(second.ok, true);
+			assert.strictEqual(spy.dirs.length, 2, 'a dropped file count must reinstall, not read warm');
+		});
+
+		test('a marker recording no count — the pre-fix shape — reads COLD and upgrades itself once', async () => {
+			const spy = treeStub(dir => {
+				fs.mkdirSync(path.join(dir, 'product'), { recursive: true });
+				fs.writeFileSync(path.join(dir, 'product', 'index.js'), '// entry');
+			});
+			await ensureLibEnv('pnpm', ['react'], spy);
+			const dir = libEnvDir('pnpm', ['react']);
+
+			// A marker from before this fix: plain ecosystem text, not JSON.
+			fs.writeFileSync(path.join(dir, '.leet-installed'), 'pnpm', 'utf-8');
+
+			const again = await ensureLibEnv('pnpm', ['react'], spy);
+			assert.strictEqual(again.ok, true);
+			// Reversal, and the reason is measured rather than theoretical: treating a
+			// countless marker as "no opinion" left the check inert on every entry that
+			// already existed — the exact entries that were already broken. One
+			// reinstall per legacy entry buys a count; grandfathering buys nothing.
+			assert.strictEqual(spy.dirs.length, 2, 'a legacy non-JSON marker must reinstall once, to earn a count');
+
+			// …and exactly once: the upgraded marker now carries a count, so the next
+			// resolve is warm again. Without this the reversal is a reinstall-every-run bug.
+			const third = await ensureLibEnv('pnpm', ['react'], spy);
+			assert.strictEqual(third.ok, true);
+			assert.strictEqual(spy.dirs.length, 2, 'the upgrade happens once, not on every resolve');
+		});
+
+		test('files added after install never invalidate an otherwise-healthy entry', async () => {
+			const spy = treeStub(dir => {
+				fs.mkdirSync(path.join(dir, 'product'), { recursive: true });
+				fs.writeFileSync(path.join(dir, 'product', 'index.js'), '// entry');
+			});
+			const result = await ensureLibEnv('pnpm', ['react'], spy);
+			assert.strictEqual(result.ok, true);
+
+			if (result.ok) { fs.writeFileSync(path.join(result.dir, 'product', 'extra.log'), 'noise'); }
+
+			const again = await ensureLibEnv('pnpm', ['react'], spy);
+			assert.strictEqual(again.ok, true);
+			assert.strictEqual(spy.dirs.length, 1, 'strictly more files on disk must still read warm');
 		});
 	});
 });

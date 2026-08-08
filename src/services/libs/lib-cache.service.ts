@@ -9,6 +9,7 @@ import type { LibEcosystem, LibInstaller, ParsedLibSpec, RunArgv } from './lib-e
 import { mavenInstaller } from './maven.installer.js';
 import { pipInstaller } from './pip.installer.js';
 import { pnpmInstaller } from './pnpm.installer.js';
+import { safeJsonParse } from '../../utils/safe-json.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -154,20 +155,123 @@ function parseAll(
 		: { ok: false, reason: `refused library specs: ${refused.join('; ')}` };
 }
 
+/** The marker's content once a file count has been recorded. */
+interface WarmMarker {
+	readonly files: number;
+}
+
+/**
+ * Count every file (and symlink) under `dir`, recursing into real
+ * subdirectories only.
+ *
+ * A symlink is counted as one entry and never followed — which is exactly
+ * right for pnpm's layout, where `node_modules/<pkg>` is a symlink into
+ * `.pnpm/…`: the link itself is one file, and the real files it points at are
+ * already being counted where they actually live, inside `.pnpm/`. A sweep
+ * that removes one of *those* real files shrinks the total the same way it
+ * would for any other file.
+ *
+ * `rootMarker`, when given, is skipped at the top level only — so the marker
+ * never counts itself, regardless of whether it exists yet.
+ *
+ * @param dir        - Directory to walk.
+ * @param rootMarker - A filename to skip, but only in `dir` itself.
+ * @returns Total file/symlink count.
+ */
+async function countFiles(dir: string, rootMarker?: string): Promise<number> {
+	const entries = await fs.readdir(dir, { withFileTypes: true }).catch(() => []);
+	let count = 0;
+	for (const entry of entries) {
+		if (rootMarker !== undefined && entry.name === rootMarker) { continue; }
+		count += entry.isDirectory() ? await countFiles(path.join(dir, entry.name)) : 1;
+	}
+	return count;
+}
+
+/**
+ * The file count a previous install recorded, or `null` when there is none to
+ * read.
+ *
+ * `null` covers two cases identically, and both must pass rather than fail:
+ * a marker written **before** this check existed (plain ecosystem text, not
+ * JSON — every real cache on a developer's machine today) and a marker whose
+ * JSON happens to carry no `files` field. Either way "no recorded count" reads
+ * as "no opinion", never as cold — a strict fix here must not turn into a
+ * reinstall stampede across every warm cache on the machine that adopts it.
+ *
+ * @param dir - The cache directory for this set.
+ * @returns The recorded count, or `null`.
+ */
+async function recordedFileCount(dir: string): Promise<number | null> {
+	const raw = await fs.readFile(path.join(dir, WARM_MARKER), 'utf-8').catch(() => null);
+	if (raw === null) { return null; }
+	const parsed = safeJsonParse<Partial<WarmMarker>>(raw);
+	return typeof parsed?.files === 'number' ? parsed.files : null;
+}
+
+/**
+ * Whether the tree still holds at least as many files as were recorded at
+ * install time.
+ *
+ * This is the check that closes the *transitive*-dependency gap every other
+ * layer misses: `warmPaths` only names paths a spec can predict up front
+ * (`node_modules/<pkg>/package.json`), so a sweep that takes a file *inside*
+ * an installed package — `.pnpm/iconv-lite@0.6.3/node_modules/iconv-lite/lib/
+ * bom-handling.js`, with its siblings left intact — passed every other probe
+ * and still failed at run time with `Cannot find module './bom-handling'`.
+ * Five committed artifacts failed exactly that way, with the marker present
+ * and every per-spec `package.json` present too.
+ *
+ * Strict less-than only: a tool writing into the cache after install (a lock
+ * file, a `.vite` dir, a log) only ever adds, and must never invalidate an
+ * otherwise-healthy entry.
+ *
+ * **A marker carrying no count reads COLD, and that is a deliberate reversal.**
+ * The first cut treated "no recorded count" as "no opinion" and passed, to
+ * avoid re-installing every pre-existing entry on the machine that adopts
+ * this. Measured consequence: it made the whole check **inert on exactly the
+ * entries that were already broken**. A real entry
+ * (`pnpm-fd0dbf12c304de57`) held a legacy plain-text marker over a tree whose
+ * `iconv-lite/lib/bom-handling.js` had been swept, passed every probe, and
+ * failed five committed artifacts on two consecutive runs — after this fix
+ * had supposedly landed. Grandfathering the old format grandfathers the
+ * defect with it.
+ *
+ * The cost of the reversal is bounded and one-time: each pre-existing entry
+ * reinstalls **once**, then carries a count and is checked properly forever.
+ * That is a few cold resolves on one machine, against a defect that otherwise
+ * never repairs.
+ *
+ * @param dir - The cache directory for this set.
+ * @returns `true` only when a count is recorded and the tree still meets it.
+ */
+async function fileCountHolds(dir: string): Promise<boolean> {
+	const recorded = await recordedFileCount(dir);
+	if (recorded === null) { return false; }
+	return await countFiles(dir, WARM_MARKER) >= recorded;
+}
+
 /**
  * Whether a previous install of this exact set completed **and is still there**.
  *
- * Requires the marker **and** every declared warm path. The marker alone is a
- * poisoned entry: macOS prunes `/var/folders` by age, and a swept cache kept
- * its marker over an emptied tree, so every later run read warm and skipped
- * the install forever — one real cache dir claimed warm holding a single
- * module, another held 86 with `jsdom` gone. A failed probe reinstalls, which
- * repairs the entry in place.
+ * Requires the marker, every declared warm path, the installer's own deeper
+ * probe, and — last, because it is the most expensive of the four — that the
+ * tree still holds as many files as were recorded at install time. Each layer
+ * was added because the one before it read warm over a broken tree: macOS
+ * prunes `/var/folders` **file by file**, so a swept entry keeps its directory
+ * skeleton and loses its contents. Probing for a bare *directory* per spec
+ * therefore proved nothing — every installer now names a **file** per spec
+ * (pnpm: `node_modules/<name>/package.json`; maven: the copied jar; cargo:
+ * the release binary), `verifyWarm` additionally checks that a declared
+ * **executable** still exists, and the file-count pass below catches a sweep
+ * that took a file *inside* a package while leaving its declared marker paths
+ * untouched. A failed probe reinstalls, which repairs the entry in place.
  *
- * ponytail: top-level declared packages only — a sweep that took a *transitive*
- * dependency and left its parent still reads warm. The package manager's own
- * reify repairs that on the reinstall this triggers; walking the whole tree per
- * resolve costs far more than it saves.
+ * Remaining ceiling: the count is content-blind. A sweep that removes N files
+ * and something unrelated (a tool's own write) adds N or more back is
+ * indistinguishable from a healthy entry — this catches a net loss, not a
+ * swap. That is a narrower gap than "any transitive dependency ever," which
+ * is what this check replaces.
  *
  * @param dir       - The cache directory for this set.
  * @param warmPaths - Relative paths the installer says must exist.
@@ -183,9 +287,8 @@ async function isWarm(
 	for (const relative of installer.warmPaths(specs)) {
 		if (!await exists(path.join(dir, relative))) { return false; }
 	}
-	// The deeper probe runs last: it is the expensive one, and it only makes
-	// sense once every path it would inspect is known to be there.
-	return installer.verifyWarm ? installer.verifyWarm(dir, specs) : true;
+	if (installer.verifyWarm && !await installer.verifyWarm(dir, specs)) { return false; }
+	return fileCountHolds(dir);
 }
 
 /**
@@ -211,7 +314,8 @@ async function installEnv(
 	try {
 		await fs.mkdir(buildDir, { recursive: true });
 		await installer.install(buildDir, specs, run);
-		await fs.writeFile(path.join(buildDir, WARM_MARKER), installer.ecosystem, 'utf-8');
+		const marker: WarmMarker = { files: await countFiles(buildDir, WARM_MARKER) };
+		await fs.writeFile(path.join(buildDir, WARM_MARKER), JSON.stringify(marker), 'utf-8');
 		if (buildDir !== dir) { await renameIntoPlace(buildDir, dir, installer, specs); }
 		return { ok: true, dir };
 	} catch (e) {

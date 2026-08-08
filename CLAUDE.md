@@ -595,7 +595,10 @@ Rules that are load-bearing, not stylistic:
   swept entry keeps its directory skeleton and loses its contents. Probing for a *directory* per
   spec therefore proved nothing — pnpm now declares `node_modules/<name>/package.json` per spec,
   and `verifyWarm` additionally checks that every declared **executable** still exists, because
-  a swept `typescript/bin/tsc` sat behind a perfectly present `package.json`.
+  a swept `typescript/bin/tsc` sat behind a perfectly present `package.json`. **All four
+  installers now probe files, not directories** — maven a jar per coordinate rather than a bare
+  `jars/`, cargo the pre-warm `target/release/leet_warm` rather than a bare `target/`. Those two
+  were left behind by the fix that repaired pnpm, and an emptied directory read warm for months.
 - **A failed probe now genuinely repairs the entry — it did not before, and the old text here
   said it did.** The mechanism, not just the probe, was broken: a relocatable install is built
   in `<key>.tmp-<pid>` and renamed, and a failing rename was treated as a lost race, so the
@@ -604,8 +607,29 @@ Rules that are load-bearing, not stylistic:
   artifacts failed that way. The fix asks the same question up front: only a **warm** winner
   keeps its directory, a stale squatter is swapped out for the build that just succeeded.
   **If a cache-shaped failure looks self-healing, prove it heals — run it twice and compare.**
-  Remaining ceiling: top-level declared packages only; a swept *transitive* dep still reads
-  warm, and the package manager's own reify repairs that on the next reinstall this triggers.
+- **A swept *transitive* dependency is caught too, by counting files — and the old claim that it
+  self-repaired was false.** `warmPaths` can only name paths a spec predicts up front, so a sweep
+  that took a file *inside* an installed package went unseen: `.pnpm/iconv-lite@0.6.3/…/lib/
+  bom-handling.js` gone with its siblings intact, every per-spec `package.json` present, five
+  committed artifacts failing `Cannot find module './bom-handling'` identically on two
+  consecutive runs. This file used to say the package manager's own reify repaired that "on the
+  next reinstall this triggers" — **no reinstall was ever triggered, because the probe passed.**
+  So `.leet-installed` now records the install's **file count** and a tree holding fewer files
+  reads cold. Strictly fewer: a tool writing into the cache after install only ever adds, and
+  must not invalidate a healthy entry. A marker with **no** recorded count reads **cold**, and
+  that reversal was measured, not reasoned: treating a countless marker as "no opinion" was
+  tried first, to avoid re-installing every pre-existing entry — and it made the whole check
+  **inert on exactly the entries that were already broken.** One real entry kept its legacy
+  plain-text marker over a swept tree, passed every probe, and failed the same five artifacts on
+  two consecutive runs *after the fix had supposedly landed*. Grandfathering the old marker
+  format grandfathers the defect with it. Each pre-existing entry now reinstalls **once**, earns
+  a count, and is checked properly forever — bounded, one-time, and the alternative is a fix
+  that never repairs anything that predates it.
+  **The real remaining ceiling:** a count is not a manifest, so a sweep that removes one file
+  while something else adds another still balances out, and a file swept *and later recreated*
+  restores the count. Both are far narrower than what this replaced, neither is repaired
+  automatically, and the walk costs one directory traversal per otherwise-warm resolve —
+  paid only by artifacts that declare `libs:`.
 - **`linkModules` never trusts `fs.mkdir(…, { recursive: true })`.** It succeeds silently when
   `runDir/node_modules` is already a symlink to a directory, and every later write then lands in
   the link target. Unreachable in the harness (a fresh `mkdtemp`), but the solve flow keeps its
