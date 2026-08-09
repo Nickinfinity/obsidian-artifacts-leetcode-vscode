@@ -14,8 +14,8 @@ import {
 	renderControls,
 	renderNavHeader,
 	renderSetups,
-	renderTestCounts,
 } from './leetcodePreview.controls.js';
+import { renderTestCounts } from './leetcodePreview.counts.js';
 import { renderLibChips } from './leetcodePreview.libs.js';
 
 /**

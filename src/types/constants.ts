@@ -322,6 +322,35 @@ export const MAX_SUITE_TIMEOUT_MS = 60_000;
 export const COMPILE_TIMEOUT_MS = 120_000;
 
 /**
+ * What one **process start** costs a `program` suite, per case (P5).
+ *
+ * A `call` suite runs one process for every case — the `__LEET__` batch
+ * protocol exists precisely so a compiled language pays its startup once. A
+ * `program` suite cannot: argv and stdin differ per case, so each case *is* an
+ * invocation. Charging nine JVM starts to the solver's algorithm and then
+ * reporting `timeout` blames code that was never slow, so the suite budget
+ * adds this per case on top of `test.timeoutMs`.
+ *
+ * Sized against the slowest start a runnable language has (a cold JVM with a
+ * classpath), not the fastest (`node`), because one number covers all five.
+ * It is deliberately not `test.timeoutMs`-derived: an artifact tightening its
+ * per-case budget must not also shrink the allowance for machinery it does
+ * not control.
+ */
+export const PROGRAM_SPAWN_OVERHEAD_MS = 2_000;
+
+/**
+ * Hard ceiling on a whole `program` suite, regardless of case count.
+ *
+ * Higher than `MAX_SUITE_TIMEOUT_MS` for the reason the constant above
+ * exists: the same nine cases pay nine startups here and one there, so
+ * reusing the `call` cap would re-introduce the misattributed timeout it is
+ * meant to prevent. Matched to the render check's ceiling — the other budget
+ * that covers repeated out-of-process work.
+ */
+export const MAX_PROGRAM_SUITE_TIMEOUT_MS = 180_000;
+
+/**
  * Line prefix every generated test program stamps on its result lines.
  *
  * Exists so an incidental `print` / `console.log` in the solver's own code

@@ -4,8 +4,21 @@ import { testEnvFor } from './env.registry.js';
 
 /**
  * Answers "is this `(leetcodeType × testType × language)` triple implemented?"
- * — the one function the panel, the run handlers and `grade-candidate` consult
- * before grading anything, and the "SEC" half of VSX-153 (T1.6).
+ * — the "SEC" half of VSX-153 (T1.6).
+ *
+ * **Its one production caller is the preview panel** (`renderLanguageRow`,
+ * which turns this into the hint shown when no language can be offered). This
+ * docblock claimed three — the panel, the run handlers and `grade-candidate` —
+ * while **nothing at all** called it, and the claim outlived two attempts to
+ * wire it. Both attempts failed for the same reason, which is worth stating
+ * here so a third does not start: on the directory-grading path this function
+ * refuses **nothing**, because `projectEnvFor` declares
+ * `leetcodeTypes: ['package', 'stack']` and that path is reached only once
+ * `isMultiFile` is already true. The run handlers' real authority is the
+ * artifact's own dropped kinds (`projectGradeRefusal`), and the per-file
+ * question is answered directly by `testEnvFor` at `project.runner.ts`.
+ * **Keep this list honest** — a documented consumer that does not exist is
+ * how both inert guards were born.
  *
  * It is a thin wrapper over `testEnvFor`, deliberately: the registry
  * (`env.registry.ts`) is already the single capability matrix — "the absence
@@ -28,9 +41,9 @@ import { testEnvFor } from './env.registry.js';
  * `build` check alone.
  *
  * `verifyExercise` does **not** call this — it keeps today's `reserved`
- * semantics (well-formed vs. executable are different questions). This
- * function governs **grading** alone: the panel, Run Tests, Submit and
- * `grade-candidate` (which reports an unimplemented triple as exit `3`).
+ * semantics (well-formed vs. executable are different questions). What this
+ * function governs is what a solver is **offered**: the panel will not put a
+ * language in front of someone when no environment could run it.
  *
  * @param leetcodeType - The artifact's shape (`function` / `package` / `stack`).
  * @param testType     - The execution strategy — a single suite's `test.type`

@@ -1,8 +1,8 @@
 import { resolveLangId } from '../../services/language-map.service.js';
-import { hasFinalTests, publicCount } from '../../services/leetcode-suite.helpers.js';
+import { refusalFor } from '../../services/test-envs/compatibility.helpers.js';
 import { languagesForType } from '../../services/test-envs/env.registry.js';
 import { isMultiFile, PRACTICE_OPTIONS } from '../../types/constants.js';
-import type { ChallengePhase, ParsedLeetCode, ProjectCheck } from '../../types/leetcode.types.js';
+import type { ChallengePhase, ParsedLeetCode } from '../../types/leetcode.types.js';
 import { escHtml } from '../../utils/html.helpers.js';
 
 /**
@@ -70,6 +70,10 @@ export function renderNavHeader(phase: ChallengePhase, remainingLabel = '', unli
 export function renderLanguageRow(p: ParsedLeetCode): string {
 	const langs = availableLanguages(p);
 	if (langs.length === 0) {
+		const refusal = refusalHint(p);
+		if (refusal !== null) {
+			return `<div class="hint">${escHtml(refusal)}</div>`;
+		}
 		return `<div class="hint">No test environment for <code>${escHtml(p.test.type)}</code> in any language this exercise provides.</div>`;
 	}
 	if (langs.length === 1) {
@@ -89,6 +93,59 @@ export function renderLanguageRow(p: ParsedLeetCode): string {
 }
 
 /**
+ * The precise reason no language is offered, when `refusalFor` can actually
+ * name one — the C15 wiring. `renderLanguageRow` falls back to its generic
+ * hint whenever this returns `null`.
+ *
+ * Three guards, each closing a way this could go wrong:
+ *
+ * - **`p.leetcodeType` must be declared.** It is optional on `ParsedLeetCode`
+ *   only for hand-built fixtures elsewhere in the codebase; defaulting it here
+ *   (`?? 'function'`) would grade a `stack` as a buffer, so an undeclared axis
+ *   keeps today's generic hint rather than guessing one.
+ * - **A check-graded artifact is never asked.** `refusalFor` answers `null`
+ *   for every triple a `package`/`stack` with `checks:` can reach — it grades
+ *   through `gradeProjectDir`, never the suite registry `refusalFor` reads —
+ *   so consulting it there is the inert guard already shipped twice (T1.16).
+ * - **There must be a declared language to name.** With none at all, the
+ *   generic "no language this exercise provides" hint already says more.
+ *
+ * @param p - Parsed LeetCode artifact.
+ * @returns The refusal sentence, or `null` to keep the generic hint.
+ *
+ * @example
+ * refusalHint({
+ *   leetcodeType: 'function', test: { type: 'class', timeoutMs: 5000 },
+ *   setups: [{ language: 'java', code: '' }], solutions: [], checks: undefined, …
+ * });
+ * // → "function artifacts cannot run 'class' in java — no environment is registered for that combination."
+ */
+function refusalHint(p: ParsedLeetCode): string | null {
+	if (p.leetcodeType === undefined) { return null; }
+	if ((p.checks ?? []).length > 0) { return null; }
+	const lang = firstDeclaredLanguage(p);
+	if (lang === undefined) { return null; }
+	return refusalFor(p.leetcodeType, p.test.type, lang);
+}
+
+/**
+ * The first language this exercise declares a `# Setup` or `# Solutions`
+ * block for, canonicalised through `resolveLangId` — the same "first
+ * declared" precedence `availableLanguages` unions from.
+ *
+ * @param p - Parsed LeetCode artifact.
+ * @returns Canonical `languageId` of the first declared block, or `undefined`
+ *   when neither section declares one.
+ *
+ * @example
+ * firstDeclaredLanguage({ setups: [{ language: 'js', code: '' }], solutions: [], … }); // → 'javascript'
+ */
+function firstDeclaredLanguage(p: ParsedLeetCode): string | undefined {
+	const raw = p.setups[0]?.language ?? p.solutions[0]?.language;
+	return raw === undefined ? undefined : resolveLangId(raw);
+}
+
+/**
  * Render the hidden `#langSelector` marker — the language, with no visible
  * chooser. Used once the language is fixed rather than chosen: a running
  * challenge (locked to the language Solve It started), or a single-language
@@ -105,74 +162,6 @@ export function renderLanguageRow(p: ParsedLeetCode): string {
 export function renderLanguageMarker(langId: string): string {
 	if (langId === '') { return ''; }
 	return `<input type="hidden" id="langSelector" value="${escHtml(langId)}">`;
-}
-
-/**
- * Render the test-count line: `2 public tests · 3 final tests`.
- *
- * Final cases are counted but never shown — a solver may know how many hidden
- * cases will grade them without learning what those cases are. An artifact
- * without a `## Final Tests` section reads simply `2 tests`.
- *
- * A **project** is graded by `checks:`, not by `## Tests`, so it gets one line
- * per check instead. Reading the function suite told a build-only exercise it
- * had `0 tests`, and hid a second check that gated the solver's Submit.
- *
- * @param p - Parsed LeetCode artifact.
- * @returns HTML for the counts line(s).
- *
- * @example
- * renderTestCounts(parsed); // → '<div class="tests-count">2 public tests · 3 final tests</div>'
- * @example
- * renderTestCounts(project); // → '…>app builds (build) · pass/fail on exit status</div>'
- */
-export function renderTestCounts(p: ParsedLeetCode): string {
-	const checks = p.checks ?? [];
-	if (checks.length > 0) {
-		return checks.map(renderCheckCount).join('');
-	}
-
-	const pub = publicCount(p);
-	if (!hasFinalTests(p)) {
-		return `<div class="tests-count">${pub} tests</div>`;
-	}
-	return `<div class="tests-count">${pub} public tests &middot; ${p.finalTests.length} final tests</div>`;
-}
-
-/**
- * One count line for a single declared check: its name, kind, and how it grades.
- *
- * The name is artifact-authored free text, so it goes through `escHtml`; `kind`
- * is a narrowed literal union and needs none.
- *
- * @param check - The declared check.
- * @returns HTML for that check's line.
- *
- * @example
- * renderCheckCount({ name: 'counter', kind: 'dom-assert', cases: c, publicCount: 3, file: 'a.jsx' });
- * // → '<div class="tests-count">counter (dom-assert) · 3 public · 1 hidden</div>'
- */
-function renderCheckCount(check: ProjectCheck): string {
-	const label = `${escHtml(check.name)} (${check.kind})`;
-	return `<div class="tests-count">${label} &middot; ${gradedBy(check)}</div>`;
-}
-
-/**
- * How a check decides pass or fail: a public/hidden case split, or an exit
- * status for `build`, which binds no cases at all.
- *
- * @param check - The declared check.
- * @returns Human-readable grading summary; never a case value.
- *
- * @example
- * gradedBy({ kind: 'build', … }); // → 'pass/fail on exit status'
- */
-function gradedBy(check: ProjectCheck): string {
-	if (check.kind === 'build') { return 'pass/fail on exit status'; }
-
-	const hidden = check.cases.length - check.publicCount;
-	const shown = `${check.publicCount} public`;
-	return hidden > 0 ? `${shown} &middot; ${hidden} hidden` : shown;
 }
 
 /**
@@ -430,7 +419,7 @@ function renderSolvedSummary(p: ParsedLeetCode): string {
  * availableLanguages(parsed); // → ['javascript', 'python']
  */
 export function availableLanguages(p: ParsedLeetCode): string[] {
-	const supported = new Set(languagesForType(p.test.type));
+	const supported = new Set(languagesForType(p.test.type, p.leetcodeType));
 	// A multi-file type the registry has no env for (`service`) is still
 	// *attemptable*: Solve It writes its `## Files` tree and opens the tabs, and
 	// the language only labels them. Gating it on the registry left the solver
