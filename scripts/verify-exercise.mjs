@@ -181,8 +181,29 @@ if (starterRed) {
 	const refusal = projectGradeRefusal(md, parsed);
 	if (refusal) { die(`verify-exercise: ${refusal}`, 2); }
 
-	const { runProjectChecks } = await import(
+	const { runProjectChecks, runProgramArtifact } = await import(
 		pathToFileURL(join(dist, 'test-envs', 'project', 'project.runner.js')).href);
+	const { isProgramSuite } = await import(
+		pathToFileURL(join(dist, 'test-envs', 'program', 'program.runner.js')).href);
+
+	// A `program` suite is graded by **cases**, not checks. Without this fork it
+	// fell into the check path, found an empty check list, and reported
+	// `PRE-SOLVED … every check passes` — a confident wrong answer about an
+	// artifact that declares no checks at all.
+	if (isProgramSuite(parsed)) {
+		const results = await runProgramArtifact(parsed, { withSolutions: false });
+		const failed = results.filter(r => !r.passed);
+		if (failed.length > 0) {
+			console.log(`RED  ${mdPath} — starter fails ${failed.length}/${results.length} case(s), as it must`);
+			for (const r of failed) {
+				const detail = r.error ?? `got ${r.actual}`;
+				console.log(`  case ${r.index}: ${firstLines(detail)}`);
+			}
+			process.exit(0);
+		}
+		die(`PRE-SOLVED ${mdPath}: every case passes against the starter — a solver `
+			+ 'would be marked solved without writing anything', 1);
+	}
 
 	// This mode grades by check **kind**, so it runs whatever machinery exists for
 	// the kinds declared — independently of whether the `test.type` has an env.

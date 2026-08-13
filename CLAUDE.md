@@ -439,9 +439,19 @@ reads stdin and would block forever inside a driver.
 How a test *executes* is data, not an `if/else`. A **test environment** is a
 `(test type × language)` pair that validates a candidate, emits a runnable program, and
 parses its output into per-case outcomes, and which declares the **leetcode types** it serves.
-`testEnvFor(testType, langId, leetcodeType?)` returns `TestEnv | undefined` — the absence of a
-pair **is** the matrix, and `languagesForType(testType, leetcodeType?)` drives the language
+`testEnvFor(testType, langId, leetcodeType?)` returns `RegisteredEnv | undefined` — the absence
+of a pair **is** the matrix, and `languagesForType(testType, leetcodeType?)` drives the language
 selector directly, so there is no second table to keep in sync.
+
+**One registry, two execution contracts.** `RegisteredEnv = TestEnv | ProgramEnv`. A `TestEnv`
+runs the whole suite in **one** process and recovers outcomes from `__LEET__` sentinel lines; a
+`ProgramEnv` starts **one process per case** and reads each answer back from `$LEET_OUT` (P5,
+D6). Neither can implement the other without a lying stub — `TestEnv.emit` returns a *string*
+`run` executed once, and `parse(stdout)` is the wrong channel entirely — so they are a union,
+discriminated by `isBatchEnv(env)`, which every caller narrows with **before** reaching
+`runSuite`. They share the registry because it answers *can this triple be graded?*, which is a
+different question from *how does a suite execute?*: keeping `program` out of it would leave the
+matrix, `refusalFor` and `coverage-sweep.mjs` all reporting an implemented cell as missing.
 
 **The `Map` stays keyed `"<testType>::<language>"`** and the lookup *filters* on the env's
 declared `leetcodeTypes`. A three-key table would be mostly empty slots plus a second list to
@@ -705,6 +715,10 @@ and it is **enforced, not remembered**:
   `Cannot find module 'jsdom'` from a swept cache satisfies it exactly as an incomplete starter
   does. It is the **only** evidence a check-graded exercise ships unsolved, so read a red
   result together with the failure detail rather than the exit status alone.
+  **The `program` path inherits this through different code**, so a fix must cover both:
+  `runProgramArtifact` reports "never ran" as a **one-element** failed suite, which
+  `--starter-red` then prints as `starter fails 1/1 case(s), as it must` and exits `0` — the
+  same confusion, reached via a missing toolchain rather than a swept cache.
 - **A fence without `path=` is not an overlay.** It parses into `solutionFiles` as nothing at
   all — the failure mode is silent, and it has now bitten three artifacts (the Next.js spike,
   and both `stack` spikes, where the fences are deliberately fragments and say so).
@@ -781,6 +795,17 @@ Rules that are load-bearing, not stylistic:
   *success*: both runs wanted that directory. A venv opts out because its console scripts carry
   absolute shebangs, so a renamed venv has a dead `bin/pip`, `pytest` and `uvicorn`. For the
   same reason pip is invoked as `<venv>/bin/python3 -m pip`, never the `pip` shim.
+- **The venv is created with `--clear`, and that is the *repair*, not hygiene.** Reusing the
+  directory is what makes a swept venv unrepairable: `python -m venv <existing dir>` runs
+  `ensurepip` only when it **creates** the environment, so it leaves the wreck exactly as it
+  found it, and the next line — `<venv>/bin/python3 -m pip` — then fails with *"No module named
+  `pip.__main__`"* on every run, forever. Measured on a real entry: the marker recorded **878**
+  files and **7** survived, `site-packages/pip/__main__.py` among the casualties, and five vault
+  artifacts failed identically with no way back except deleting the directory by hand. The
+  count probe (`VSX-186`) correctly read that entry **cold** — detection was never the problem,
+  the in-place rebuild was. A healthy entry reads warm and never reaches `install`, so nothing
+  pays for the rebuild. **Proven by running the same artifact twice with nothing deleted:** pass
+  one repaired it, pass two was warm and green.
 - **Manifests are rendered from validated fields.** `Cargo.toml` and `pom.xml` are files a
   toolchain obeys; author text in one is TOML/XML injection. The pnpm installer authors **no**
   manifest at all — `pnpm add --dir` writes its own.
@@ -807,6 +832,13 @@ Rules that are load-bearing, not stylistic:
   transitive-sweep ceiling npm has.
 - **`runSuite` is the only resolver.** A project's `function` check reaches libraries through
   the same call, so `gradeProjectDir` hands directories to `build` and render checks only.
+- **A `program` suite resolves *no* libraries yet, and that is a stated ceiling, not an
+  oversight.** `runProgramSuite` accepts a `libDir` and consumes it exactly as the function envs
+  do (`CLASSPATH` / `NODE_PATH` / `VIRTUAL_ENV` / `CARGO_TARGET_DIR`), but no caller computes one:
+  the run handlers and `runProgramArtifact` both pass none. So a `package` declaring `libs:` and
+  graded by `program` builds without them and fails naming the missing import — a loud failure,
+  never a false green. Closing it means resolving through `ensureLibEnv` at those two call sites,
+  which is where the second resolver would otherwise creep in; do it there, not inside the runner.
 
 ### Test runner
 

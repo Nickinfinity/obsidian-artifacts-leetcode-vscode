@@ -359,7 +359,7 @@ one multi-package artifact grade each check differently.
 | `dom-assert` | a declarative `RenderStep[]` against a jsdom mount | **implemented** as a check `kind:` |
 | `css-assert` | as above | **implemented** as a check `kind:` — a **declared** style property or class presence |
 | `call` | as `function` | **reserved** — the name `function` becomes, once the environments re-register under it. Declaring it today leaves the artifact with no environment. |
-| `program` | argv, named flags or stdin; compares what the program writes to `$LEET_OUT` | reserved |
+| `program` | argv, named flags or stdin; compares what the program writes to `$LEET_OUT` | **implemented** for `leetcodeType: package` — registered for java · javascript · python · rust · typescript. One **process per case**, so it is the one test type whose suite budget is not `cases × timeoutMs` (§2.5.5). |
 | `http` | a real request to a booted server on an assigned loopback port | reserved |
 | `class` · `in-place` · `stdin-stdout` | — | reserved |
 | `project` · `service` | — | **legacy shape ids, not test types.** Accepted only as derivation inputs (§2.3). `project` is still the registry key the directory-grading path resolves through; neither is a `kind:` a check may declare. |
@@ -441,6 +441,69 @@ non-empty value directly after `params:` (other than `[]`) yields an empty list
 | `returns` | string | yes | `''` | Generic return type. |
 
 ---
+
+#### 2.5.5 `program:` block
+
+Configures the `program` test type: how a case reaches the program, and which
+file is its entry point. Only meaningful for `leetcodeType: package`.
+
+```yaml leetcode
+program:
+  channel: argv        # argv (default) · flags · stdin
+  entry: Main.java     # optional — defaults per language (below)
+  flags: [--nums, --target]   # `flags` channel only, paired with `params:` in order
+```
+
+| Field | Type | Required | Default | Notes |
+|---|---|---|---|---|
+| `channel` | `argv` \| `flags` \| `stdin` | no | `argv` | How a case's `input:` map is delivered. An unknown value degrades to `argv` **and warns**. |
+| `entry` | path | no | per language | Relative to the run directory. `Main.java` · `main.py` · `main.js` · `main.ts` · `main.rs`. |
+| `flags` | string[] | no | — | Read only for `channel: flags`; paired positionally with `params:`. |
+
+**A `program` package declares `## Tests` cases, not `checks:`** — the two are
+mutually exclusive (§2.5.1's mirror rule), and the fork is read from the
+artifact: a `program:` block with no `checks:` is graded as a suite, everything
+else by its checks. `params:` is **required**, because it names the order a
+case's input is serialised in.
+
+Serialisation, per channel: a string value passes bare, anything else through
+`canonicalJson`. On `argv`/`flags` a NUL byte is refused by name (Node rejects
+it at the C level anyway; this turns an opaque spawn crash into a case-level
+failure). `--flag value` is emitted as two argv elements, never `--flag=value`.
+
+**One process per case, and the budget says so.** Unlike every other test type,
+a `program` suite cannot share one process — argv and stdin differ per case — so
+the budget is `cases × (timeoutMs + 2 s spawn allowance)`, capped at 180 s, and
+each case is killed on its own clock. A slow case therefore fails alone instead
+of spending the allowance of the cases after it.
+
+#### 2.5.6 `$LEET_OUT` — where the graded value goes
+
+**The graded value is not the program's stdout.** The harness mints one file
+path per case and passes it as the `LEET_OUT` environment variable; the program
+writes its answer there as JSON, and that file is what is compared against
+`expected`.
+
+```python
+import json, os, sys
+answer = solve(sys.argv[1])
+with open(os.environ["LEET_OUT"], "w") as f:
+    json.dump(answer, f)
+```
+
+Two consequences, both deliberate:
+
+- **stdout is entirely the solver's.** `print` / `console.log` / `System.out`
+  are free for debugging and cannot corrupt grading — unlike the `__LEET__`
+  sentinel protocol the `call` types use, where stray output on the same stream
+  is a real hazard.
+- **A program that writes no file fails.** A missing `$LEET_OUT` is a failed
+  case with a named reason, never an empty-and-therefore-green one — the same
+  rule that makes a killed sentinel run fail rather than pass. The file is also
+  size-capped (64 KiB) before it is read, so a runaway write fails its case
+  instead of the editor.
+
+The `# Setup` starter every language emits already carries this write.
 
 ## 3. Body sections
 

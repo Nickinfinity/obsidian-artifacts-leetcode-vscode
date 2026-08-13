@@ -1,4 +1,5 @@
 import * as path from 'node:path';
+import type { ProgramChannel, ProgramConfig } from '../types/leetcode.types.js';
 
 /**
  * `program:` config-block grammar (T2.1).
@@ -6,10 +7,11 @@ import * as path from 'node:path';
  * `program` is the delivery mechanism for a `program`-type case: a candidate
  * that reads its case from argv, named flags or stdin and writes its answer
  * to `$LEET_OUT` (`ARTIFACT_LEETCODE_FILE_FORMAT.md` §2.5.1,
- * `out-channel.ts`). `program` is still a **reserved** test type — no
- * environment registers for it yet — so this module only parses the block;
- * nothing consumes it until a later task wires an environment behind it, and
- * this file is deliberately not wired into `parseLeetCode`.
+ * `out-channel.ts`). As of wave 2.D `program` is **implemented** for
+ * `leetcodeType: package`: `parseLeetCode` calls this parser, the block lands
+ * on `ParsedLeetCode.program`, and `program.runner.ts` executes the suite one
+ * process per case. Until then this module had **no caller at all** — the
+ * grammar existed and no artifact's block was ever read.
  *
  * Every field is read through a fixed three-name allowlist (`channel`,
  * `entry`, `flags`) via explicit branches, never a dynamic
@@ -30,17 +32,11 @@ import * as path from 'node:path';
  * braces.
  */
 
-/** How a `program`-type candidate receives its case. */
-export type ProgramChannel = 'argv' | 'flags' | 'stdin';
-
-/** Parsed `program:` config block. */
-export interface ProgramConfig {
-	channel: ProgramChannel;
-	/** Relative path to the program's entry point — shape-guarded, not yet resolved. */
-	entry?: string;
-	/** Named flags, in declared order — paired with `params:` positionally by the consumer. */
-	flags?: string[];
-}
+// The shape lives in `src/types/leetcode.types.ts` — `ParsedLeetCode` carries a
+// `program?: ProgramConfig`, and a type there may not import from `services/`.
+// Re-exported so every existing consumer keeps importing it from the module
+// that parses it.
+export type { ProgramChannel, ProgramConfig } from '../types/leetcode.types.js';
 
 const KV_RE = /^(\w+):\s*(.*)$/;
 const VALID_CHANNELS: ReadonlySet<string> = new Set(['argv', 'flags', 'stdin']);

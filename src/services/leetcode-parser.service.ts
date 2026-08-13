@@ -21,6 +21,7 @@ import {
 } from './leetcode-config-blocks.helpers.js';
 import { parseFrontmatter } from './leetcode-parser.helpers.js';
 import { parseLibDeclarations, parseProjectArtifact } from './project-parser.helpers.js';
+import { parseProgramConfig } from './program-config.helpers.js';
 
 export { defaultPracticeConfig, defaultTestConfig } from './leetcode-parser.helpers.js';
 
@@ -73,7 +74,16 @@ export function parseLeetCode(content: string): ParsedLeetCode {
 
 	// `fm.leetcodeTypeWarning` rides beside the config/lib warnings — it is the
 	// same kind of "declared but unusable, fell back" author-facing problem.
-	const extraWarnings = [...config.warnings, ...libWarnings];
+	// `program:` is read for every shape, exactly as `libs:` is: the block
+	// configures how a case is delivered, and the parser stays out of the
+	// question of which shapes may declare it (§C.4 is the verifier's job).
+	// Absent block ⇒ `undefined`, so a `JSON.stringify` of any artifact that
+	// declares none is byte-identical to before — the parser golden must not
+	// move for this.
+	const programWarnings: string[] = [];
+	const program = parseProgramConfig(configText.split(/\r?\n/), m => programWarnings.push(m));
+
+	const extraWarnings = [...config.warnings, ...libWarnings, ...programWarnings];
 	if (fm.leetcodeTypeWarning) { extraWarnings.push(fm.leetcodeTypeWarning); }
 	const warnings = collectWarnings(project?.warnings, legacyKeys, extraWarnings);
 
@@ -100,6 +110,7 @@ export function parseLeetCode(content: string): ParsedLeetCode {
 		files:        project?.files,
 		libs,
 		checks:       project?.checks,
+		program,
 		solutionFiles: project?.solutionFiles,
 		warnings,
 	};

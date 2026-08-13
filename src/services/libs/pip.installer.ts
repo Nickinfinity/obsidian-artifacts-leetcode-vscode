@@ -70,7 +70,28 @@ export const pipInstaller: LibInstaller<PipLibSpec> = {
 	parseSpec: parsePipSpec,
 
 	async install(dir: string, specs: readonly PipLibSpec[], run: RunArgv): Promise<void> {
-		await run(HOST_PYTHON, ['-m', 'venv', dir], dir);
+		// `--clear` is the repair, not tidiness. `install` runs only when the
+		// entry read **cold**, and the cold case that actually happens on macOS
+		// is a `/var/folders` sweep that guts the venv in place. Plain
+		// `python -m venv <existing dir>` runs `ensurepip` only when it *creates*
+		// the environment, so it leaves a swept venv untouched and the next line
+		// — `<venv>/bin/python3 -m pip` — then fails with "No module named
+		// pip.__main__" on every run, forever. Measured on a real entry: marker
+		// recorded 878 files, 7 survived, five vault artifacts unrepairable
+		// without deleting the directory by hand.
+		//
+		// Rebuilding a *healthy* venv is not a cost this pays: a healthy entry
+		// reads warm and never reaches `install` at all.
+		//
+		// ponytail: two concurrent **cold** resolves of the same key now clear
+		// each other's tree mid-install, because pip opts out of the
+		// tmp-then-rename dance every other installer uses (its console scripts
+		// carry absolute shebangs, so a renamed venv is a dead venv). The blast
+		// radius is a *failed install reported as failed* — never a false green,
+		// and the next resolve rebuilds — so it is a ceiling rather than a
+		// defect. Upgrade path: an `O_EXCL` lock file per key, held for the
+		// install, with the loser waiting rather than clearing.
+		await run(HOST_PYTHON, ['-m', 'venv', '--clear', dir], dir);
 		if (specs.length === 0) { return; }
 		await run(
 			path.join(dir, VENV_PYTHON),

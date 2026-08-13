@@ -1,6 +1,7 @@
 import type { TestTypeId } from '../../types/leetcode.types.js';
 import type { LeetcodeTypeId } from '../../types/leetcode-type.js';
 import type { TestEnv } from './env.types.js';
+import { PROGRAM_ENVS, type ProgramEnv } from './program/make-program-env.js';
 import { javaFunctionEnv } from './function/java.env.js';
 import { javascriptFunctionEnv } from './function/javascript.env.js';
 import { pythonFunctionEnv } from './function/python.env.js';
@@ -8,8 +9,39 @@ import { rustFunctionEnv } from './function/rust.env.js';
 import { typescriptFunctionEnv } from './function/typescript.env.js';
 import { projectEnvs } from './project/project.env.js';
 
+/**
+ * Anything the registry can hold.
+ *
+ * Two execution contracts, one matrix. A `TestEnv` runs a whole suite in one
+ * process and recovers outcomes from `__LEET__` sentinel lines; a `ProgramEnv`
+ * starts **one process per case** and reads each answer back from `$LEET_OUT`
+ * (P5, D6). Neither can implement the other's interface without a lying stub,
+ * but both answer the same registry question — *can this
+ * `(leetcodeType × testType × language)` triple be graded?* — and that question
+ * is what the panel's selector, `refusalFor` and the coverage sweep all read.
+ * Leaving `program` out would have made the matrix report an implemented cell
+ * as missing.
+ *
+ * Discriminate with {@link isBatchEnv} before handing one to `runSuite`.
+ */
+export type RegisteredEnv = TestEnv | ProgramEnv;
+
+/**
+ * Does this env run its whole suite in one process (`runSuite`'s contract)?
+ *
+ * @param env - Any registered environment.
+ * @returns True for a `TestEnv`; false for a `ProgramEnv`, which needs
+ *   `runProgramSuite` and a run directory instead.
+ *
+ * @example
+ * isBatchEnv(javaFunctionEnv); // → true
+ */
+export function isBatchEnv(env: RegisteredEnv): env is TestEnv {
+	return env.type !== 'program';
+}
+
 /** `"<type>::<language>"` → env. The absence of a key *is* the capability matrix. */
-const registry = new Map<string, TestEnv>();
+const registry = new Map<string, RegisteredEnv>();
 
 /** Compose the registry key for a `(type × language)` pair. */
 function keyFor(type: TestTypeId, language: string): string {
@@ -28,7 +60,7 @@ function keyFor(type: TestTypeId, language: string): string {
  * @example
  * register(javaFunctionEnv);
  */
-export function register(env: TestEnv): void {
+export function register(env: RegisteredEnv): void {
 	registry.set(keyFor(env.type, env.language), env);
 }
 
@@ -49,7 +81,7 @@ export function register(env: TestEnv): void {
  */
 export function testEnvFor(
 	type: TestTypeId, language: string, leetcodeType?: LeetcodeTypeId,
-): TestEnv | undefined {
+): RegisteredEnv | undefined {
 	const env = registry.get(keyFor(type, language));
 	if (!env) { return undefined; }
 	return servesShape(env, leetcodeType) ? env : undefined;
@@ -73,7 +105,7 @@ export function testEnvFor(
  * servesShape(javaFunctionEnv, 'stack');    // → false
  * servesShape(javaFunctionEnv, undefined);  // → true
  */
-function servesShape(env: TestEnv, leetcodeType?: LeetcodeTypeId): boolean {
+function servesShape(env: RegisteredEnv, leetcodeType?: LeetcodeTypeId): boolean {
 	return leetcodeType === undefined || env.leetcodeTypes.includes(leetcodeType);
 }
 
@@ -115,3 +147,9 @@ register(typescriptFunctionEnv);
 // `project` grades by declared checks, not one return value; it registers under
 // the runnable ids only — `javascriptreact`/`typescriptreact` have no runtime.
 projectEnvs.forEach(register);
+
+// `program` starts one process per case rather than one per suite, so it is a
+// `ProgramEnv` rather than a `TestEnv` — see `RegisteredEnv`. It registers here
+// all the same, because this table is the capability matrix and a `package` +
+// `program` artifact is gradeable as of wave 2.D.
+PROGRAM_ENVS.forEach(register);

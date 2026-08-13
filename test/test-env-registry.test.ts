@@ -1,5 +1,5 @@
 import * as assert from 'node:assert';
-import { languagesForType, register, testEnvFor } from '../src/services/test-envs/env.registry.js';
+import { isBatchEnv, languagesForType, register, testEnvFor } from '../src/services/test-envs/env.registry.js';
 import type { TestEnv } from '../src/services/test-envs/env.types.js';
 
 /**
@@ -47,8 +47,11 @@ suite('test-env registry', () => {
         test('built-in function envs declare no external dependency', () => {
             for (const lang of ['java', 'javascript', 'python']) {
                 const env = testEnvFor('function', lang);
-                assert.strictEqual(env?.requires, undefined);
-                assert.strictEqual(env?.detect, undefined);
+                // The registry now holds two execution contracts, so narrow
+                // before reading a `TestEnv`-only field rather than casting.
+                assert.ok(env && isBatchEnv(env), `${lang} must resolve a batch env`);
+                assert.strictEqual(env.requires, undefined);
+                assert.strictEqual(env.detect, undefined);
             }
         });
     });

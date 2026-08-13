@@ -45,12 +45,25 @@ suite('lib installers', () => {
 
 	suite('pip', () => {
 
-		test('creates a venv, then installs through its own interpreter', async () => {
+		/**
+		 * `--clear` is not hygiene, it is the repair. `install` runs only when
+		 * the entry already read **cold**, and the cold case that actually
+		 * happens is a `/var/folders` sweep that guts the venv: measured on a
+		 * real cache entry, its marker recorded 878 files and **7** survived,
+		 * with `site-packages/pip/__main__.py` among the casualties. Plain
+		 * `python -m venv <existing dir>` runs `ensurepip` only when it creates
+		 * the environment, so it leaves that wreck exactly as it found it and
+		 * the very next step — `<venv>/bin/python3 -m pip` — fails with
+		 * *"No module named pip.__main__"*, forever. Five vault artifacts
+		 * failed that way, on every run, with no path back except deleting the
+		 * directory by hand.
+		 */
+		test('the venv is created with --clear, so a swept environment is rebuilt rather than reused', async () => {
 			const runner = spy();
 			await pipInstaller.install(dir, specsOf<PipLibSpec>('pip', ['numpy>=2,<3']), runner.run);
 
 			assert.deepStrictEqual(runner.calls[0], {
-				file: 'python3', args: ['-m', 'venv', dir], env: undefined,
+				file: 'python3', args: ['-m', 'venv', '--clear', dir], env: undefined,
 			});
 			assert.deepStrictEqual(runner.calls[1], {
 				file: path.join(dir, 'bin', 'python3'),
@@ -87,7 +100,11 @@ suite('lib installers', () => {
 				dir, specsOf<PipLibSpec>('pip', ['numpy', 'requests[socks]==2.32.3']), runner.run,
 			);
 
-			const literals = new Set(['-m', '--no-input']);
+			// Every flag this installer may emit, spelled out. The guard's job is
+			// to catch a **spec-derived** value that happens to look like a flag,
+			// so a new literal is added here deliberately and never by widening
+			// the predicate.
+			const literals = new Set(['-m', '--no-input', '--clear']);
 			for (const call of runner.calls) {
 				for (const arg of call.args) {
 					assert.ok(!arg.startsWith('-') || literals.has(arg), `unexpected flag '${arg}'`);

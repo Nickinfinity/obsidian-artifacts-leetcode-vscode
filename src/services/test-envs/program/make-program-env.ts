@@ -1,6 +1,7 @@
 import * as path from 'node:path';
 import { MAX_PROGRAM_SUITE_TIMEOUT_MS, PROGRAM_SPAWN_OVERHEAD_MS } from '../../../types/constants.js';
 import type { LangId } from '../../../types/languages.js';
+import type { LeetcodeTypeId } from '../../../types/leetcode-type.js';
 import type { FileSpec, ParsedLeetCode } from '../../../types/leetcode.types.js';
 import { ecosystemFor } from '../../libs/lib-ecosystem.js';
 import { libEnvVars } from '../../libs/lib-env.helpers.js';
@@ -13,15 +14,20 @@ import { PROGRAM_SPECS, type ProgramSpec } from './specs.js';
 /**
  * `program` test type — factory for the five language envs (T2.5, VSX-166).
  *
- * **`ProgramEnv` is not a `TestEnv` and is not registered in `env.registry.ts`.**
+ * **`ProgramEnv` is not a `TestEnv`** — though it *is* registered (below).
  * `TestEnv.emit` returns a *string* `run` command and `TestEnv.parse` recovers
  * outcomes from `__LEET__` sentinel lines on stdout — `program` violates both:
  * argv/stdin differ per case (P5, so a suite cannot share one process the way
  * the `__LEET__` batch protocol assumes) and the graded value comes from
  * `$LEET_OUT` (`out-channel.ts`), never stdout. Implementing `TestEnv` here
- * would mean two lying stub members. **Consumed by T2.8 (wave 2.D); nothing
- * calls this yet** — this module is a pure, self-contained factory exactly
- * like T2.1/T2.2/T2.4 before it.
+ * would mean two lying stub members.
+ *
+ * It **is** registered, though (wave 2.D): the registry answers the capability
+ * matrix question — *can this triple be graded?* — which is not the same
+ * question as *how does a suite execute?*. `RegisteredEnv` is the union, and
+ * `isBatchEnv` is what a caller narrows with before reaching `runSuite`.
+ * Consumers: `program.runner.ts` (the per-case loop), the run handlers, and
+ * `package.rules.ts` through `runProgramArtifact`.
  *
  * `emit` produces the suite-*invariant* plan only: the candidate file, the
  * once-per-suite build (P1), the per-case run argv *template* (the runner
@@ -32,12 +38,12 @@ import { PROGRAM_SPECS, type ProgramSpec } from './specs.js';
 
 /**
  * Context `emit` needs. Deliberately its own type rather than a reuse of
- * `TestEnv`'s `EnvContext` (`env.types.ts`): `EnvContext.parsed` has no
- * `program:` field yet — `program-config.helpers.ts` is "deliberately not
- * wired into `parseLeetCode`" as of T2.1 — so the parsed `ProgramConfig`
- * travels alongside `parsed` here rather than through it. `EnvContext.cases`
- * is dropped too: this factory never sees individual cases (P5 — that is the
- * wave-2.D runner's job), so carrying it here would be a field nothing reads.
+ * `TestEnv`'s `EnvContext` (`env.types.ts`): the block travels as its own
+ * field so this factory takes exactly what it reads, and `EnvContext.cases` is
+ * dropped because it never sees individual cases (P5 — that is the runner's
+ * job). `ParsedLeetCode.program` does now exist (wave 2.D wired
+ * `parseProgramConfig` into `parseLeetCode`); passing it explicitly keeps
+ * `emit` callable from a test without building a whole artifact.
  */
 export interface ProgramEnvContext {
 	/** Parsed artifact. Only `.files` (the `## Files` tree) is read here, for `fileCount`/`hasManifest` (P4). */
@@ -112,8 +118,24 @@ function withLibrarySeam(language: LangId, libDir: string): { env?: Record<strin
  * not a `TestEnv`.
  */
 export interface ProgramEnv {
+	/**
+	 * Test type this env implements — the registry discriminant.
+	 *
+	 * A `ProgramEnv` sits in the same registry as a `TestEnv` because the
+	 * registry answers the **capability matrix** question ("can this triple be
+	 * graded?"), which is not the same question as "how does a suite execute?".
+	 * Keeping `program` out of it would leave the matrix — and the coverage
+	 * sweep that reads it — reporting an implemented cell as missing.
+	 */
+	readonly type: 'program';
 	/** Canonical language this env targets. */
 	readonly language: LangId;
+	/**
+	 * Which artifact shapes this env grades. A `program` is a built-and-run
+	 * tree, so `package` — never `function`, whose one buffer is a bare
+	 * callable with no entry point to invoke (§C.4).
+	 */
+	readonly leetcodeTypes: readonly LeetcodeTypeId[];
 	/**
 	 * Emit this run's plan: the candidate file, optional build, the per-case
 	 * run argv template, the library seam, and the case-delivery facts.
@@ -142,11 +164,36 @@ export interface ProgramEnv {
  * @example
  * makeProgramEnv(PROGRAM_SPECS.rust);
  */
+/**
+ * The entry file this run uses, relative to the run directory: what the
+ * artifact declared, else the language's default basename.
+ *
+ * Exported because two callers need the same answer and must not compute it
+ * twice — `emit` writes the candidate there, and a live project run reads the
+ * solver's edited file back from there. A second `?? defaultEntry` at a call
+ * site is exactly the drift this repo keeps paying for.
+ *
+ * Still **relative**: containment is `resolveContained`'s job, at the point of
+ * use, against the run directory (S8).
+ *
+ * @param program  - The artifact's parsed `program:` block.
+ * @param language - Canonical language, for its default basename.
+ * @returns The declared entry, or the language's default.
+ *
+ * @example
+ * entryFileFor({ channel: 'argv' }, 'python'); // → 'main.py'
+ */
+export function entryFileFor(program: ProgramConfig, language: LangId): string {
+	return program.entry ?? PROGRAM_SPECS[language].defaultEntry;
+}
+
 export function makeProgramEnv(spec: ProgramSpec): ProgramEnv {
 	return {
+		type: 'program',
 		language: spec.language,
+		leetcodeTypes: ['package'],
 		emit(ctx: ProgramEnvContext, runDir: string): ProgramPlan {
-			const relEntry = ctx.program.entry ?? spec.defaultEntry;
+			const relEntry = entryFileFor(ctx.program, spec.language);
 			// The containment authority (S8) — belt under the parser's braces:
 			// `parseProgramConfig` already shape-guards `entry` at parse time, but
 			// this call is what actually resolves and asserts containment, and it

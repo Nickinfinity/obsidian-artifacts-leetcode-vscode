@@ -106,10 +106,17 @@ function selectJava(entryPath: string, hasLibs: boolean, hasManifest: boolean): 
 		};
 	}
 
-	const build = ['javac', entryPath];
+	// `-d .` puts the `.class` at the run root rather than beside its source.
+	// Without it a **nested** entry (`src/Main.java`) compiles into `src/`,
+	// which the libs branch's classpath never contains: that branch drops
+	// `-cp` so the cache's `CLASSPATH=<jars>/*:.` can govern, and its `.` is
+	// the run root. The no-libs branch happened to survive nesting because its
+	// `-cp` was `dirname(entryPath)` — one output location for both branches
+	// is what makes the two agree instead of agreeing by accident.
+	const build = ['javac', '-d', '.', entryPath];
 	return hasLibs
 		? { build, run: ['java', className] }
-		: { build, run: ['java', '-cp', path.dirname(entryPath), className] };
+		: { build, run: ['java', '-cp', '.', className] };
 }
 
 /**
@@ -136,7 +143,13 @@ function selectRust(entryPath: string, hasLibs: boolean, hasManifest: boolean): 
 	if (hasLibs || hasManifest) {
 		return {
 			build: ['cargo', 'build', '--offline', '--release', '--quiet'],
-			run: ['cargo', 'run', '--offline', '--release', '--quiet'],
+			// The trailing `--` is load-bearing, not decoration: the runner
+			// appends each case's argv (P5), and `cargo run` would otherwise
+			// read those as **its own** options — `cargo run 5 7` is
+			// *unexpected argument*, and an artifact-declared `--flag` would
+			// reach cargo's parser instead of the candidate's. The light
+			// `rustc` path needs none, since the binary is invoked directly.
+			run: ['cargo', 'run', '--offline', '--release', '--quiet', '--'],
 		};
 	}
 	return { build: ['rustc', '-O', entryPath, '-o', RUST_LIGHT_BINARY], run: [`./${RUST_LIGHT_BINARY}`] };
@@ -194,7 +207,7 @@ const SELECTORS: Record<LangId, (entryPath: string, fileCount: number, hasLibs: 
  *
  * @example
  * selectRunner({ language: 'java', entryPath: '/tmp/x/Main.java', fileCount: 1, hasLibs: false, hasManifest: false });
- * // → { build: ['javac', '/tmp/x/Main.java'], run: ['java', '-cp', '/tmp/x', 'Main'] }
+ * // → { build: ['javac', '-d', '.', '/tmp/x/Main.java'], run: ['java', '-cp', '.', 'Main'] }
  */
 export function selectRunner(input: RunnerSelectionInput): RunnerCommand {
 	const { language, entryPath, fileCount, hasLibs, hasManifest } = input;

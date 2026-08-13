@@ -1,6 +1,25 @@
 import type { LeetcodeTypeId } from './leetcode-type.js';
 
 /**
+ * How a `program`-type candidate receives its case.
+ *
+ * Lives here rather than beside its parser because `src/types/` is where a
+ * domain concept is named before it has behaviour, and because
+ * `ParsedLeetCode` carries one — a type in `src/types/` may never import from
+ * `services/`, which is the direction that dependency would have run.
+ */
+export type ProgramChannel = 'argv' | 'flags' | 'stdin';
+
+/** Parsed `program:` config block — see `program-config.helpers.ts` for its grammar. */
+export interface ProgramConfig {
+	channel: ProgramChannel;
+	/** Relative path to the program's entry point — shape-guarded, not yet resolved. */
+	entry?: string;
+	/** Named flags, in declared order — paired with `params:` positionally by the consumer. */
+	flags?: string[];
+}
+
+/**
  * Solve status of a LeetCode problem in the vault.
  *
  * - `unsolved`  — no successful run recorded
@@ -526,6 +545,18 @@ export interface ParsedLeetCode {
 	solutionFiles?: FileSpec[];
 	/** `checks:` grading rules — `project` / `service` only. **Solved = every check green.** */
 	checks?: ProjectCheck[];
+	/**
+	 * `program:` block — how a `program` case is delivered (argv / flags /
+	 * stdin) and which file is the entry point.
+	 *
+	 * `undefined` when the artifact declares no block, which is every artifact
+	 * that is not graded by the `program` test type. Optional rather than
+	 * defaulted for the reason C1 records about `leetcodeType`: a default here
+	 * would let an artifact that never declared a channel be run as though it
+	 * had declared `argv`, and the runner would then pass arguments a program
+	 * was never written to read.
+	 */
+	program?: ProgramConfig;
 	/**
 	 * Author-facing parse problems that degraded to a default (an unknown `role`,
 	 * a rejected lib, a near-miss frontmatter key). Populated for a multi-file

@@ -23,8 +23,12 @@ suite('program runner-select', () => {
 			const cmd = selectRunner({
 				language: 'java', entryPath: javaEntry, fileCount: 1, hasLibs: false, hasManifest: false,
 			});
-			assert.deepStrictEqual(cmd.build, ['javac', javaEntry]);
-			assert.deepStrictEqual(cmd.run, ['java', '-cp', RUN_DIR, 'Main']);
+			// `-d .` and `-cp .` rather than `dirname(entryPath)`: commands run
+			// with the run dir as `cwd`, so for a flat entry these name the same
+			// directory — the difference only shows on a nested entry, which is
+			// the C22(b) case pinned below.
+			assert.deepStrictEqual(cmd.build, ['javac', '-d', '.', javaEntry]);
+			assert.deepStrictEqual(cmd.run, ['java', '-cp', '.', 'Main']);
 			assert.ok(!cmd.build?.some(a => a.includes('mvn')), 'must not shell out to mvn');
 			assert.ok(!cmd.run.some(a => a.includes('mvn')), 'must not shell out to mvn');
 		});
@@ -43,10 +47,39 @@ suite('program runner-select', () => {
 			const cmd = selectRunner({
 				language: 'java', entryPath: javaEntry, fileCount: 1, hasLibs: true, hasManifest: false,
 			});
-			assert.deepStrictEqual(cmd.build, ['javac', javaEntry]);
+			assert.deepStrictEqual(cmd.build, ['javac', '-d', '.', javaEntry]);
 			assert.deepStrictEqual(cmd.run, ['java', 'Main']);
 			assert.ok(!cmd.build?.some(a => a.includes('mvn')), 'must not shell out to mvn');
 			assert.ok(!cmd.run.includes('-cp'), 'must not emit -cp — it would override CLASSPATH and hide the jars');
+		});
+
+		/**
+		 * C22(b), found by the wave-2.C review. `javac <entry>` writes the
+		 * `.class` **beside the source**, so a nested entry puts it in `src/`.
+		 * The no-libs branch survives that by accident — its `-cp` is
+		 * `dirname(entryPath)`, the very directory the class landed in. The
+		 * libs branch drops `-cp` so `CLASSPATH=<cache>/jars/*:.` can govern,
+		 * and that `.` is the **run root**, not `src/` — `ClassNotFoundException`
+		 * on every nested-entry java program that declares a library.
+		 *
+		 * `-d .` on the build fixes both branches at once by putting the class
+		 * where both classpaths already look, which is why the fix belongs on
+		 * the build argv rather than in a second, nesting-aware `-cp`.
+		 */
+		test('a nested entry still resolves its class: the build targets the run root, not the source directory', () => {
+			const nested = path.join(RUN_DIR, 'src', 'Main.java');
+			const withLibs = selectRunner({
+				language: 'java', entryPath: nested, fileCount: 1, hasLibs: true, hasManifest: false,
+			});
+			assert.deepStrictEqual(withLibs.build, ['javac', '-d', '.', nested]);
+			assert.deepStrictEqual(withLibs.run, ['java', 'Main']);
+
+			// The no-libs branch must agree — one output location, not two.
+			const noLibs = selectRunner({
+				language: 'java', entryPath: nested, fileCount: 1, hasLibs: false, hasManifest: false,
+			});
+			assert.deepStrictEqual(noLibs.build, ['javac', '-d', '.', nested]);
+			assert.deepStrictEqual(noLibs.run, ['java', '-cp', '.', 'Main']);
 		});
 
 		test('an author-shipped manifest switches to the manifest-driven build even with one file and no libs', () => {
@@ -63,7 +96,7 @@ suite('program runner-select', () => {
 			const cmd = selectRunner({
 				language: 'java', entryPath: javaEntry, fileCount: 3, hasLibs: false, hasManifest: false,
 			});
-			assert.deepStrictEqual(cmd.build, ['javac', javaEntry]);
+			assert.deepStrictEqual(cmd.build, ['javac', '-d', '.', javaEntry]);
 			assert.ok(!cmd.build?.some(a => a.includes('mvn')));
 		});
 
@@ -91,7 +124,36 @@ suite('program runner-select', () => {
 				language: 'rust', entryPath: rustEntry, fileCount: 1, hasLibs: true, hasManifest: false,
 			});
 			assert.deepStrictEqual(cmd.build, ['cargo', 'build', '--offline', '--release', '--quiet']);
-			assert.deepStrictEqual(cmd.run, ['cargo', 'run', '--offline', '--release', '--quiet']);
+			assert.deepStrictEqual(cmd.run, ['cargo', 'run', '--offline', '--release', '--quiet', '--']);
+		});
+
+		/**
+		 * C22(a), found by the wave-2.C review. The `program` runner appends
+		 * each case's argv to `run` (P5 — one process per case), and `cargo
+		 * run` consumes trailing arguments as **its own** options: `cargo run
+		 * 5 7` fails with *unexpected argument*, and a `--flag` from an
+		 * artifact reaches **cargo's** parser rather than the candidate's.
+		 * Only `--` separates them, so it belongs in the selected argv rather
+		 * than being spliced in by whoever calls this.
+		 */
+		test('the cargo run command ends in the -- separator, so per-case argv reaches the program', () => {
+			for (const input of [
+				{ hasLibs: true, hasManifest: false },
+				{ hasLibs: false, hasManifest: true },
+			]) {
+				const cmd = selectRunner({ language: 'rust', entryPath: rustEntry, fileCount: 1, ...input });
+				assert.strictEqual(cmd.run.at(-1), '--', JSON.stringify(cmd.run));
+				// The separator is the *last* element: anything appended after it
+				// is the program's, and nothing before it is.
+				assert.deepStrictEqual(cmd.run, ['cargo', 'run', '--offline', '--release', '--quiet', '--']);
+			}
+		});
+
+		test('the light rustc path needs no separator — the binary is invoked directly', () => {
+			const cmd = selectRunner({
+				language: 'rust', entryPath: rustEntry, fileCount: 1, hasLibs: false, hasManifest: false,
+			});
+			assert.ok(!cmd.run.includes('--'), 'a bare binary takes its argv directly');
 		});
 
 		test('an author-shipped manifest also switches to Cargo', () => {

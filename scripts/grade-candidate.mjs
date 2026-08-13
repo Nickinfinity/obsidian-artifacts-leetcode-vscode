@@ -65,9 +65,19 @@ if (!existsSync(candidatePath)) { die(`grade-candidate: no such candidate: ${can
 const parsed = parseLeetCode(readFileSync(mdPath, 'utf-8'));
 
 // ── Environment gate (exit 3 — distinct from a wrong answer) ─────────────────
-const env = testEnvFor(parsed.test.type, language);
+// The third argument is the artifact's shape (T1.4): without it a `package`
+// resolves the `function` env that serves one *buffer*, and this harness would
+// grade a tree exercise as though it were a single solution file.
+const env = testEnvFor(parsed.test.type, language, parsed.leetcodeType);
 if (!env) {
 	die(`grade-candidate: no environment for test.type '${parsed.test.type}' in '${language}'`, 3);
+}
+// This harness grades **one candidate buffer** against a suite. A per-case
+// `program` env needs a run directory and the artifact's own file tree, which
+// an external candidate file is not — exit 3, the same "no environment for
+// this" answer, rather than pretending to grade it.
+if (env.type === 'program') {
+	die('grade-candidate: a program exercise is graded as a built tree, not a single candidate buffer', 3);
 }
 
 const detectCmd = LANGUAGES[language]?.detectCmd;

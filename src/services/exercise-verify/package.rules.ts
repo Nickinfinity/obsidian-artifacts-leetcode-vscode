@@ -1,7 +1,9 @@
 import { DEFAULT_TEST_TYPE, SHAPE_TEST_TYPE_IDS } from '../../types/constants.js';
 import type { LeetcodeTypeId } from '../../types/leetcode-type.js';
 import type { ParsedLeetCode } from '../../types/leetcode.types.js';
-import { runProjectChecks } from '../test-envs/project/project.runner.js';
+import { runProgramArtifact, runProjectChecks } from '../test-envs/project/project.runner.js';
+import { isProgramSuite } from '../test-envs/program/program.runner.js';
+import { canonicalJson } from '../../utils/canonical-json.js';
 
 /**
  * Verifies a `package`/`stack`-shaped artifact: a file tree graded by
@@ -26,6 +28,12 @@ import { runProjectChecks } from '../test-envs/project/project.runner.js';
 export async function verifyPackageExercise(
 	parsed: ParsedLeetCode, leetcodeType: LeetcodeTypeId,
 ): Promise<string | null> {
+	// A tree is graded one of two ways and the artifact says which (D14's mirror
+	// rule keeps them exclusive). A `program` suite has **cases**, not checks, so
+	// measuring it against the check rules below would fail it on
+	// `no checks declared` — which is what blocked the first program artifact.
+	if (isProgramSuite(parsed)) { return verifyProgramSuite(parsed, leetcodeType); }
+
 	const structural = checkPackageStructure(parsed, leetcodeType);
 	if (structural) { return structural; }
 
@@ -44,6 +52,46 @@ export async function verifyPackageExercise(
 	// know this: green ∧ no overlay ⟺ the starter passes.
 	if (!parsed.solutionFiles?.length) {
 		return `${leetcodeType}: ships pre-solved — every check passes against \`## Files\` itself; `
+			+ 'add `# Solutions` fences carrying `path=` so the starter is graded unsolved';
+	}
+	return null;
+}
+
+/**
+ * Verify a `program`-suite package: structural floors, then its own reference
+ * solution actually running green.
+ *
+ * The same two-part shape as the check-graded path above — well-formed, then
+ * *executed* — and the same pre-solved guard, for the same reason: green with
+ * no `path=`-carrying overlay means what just passed **is** the starter, so a
+ * solver would be marked solved having written nothing.
+ *
+ * @param parsed       - The artifact, already known to be a program suite.
+ * @param leetcodeType - For the message prefix only.
+ * @returns The first broken rule's reason, or `null` when it grades green.
+ *
+ * @example
+ * await verifyProgramSuite(parsed, 'package'); // → null
+ */
+async function verifyProgramSuite(
+	parsed: ParsedLeetCode, leetcodeType: LeetcodeTypeId,
+): Promise<string | null> {
+	if (!parsed.title) { return 'parse: missing title'; }
+	if (!parsed.files?.length) { return `${leetcodeType}: no ## Files declared`; }
+	if (parsed.params.length === 0) {
+		return `${leetcodeType}: program suites need \`params:\` — they name the order a case's input is serialised in`;
+	}
+	if (parsed.tests.length === 0) { return `${leetcodeType}: no public test cases declared`; }
+
+	const results = await runProgramArtifact(parsed, { withSolutions: true });
+	const failed = results.find(r => !r.passed);
+	if (failed) {
+		const detail = failed.error ?? `expected ${canonicalJson(failed.expected)}, got ${failed.actual}`;
+		return `${leetcodeType}: case ${failed.index} failed: ${detail}`;
+	}
+
+	if (!parsed.solutionFiles?.length) {
+		return `${leetcodeType}: ships pre-solved — every case passes against \`## Files\` itself; `
 			+ 'add `# Solutions` fences carrying `path=` so the starter is graded unsolved';
 	}
 	return null;

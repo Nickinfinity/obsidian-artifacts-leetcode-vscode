@@ -1,10 +1,10 @@
 import * as vscode from 'vscode';
 import { pickLeetCodeExercise } from '../../commands/leetcode.command.js';
+import { postChallengeState } from '../../commands/leetcode-run.finish.js';
 import {
 	discardChallenge,
 	handleRunTests,
 	handleSubmit,
-	postChallengeState,
 } from '../../commands/leetcode-run.handlers.js';
 import { isExerciseEditorOpen } from '../../services/exercise-file.service.js';
 import { challengeState, startChallenge } from '../../services/leetcode-challenge.service.js';

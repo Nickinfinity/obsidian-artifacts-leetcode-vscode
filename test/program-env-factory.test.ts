@@ -131,19 +131,25 @@ suite('program env factory', () => {
 			assert.ok(plan.build?.includes('mvn'), plan.build?.join(' '));
 		});
 
+		// Both expectations below moved in wave 2.D, and the cause is C22 rather
+		// than anything in this factory: `javac` gained `-d .` so a nested entry
+		// puts its class where both classpath branches look, and `cargo run`
+		// gained the trailing `--` so per-case argv reaches the program instead
+		// of cargo's own option parser. The factory delegates to `selectRunner`,
+		// so these are goldens of *that* authority's output, not of this one's.
 		test('java with no manifest and no libs stays on bare javac/java, entry path baked into both', () => {
 			const env = makeProgramEnv(PROGRAM_SPECS.java);
 			const plan = env.emit(ctx(), RUN_DIR);
 			const entryPath = path.join(RUN_DIR, 'Main.java');
-			assert.deepStrictEqual(plan.build, ['javac', entryPath]);
-			assert.deepStrictEqual(plan.run, ['java', '-cp', RUN_DIR, 'Main']);
+			assert.deepStrictEqual(plan.build, ['javac', '-d', '.', entryPath]);
+			assert.deepStrictEqual(plan.run, ['java', '-cp', '.', 'Main']);
 		});
 
 		test('rust with libDir switches to the cargo shape, mirroring the function env', () => {
 			const env = makeProgramEnv(PROGRAM_SPECS.rust);
 			const plan = env.emit(ctx({ libDir: '/cache/cargo-1' }), RUN_DIR);
 			assert.deepStrictEqual(plan.build, ['cargo', 'build', '--offline', '--release', '--quiet']);
-			assert.deepStrictEqual(plan.run, ['cargo', 'run', '--offline', '--release', '--quiet']);
+			assert.deepStrictEqual(plan.run, ['cargo', 'run', '--offline', '--release', '--quiet', '--']);
 		});
 	});
 

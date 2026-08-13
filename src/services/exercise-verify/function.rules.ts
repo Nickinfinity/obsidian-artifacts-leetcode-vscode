@@ -4,7 +4,7 @@ import type { ParsedLeetCode } from '../../types/leetcode.types.js';
 import { buildExecutable } from '../leetcode-candidate.helpers.js';
 import { runSuite } from '../leetcode-runner.service.js';
 import { submitSuite } from '../leetcode-suite.helpers.js';
-import { languagesForType, testEnvFor } from '../test-envs/env.registry.js';
+import { isBatchEnv, languagesForType, testEnvFor } from '../test-envs/env.registry.js';
 
 /** Structural floors a migrated exercise must clear — relaxed for a reserved (no-env) `test.type`. */
 const MIN_EXAMPLES = 2;
@@ -129,7 +129,12 @@ async function checkSolutionsGreen(parsed: ParsedLeetCode): Promise<string | nul
 	for (const lang of languages) {
 		const env = testEnvFor(parsed.test.type, lang);
 		const solution = parsed.solutions.find(s => s.language === lang);
-		if (!env || !solution) { continue; }
+		// A non-batch env (`program`) never reaches here: this rule set is
+		// dispatched for `leetcodeType: function` only, and a `program` env
+		// declares `leetcodeTypes: ['package']`. The narrowing is the honest
+		// way to say that — `runSuite` cannot execute a per-case env, and a
+		// cast would let a future registration through silently.
+		if (!env || !isBatchEnv(env) || !solution) { continue; }
 
 		const candidate = buildExecutable(parsed, lang, solution.code);
 		const results = await runSuite(candidate, suite, parsed, env);

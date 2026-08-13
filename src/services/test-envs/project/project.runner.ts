@@ -7,12 +7,17 @@ import type {
 	ParsedLeetCode,
 	ProjectCheck,
 	ProjectCheckOutcome,
+	TestCase,
+	TestResult,
 } from '../../../types/leetcode.types.js';
 import { canonicalJson } from '../../../utils/canonical-json.js';
 import { resolveLangId } from '../../language-map.service.js';
 import { ecosystemFor, type LibEcosystem, type RunArgv } from '../../libs/lib-ecosystem.js';
 import { runSuite } from '../../leetcode-runner.service.js';
-import { testEnvFor } from '../env.registry.js';
+import { publicSuite, submitSuite } from '../../leetcode-suite.helpers.js';
+import { isBatchEnv, testEnvFor } from '../env.registry.js';
+import { entryFileFor } from '../program/make-program-env.js';
+import { programLanguageOf, runProgramSuite } from '../program/program.runner.js';
 import { runBuildCheck } from './build.check.js';
 import { renderLibsFor, runRenderCheck } from './checks.js';
 import { resolveContained, writeProjectFiles } from './files.writer.js';
@@ -199,6 +204,67 @@ async function runOneCheck(
 }
 
 /**
+ * Grade a `program`-suite artifact from its own declared tree — the harness
+ * path, mirroring `runProjectChecks` for the check-graded shape.
+ *
+ * Materialises `## Files` into a fresh temp directory (overlaid with the
+ * `path=`-carrying `# Solutions` fences when `withSolutions`), then runs the
+ * suite against it. The overlay is what lets an exercise ship **unsolved** and
+ * still verify green; `--starter-red` calls this with `withSolutions: false`
+ * to prove the starter actually fails.
+ *
+ * @param parsed  - The artifact; must satisfy `isProgramSuite`.
+ * @param options - `withSolutions` to overlay the reference; `publicOnly` for
+ *   the public half.
+ * @returns Per-case results, or a one-case failure naming why nothing ran.
+ *
+ * @example
+ * await runProgramArtifact(parsed, { withSolutions: true });
+ */
+export async function runProgramArtifact(
+	parsed: ParsedLeetCode, options: { withSolutions?: boolean; publicOnly?: boolean } = {},
+): Promise<TestResult[]> {
+	const program = parsed.program;
+	const langId = programLanguageOf(parsed);
+	const cases = options.publicOnly ? publicSuite(parsed) : submitSuite(parsed);
+	if (!program) { return [failedSuite(cases, 'program: no `program:` block declared')]; }
+	if (!langId) {
+		return [failedSuite(cases, 'program: `## Files` names no runnable language')];
+	}
+
+	const env = testEnvFor('program', langId, parsed.leetcodeType);
+	if (!env || isBatchEnv(env)) {
+		return [failedSuite(cases, `program: no program environment for '${langId}'`)];
+	}
+
+	const runDir = await fs.mkdtemp(path.join(os.tmpdir(), 'leet-program-'));
+	try {
+		const tree = options.withSolutions
+			? overlaySolutions(parsed.files ?? [], parsed.solutionFiles ?? [])
+			: parsed.files ?? [];
+		await writeProjectFiles(runDir, tree);
+
+		const entry = path.join(runDir, entryFileFor(program, langId));
+		const code = await fs.readFile(entry, 'utf-8');
+		return await runProgramSuite({ code, tests: cases, parsed, env, program, runDir });
+	} catch (e) {
+		// Failing to materialise or read the tree is not one case's problem.
+		return [failedSuite(cases, e instanceof Error ? e.message : String(e))];
+	} finally {
+		await fs.rm(runDir, { recursive: true, force: true }).catch(() => { /* ignore cleanup errors */ });
+	}
+}
+
+/** One synthetic failing result carrying why the suite never ran. */
+function failedSuite(cases: TestCase[], reason: string): TestResult {
+	const first = cases[0] ?? { input: {}, expected: null };
+	return {
+		index: 0, passed: false, input: first.input, expected: first.expected,
+		actual: '', duration: 0, error: reason,
+	};
+}
+
+/**
  * Replace each starter file with the `# Solutions` entry that names the same
  * path; overlays naming a path the tree does not declare are appended.
  *
@@ -251,7 +317,11 @@ async function runFunctionCheck(
 
 	const langId = languageOf(check.file);
 	const env = testEnvFor('function', langId);
-	if (!env) {
+	// `isBatchEnv` because the registry now holds per-case `program` envs too;
+	// only a batch env can be handed to `runSuite`. A `function` key can only
+	// resolve a batch env today, so this narrowing is a compiler-enforced
+	// statement of that fact rather than a branch anyone expects to take.
+	if (!env || !isBatchEnv(env)) {
 		return { name: check.name, passed: false, detail: `no function environment for '${langId}'` };
 	}
 
