@@ -245,8 +245,12 @@ suite('project parser', () => {
 	suite('unknown frontmatter keys', () => {
 
 		test('a typo of a known project key warns rather than vanishing silently', () => {
-			const { warnings } = parseProjectArtifact('servcies:\n  - name: api', '');
-			assert.ok(warnings.some(w => w.includes('servcies') && w.includes('services')), warnings.join(' | '));
+			// `packagse` not `servcies`: wave 3.A swapped `services` for `packages` in
+			// `BODY_SET_KEYS` once T3.1's parser existed, so the old fixture's typo no
+			// longer has a near-miss to suggest — and the key it used to name is now
+			// itself unknown.
+			const { warnings } = parseProjectArtifact('packagse:\n  - name: api', '');
+			assert.ok(warnings.some(w => w.includes('packagse') && w.includes('packages')), warnings.join(' | '));
 		});
 
 		test('an unrelated custom key is left alone', () => {

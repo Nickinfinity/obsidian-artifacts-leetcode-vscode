@@ -583,8 +583,8 @@ function bindCases(checks: ProjectCheck[], body: string, warn: (m: string) => vo
  * @param warn  - Sink for author-facing problems.
  *
  * @example
- * warnNearMissKeys(['servcies:'], m => console.log(m));
- * // logs: unknown config key 'servcies' — did you mean 'services'?
+ * warnNearMissKeys(['packagse:'], m => console.log(m));
+ * // logs: unknown config key 'packagse' — did you mean 'packages'?
  */
 function warnNearMissKeys(lines: string[], warn: (m: string) => void): void {
 	for (const line of lines) {

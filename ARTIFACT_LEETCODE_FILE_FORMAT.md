@@ -896,10 +896,10 @@ explicitly from the CLI, not part of the extension.
 > and the `check=<name>` case binding all land on the parsed artifact, the render driver and
 > all three check kinds (`dom-assert`, `css-assert`, `build`) ship, and it grades end to end.
 > A `stack` **parses and opens** — it is a file tree, so *Solve It* materialises `## Files`
-> and opens the tabs — and its distinguishing machinery, the `packages:` block and the `http`
-> kind, is **not implemented**: `packages:` has no parser (§9.3) and `http` has no
-> environment, so an artifact declaring `kind: http` is refused for grading as a whole (§6.1)
-> while still verifying structure-only `ok`.
+> and opens the tabs — and its distinguishing machinery is **half implemented**: `packages:`
+> now has a grammar and is a recognised body-set key, but **no caller invokes it** (§9.3), and
+> `http` has no environment, so an artifact declaring `kind: http` is refused for grading as a
+> whole (§6.1) while still verifying structure-only `ok`.
 > Reference artifacts live in the **Obsidian vault**, not in this repo — see CLAUDE.md,
 > *Artifacts live in the vault*.
 
@@ -1088,22 +1088,42 @@ packages:
 ```
 ````
 
-> **`packages:` has no parser, and the key was renamed ahead of one.** The block
-> is spelled `packages:` on disk — the migration renamed it in the four vault
-> artifacts that declare it — but **nothing reads it**: `BODY_SET_KEYS` and the
-> near-miss key warning still know only the old `services`, so `packages:` is
-> currently an ordinary unknown config key, parsed by nothing and warned about by
-> nothing. The rename landed with the vault write rather than with the parser so
-> that the vault is written exactly once; the parser catches up with the `http`
-> test type. **The fields below are a documented, not-yet-implemented contract** —
-> what the implementation must satisfy, not what runs today.
+> **`packages:` has a grammar and no caller — and the distinction is the whole
+> status.** The block is spelled `packages:` on disk (the migration renamed it in
+> the four vault artifacts that declare it), `BODY_SET_KEYS` and the near-miss key
+> warning now know that spelling and no longer know `services`, and
+> `packages-parser.helpers.ts` reads `name`, `dir`, `install`, `start`, `ready`,
+> `exposeAs` and `dependsOn`. **`envFile` is not among them** — it appears in the
+> worked example above and in the vault's own `fastapi-react.md`, and the parser
+> drops it silently, without even the near-miss warning an unknown key would
+> earn. Treat it as documented-but-unparsed until the boot task reads it. But
+> **nothing invokes the parser either**:
+> `parseLeetCode` never calls `parsePackages`, so no parsed artifact carries
+> a `packages` field and no run boots anything. The fields below are therefore
+> *validated in isolation* — an author who mis-declares one finds out from the
+> parser's own tests, not from opening the exercise. Wiring it into the parse and
+> the boot ordering belongs to the tasks that build the server lifecycle.
+>
+> The rename landed with the vault write rather than with the parser so that the
+> vault is written exactly once; the key set caught up when the grammar did, and
+> keeping `services` there any longer would have made the warner call the four
+> migrated artifacts' own block an unknown key and suggest renaming it back.
 
 - `install` / `start` are **argv arrays**, never command strings.
 - `${PORT}` is the **only** substitution, templated into argv and injected as a `PORT`
   env var. The port is one the OS assigned (bind `:0`, read it back), never a guess.
 - `exposeAs` maps *variable name → value template*; the author names what their framework
   wants (`VITE_*`, `NEXT_PUBLIC_*`) — **the extension encodes no framework knowledge**.
-- `dependsOn` orders the boot; a cycle is a parse error.
+  Both halves are constrained, and narrowly: the **name** must match `^[A-Z][A-Z0-9_]*$` and
+  miss a denylist of loader/interpreter variables (`LD_PRELOAD`, `DYLD_*`, `NODE_OPTIONS`,
+  `JDK_JAVA_OPTIONS`, …) **plus every variable this extension itself sets as the library seam**
+  (`NODE_PATH`, `VIRTUAL_ENV`, `CLASSPATH`, `CARGO_TARGET_DIR` — read from `libEnvVars`, not
+  re-listed); the **value** must be exactly a loopback URL template,
+  `http://127.0.0.1:${PORT}` with an optional path. So `API_PORT: "${PORT}"` and any
+  `localhost` spelling are refused. The name rule alone would be a denylist over an open
+  namespace; the value rule is what makes a future gap in it inert.
+- `dependsOn` orders the boot; a cycle is a parse error, as is a duplicate `name` or more
+  than eight entries.
 
 **Trust class, stated plainly:** a `service` artifact executes declared commands and
 package scripts from the `.md` — arbitrary code by design, the same trust class as running

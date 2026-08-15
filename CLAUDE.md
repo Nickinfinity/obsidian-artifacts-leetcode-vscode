@@ -306,9 +306,12 @@ enforced rather than remembered:
 
 **Execution configuration lives in the body**, in ` ```yaml leetcode ` fences placed next to
 what they configure: `function`/`functions`/`params`/`returns` after the description,
-`test`/`practice` before `## Tests`, `libs`/`services` before `# Setup` or `## Files`.
-(`services:` is the key the **parser** knows; the migration renamed it to `packages:` **on
-disk**, and nothing parses that yet — see `ARTIFACT_LEETCODE_FILE_FORMAT.md` §9.3.)
+`test`/`practice` before `## Tests`, `libs`/`packages` before `# Setup` or `## Files`.
+(`packages:` is now the key on disk **and** in `BODY_SET_KEYS`; `services:` is gone from both.
+It has a grammar — [packages-parser.helpers.ts](src/services/packages-parser.helpers.ts) — but
+**no caller yet**: nothing in `parseLeetCode` invokes `parsePackages`, so the block is
+recognised and validated in isolation rather than reaching a run. See
+`ARTIFACT_LEETCODE_FILE_FORMAT.md` §9.3.)
 Placement is convention — the parser is order-independent — but the marker is not: `yaml`
 first (so Obsidian still highlights it), then a **bare** `leetcode` token, because a
 `## Files` entry always carries `path=` and must never be mistaken for config. Fence content

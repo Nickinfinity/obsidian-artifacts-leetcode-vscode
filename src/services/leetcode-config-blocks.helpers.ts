@@ -63,7 +63,7 @@ const TOP_LEVEL_KEY_RE = /^(\w+):/;
 const DUPLICATE_KEY_WINNER = new Map<string, 'first' | 'last'>([
 	['function', 'last'], ['functions', 'last'], ['params', 'last'], ['returns', 'last'],
 	['test', 'last'], ['practice', 'last'], ['tags', 'last'],
-	['libs', 'first'], ['checks', 'first'], ['services', 'first'],
+	['libs', 'first'], ['checks', 'first'], ['packages', 'first'],
 ]);
 
 /**
@@ -78,14 +78,17 @@ const DUPLICATE_KEY_WINNER = new Map<string, 'first' | 'last'>([
  * frontmatter copy of it must fail `verifyExercise` the same way, and the
  * near-miss key warner must recognise it rather than reading it as a typo.
  *
- * `services` is still the spelling **the parser knows**. The migration renamed
- * the block to `packages:` on disk and nothing parses that yet, so the two are
- * deliberately not the same string — see `ARTIFACT_LEETCODE_FILE_FORMAT.md`
- * §9.3. Swapping this entry before the parser exists would make the migrator
- * stop recognising the very key it just wrote.
+ * `packages` replaced `services` here in wave 3.A, once `packages-parser
+ * .helpers.ts` (T3.1) existed to parse it. The two spellings were deliberately
+ * out of step until then: the migration renamed the block on disk in T1.13,
+ * and swapping this entry before a parser existed would have made the migrator
+ * stop recognising the very key it had just written. With the parser landed,
+ * the divergence inverts — leaving `services` here makes the near-miss warner
+ * call the four migrated vault artifacts' own `packages:` block an unknown key
+ * and suggest they rename it back. See `ARTIFACT_LEETCODE_FILE_FORMAT.md` §9.3.
  */
 export const BODY_SET_KEYS: ReadonlySet<string> = new Set([
-	'function', 'functions', 'params', 'returns', 'test', 'practice', 'libs', 'checks', 'services',
+	'function', 'functions', 'params', 'returns', 'test', 'practice', 'libs', 'checks', 'packages',
 	'program',
 ]);
 
@@ -302,9 +305,9 @@ export function extractConfigBlocks(body: string): ConfigBlocksResult {
 
 /**
  * The D2 body-set keys (`function`, `functions`, `params`, `returns`,
- * `test`, `practice`, `libs`, `checks`, `services`) found at column 0 in raw
- * frontmatter text. The one authority for "the body set" — no other module
- * re-lists these nine names.
+ * `test`, `practice`, `libs`, `checks`, `packages`, `program`) found at column
+ * 0 in raw frontmatter text. The one authority for "the body set" — no other
+ * module re-lists these ten names.
  *
  * @param fmRaw - Raw frontmatter body (no `---` fences).
  * @returns Found keys, in document order; `[]` when clean.
