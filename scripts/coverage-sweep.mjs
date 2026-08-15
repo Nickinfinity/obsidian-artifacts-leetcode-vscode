@@ -45,6 +45,8 @@ const { languagesForType } = await import(
 	pathToFileURL(join(distServices, 'test-envs', 'env.registry.js')).href);
 const { unimplementedCheckKindsFromContent } = await import(
 	pathToFileURL(join(distServices, 'project-parser.helpers.js')).href);
+const { isProgramSuite } = await import(
+	pathToFileURL(join(distServices, 'test-envs', 'program', 'program.runner.js')).href);
 const { TEST_TYPES, SHAPE_TEST_TYPE_IDS, isMultiFile } = await import(
 	pathToFileURL(join(dist, 'types', 'constants.js')).href);
 const { LEETCODE_TYPES } = await import(
@@ -180,6 +182,14 @@ function markdownFiles(root) {
  * them. Coverage counts what an author wrote; whether it runs is the other axis
  * of this report.
  *
+ * **A multi-file artifact is not always check-graded.** A `program` suite is a
+ * tree with cases and *no* `checks:` (the D14 mirror rule keeps the two
+ * exclusive), so the check branch below reports it as declaring nothing at all
+ * and `package × program` reads as an uncovered cell however many program
+ * artifacts the vault holds. The fork is asked of `isProgramSuite` — the one
+ * authority every other caller uses — rather than re-derived from a
+ * `program:` block plus an empty check list here.
+ *
  * @param md     - Raw artifact text.
  * @param parsed - Its parse result.
  * @returns The declared test-type ids, deduplicated.
@@ -189,6 +199,7 @@ function markdownFiles(root) {
  */
 function declaredTestTypes(md, parsed) {
 	const checks = parsed.checks ?? [];
+	if (isProgramSuite(parsed)) { return ['program']; }
 	if (checks.length > 0 || isMultiFile(parsed.leetcodeType)) {
 		const kinds = new Set(checks.map(check => check.kind));
 		for (const dropped of unimplementedCheckKindsFromContent(md)) { kinds.add(dropped); }

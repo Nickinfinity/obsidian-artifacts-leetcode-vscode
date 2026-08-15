@@ -61,7 +61,7 @@ invites a test to guard the copy instead of the real thing.
   done < <(find "$VAULT" -name '*.md' \
              -not -path '*/.obsidian/*' -not -path '*/.git/*' -not -path '*/.trash/*')
   echo "verified $total · failures $fail"
-  [ "$total" -ge "${EXPECTED_ARTIFACTS:-78}" ] || { echo "SWEEP DID NOT SEE THE VAULT: $total"; exit 1; }
+  [ "$total" -ge "${EXPECTED_ARTIFACTS:-79}" ] || { echo "SWEEP DID NOT SEE THE VAULT: $total"; exit 1; }
   ```
   Three things the loop does that a one-line `find -exec` cannot, all of which have bitten:
   **it filters on the `artifactType: leetcode` discriminator** (a vault holds ordinary notes —
@@ -73,8 +73,8 @@ invites a test to guard the copy instead of the real thing.
   candidates reads the very key the format rename rewrote, so a filter left on the old
   `^type: leetcode` spelling now matches **nothing**: the loop prints `verified 0 · failures 0`
   and every gate downstream reads it as green. A pass by vacancy. Measured on this vault:
-  **78** of 79 `.md` files are artifacts (the odd one out is `CoderByte/Tests/README.md`,
-  correctly excluded) — 65 `function`, 9 `package`, 4 `stack`. **Raise the default in the same
+  **79** of 80 `.md` files are artifacts (the odd one out is `CoderByte/Tests/README.md`,
+  correctly excluded) — 65 `function`, 10 `package`, 4 `stack`. **Raise the default in the same
   change that adds an artifact.** A floor below the true total is worse than no floor: it still
   passes a sweep that silently missed a dozen files, which is the exact failure it exists to
   catch. There is also a second sweep — `node scripts/coverage-sweep.mjs "$VAULT"` — which asks

@@ -749,12 +749,22 @@ the axis existed.
 |---|---|---|
 | `function` | `function` | `java`, `javascript`, `python`, `rust`, `typescript` |
 | `package` · `stack` | `project` | `java`, `javascript`, `python`, `rust`, `typescript` |
-| *(any)* | `call`, `program`, `http`, `class`, `in-place`, `stdin-stdout`, `service` | *(none — reserved)* |
+| `package` | `program` | `java`, `javascript`, `python`, `rust`, `typescript` |
+| *(any)* | `call`, `http`, `class`, `in-place`, `stdin-stdout`, `service` | *(none — reserved)* |
 
-Read that table as *the registry today*, not as the format's ambition: `call`,
-`program` and `http` are declared ids with no environment yet, and `project` is
-still the key the directory-grading path resolves through even though it is a
-shape id on disk (§2.5.1).
+Read that table as *the registry today*, not as the format's ambition: `call`
+and `http` are declared ids with no environment yet, and `project` is still the
+key the directory-grading path resolves through even though it is a shape id on
+disk (§2.5.1).
+
+**`program` is registered but is not a `TestEnv`.** `RegisteredEnv` is a union:
+a `TestEnv` runs a whole suite in one process and recovers outcomes from
+`__LEET__` sentinel lines, while a `ProgramEnv` starts **one process per case**
+and reads each answer back from `$LEET_OUT` (§2.5.5, §2.5.6). Both are in the
+registry because it answers *can this triple be graded?* — a different question
+from *how does a suite execute?* — and every caller narrows with `isBatchEnv`
+before reaching the batch runner. It is registered for `package` only: a
+`stack` boots several packages, which is the `http` axis, not this one.
 
 **A check `kind:` is not looked up here.** `build`, `dom-assert` and `css-assert`
 have **no** registry entry — `languagesForType('build')` is `[]` — because they
