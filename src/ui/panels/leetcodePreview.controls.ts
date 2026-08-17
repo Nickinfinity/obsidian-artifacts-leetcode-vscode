@@ -2,6 +2,7 @@ import { resolveLangId } from '../../services/language-map.service.js';
 import { refusalFor } from '../../services/test-envs/compatibility.helpers.js';
 import { languagesForType } from '../../services/test-envs/env.registry.js';
 import { isMultiFile, PRACTICE_OPTIONS } from '../../types/constants.js';
+import { isLangId } from '../../types/languages.js';
 import type { ChallengePhase, ParsedLeetCode } from '../../types/leetcode.types.js';
 import { escHtml } from '../../utils/html.helpers.js';
 
@@ -430,7 +431,11 @@ export function availableLanguages(p: ParsedLeetCode): string[] {
 	const seen = new Set<string>();
 	const out: string[] = [];
 
-	const declared = [...p.setups.map(s => s.language), ...p.solutions.map(s => s.language)];
+	const declared = [
+		...p.setups.map(s => s.language),
+		...p.solutions.map(s => s.language),
+		...treeLanguages(p),
+	];
 	for (const raw of declared) {
 		const langId = resolveLangId(raw);
 		if (seen.has(langId) || (gateOnRegistry && !supported.has(langId))) { continue; }
@@ -438,4 +443,43 @@ export function availableLanguages(p: ParsedLeetCode): string[] {
 		out.push(langId);
 	}
 	return out;
+}
+
+/**
+ * The runnable languages a multi-file artifact declares on its `## Files`
+ * tree — the only place a tree ever names one.
+ *
+ * **A tree has no `# Setup` blocks, and that is what made the relaxation above
+ * inert.** `availableLanguages` unioned `setups` and `solutions`, both of which
+ * are buffer-artifact sections: a `package`/`stack` declares its starter as
+ * `## Files` entries and its reference as `path=`-carrying fences, which land
+ * in `files`/`solutionFiles` and never in either list. Measured across the
+ * vault: 13 of 14 multi-file artifacts parsed to `setups: []`/`solutions: []`,
+ * so the selector was empty, `renderIdleControls` rendered Solve It `disabled`,
+ * and clicking it did nothing — on `react-counter.md` (the documented F5 smoke
+ * artifact) and on every React exercise. Switching off a registry gate over an
+ * empty list changes nothing.
+ *
+ * **A fence language here is filtered through `isLangId`, unlike a `# Setup`
+ * language, and the asymmetry is deliberate.** A `# Setup` block is an author
+ * saying *"attempt this exercise in this language"*, so the relaxation admits
+ * even one nothing can run (`ruby`) rather than silently dropping the author's
+ * intent. A `## Files` fence language is just how that file is highlighted —
+ * a tree legitimately carries `json`, `css` and `text` entries, and none of
+ * them is a language anyone attempts an exercise in.
+ *
+ * @param p - Parsed LeetCode artifact.
+ * @returns Canonical runnable language ids from `## Files`, in declaration
+ *   order; empty for a buffer artifact, whose shape has no tree.
+ *
+ * @example
+ * treeLanguages({ ...parsed, leetcodeType: 'package', files: [
+ *   { path: 'main.py', language: 'python', … }, { path: 'x.json', language: 'json', … },
+ * ] }); // → ['python']
+ */
+function treeLanguages(p: ParsedLeetCode): string[] {
+	if (!isMultiFile(p.leetcodeType)) { return []; }
+	return (p.files ?? [])
+		.map(file => resolveLangId(file.language))
+		.filter(isLangId);
 }

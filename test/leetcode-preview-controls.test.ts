@@ -176,6 +176,53 @@ suite('leetcodePreview.controls', () => {
             assert.deepStrictEqual(availableLanguages(p), ['ruby', 'python']);
         });
 
+        // ── the shape real multi-file artifacts actually have ─────────────────
+        //
+        // Both relaxation tests above hand the fixture `setups`/`solutions`, and
+        // **no multi-file artifact in the vault has either**: a tree declares its
+        // files in `## Files` and its reference overlay as `path=`-carrying
+        // fences, which land in `files`/`solutionFiles`. Measured across all 14
+        // multi-file artifacts: 13 parse to `setups: []`, `solutions: []`, so
+        // `availableLanguages` returned `[]`, `renderIdleControls` rendered Solve
+        // It `disabled`, and clicking it did nothing — including on
+        // `react-counter.md`, the documented F5 smoke artifact, and on
+        // `args-sum.md`. The relaxation was real and inert: it switches off the
+        // registry gate over a list that was already empty.
+        test('a multi-file artifact offers the languages of its ## Files tree, with no setups at all', () => {
+            const p = fixture({
+                leetcodeType: 'package',
+                setups:       [],
+                solutions:    [],
+                files:        [
+                    { path: 'main.py', language: 'python', content: '', role: 'editable' },
+                    { path: 'data.json', language: 'json', content: '', role: 'readonly' },
+                ],
+            });
+            assert.deepStrictEqual(availableLanguages(p), ['python']);
+        });
+
+        test('a non-runnable ## Files language never becomes selectable on its own', () => {
+            const p = fixture({
+                leetcodeType: 'stack',
+                setups:       [],
+                solutions:    [],
+                files:        [
+                    { path: 'style.css', language: 'css', content: '', role: 'editable' },
+                    { path: 'notes.txt', language: 'text', content: '', role: 'readonly' },
+                ],
+            });
+            assert.deepStrictEqual(availableLanguages(p), []);
+        });
+
+        test('a buffer artifact ignores ## Files entirely — the tree is not its shape', () => {
+            const p = fixture({
+                setups:    [],
+                solutions: [],
+                files:     [{ path: 'main.py', language: 'python', content: '', role: 'editable' }],
+            });
+            assert.deepStrictEqual(availableLanguages(p), []);
+        });
+
         test('the multi-file relaxation does not leak into a reserved single-file type', () => {
             const p = fixture({
                 test:      { type: 'in-place', timeoutMs: 5000 },
