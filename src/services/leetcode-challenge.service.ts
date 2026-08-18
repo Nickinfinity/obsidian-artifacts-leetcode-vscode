@@ -6,6 +6,7 @@ import { openExerciseFile } from './exercise-file.service.js';
 import { openProjectFiles } from './project-file.service.js';
 import { LeetCodeTimer } from './leetcode-timer.service.js';
 import { PracticeMode } from './practice-mode.service.js';
+import { createGroupRegistry, type BootedGroupRegistry } from './test-envs/http/server.lifecycle.js';
 
 /**
  * A live challenge run: one temp file, one set of editor restrictions, one
@@ -36,6 +37,17 @@ export interface ChallengeSession {
 	practice: PracticeMode;
 	/** Status-bar clock entry — set by every run, bounded or unlimited (P7) */
 	statusBar: vscode.StatusBarItem | null;
+	/**
+	 * Process groups a booted `http`/`stack` server left running under this
+	 * session (S12). `bootServer` (`test-envs/http/server.lifecycle.ts`)
+	 * registers a group the moment it spawns one — before readiness is even
+	 * known — so `endChallenge()` can tear down whatever is still registered
+	 * regardless of why the booting code's own `finally` never got to run
+	 * (the extension host dying, VS Code exiting, a panel disposed mid-boot).
+	 * That is what lets `deactivate()` cover an orphaned server for free,
+	 * exactly as it already covers the practice-mode snapshot.
+	 */
+	bootedGroups: BootedGroupRegistry;
 	/** Handle of the timer's tick interval — set by every run (P7) */
 	ticker: ReturnType<typeof setInterval> | null;
 	/** Epoch-ms at which the time limit expires; `null` when unlimited */
@@ -145,6 +157,7 @@ export async function startChallenge(
 	const session: ChallengeSession = {
 		langId, fileUri, projectDir: project?.dir ?? null, timer, practice, finishing: false,
 		statusBar: null, ticker: null, deadline: null, state,
+		bootedGroups: createGroupRegistry(),
 	};
 
 	startTimer(session, parsed.title, config.timeLimitMinutes, callbacks);
@@ -154,13 +167,18 @@ export async function startChallenge(
 }
 
 /**
- * Tear down the active challenge: restore editor settings, stop the countdown.
+ * Tear down the active challenge: restore editor settings, stop the
+ * countdown, and kill every process group this session still has registered
+ * (S12) — a booted `http`/`stack` server included, whether or not its own
+ * boot code ever reached its own `finally`.
  *
  * Safe to call when nothing is running — used both by the explicit
- * `obsidian-leetcode.endChallenge` command and by the preview panel's dispose
- * handler.
+ * `obsidian-leetcode.endChallenge` command, by the preview panel's dispose
+ * handler, and by `deactivate()`, which is what gives an orphaned server the
+ * same free cleanup the practice-mode snapshot already gets.
  *
- * @returns Resolves once every setting has been written back.
+ * @returns Resolves once every setting has been written back and every
+ *   registered process group has been torn down.
  *
  * @example
  * await endChallenge();
@@ -173,6 +191,7 @@ export async function endChallenge(): Promise<void> {
 	if (session.ticker)    { clearInterval(session.ticker); }
 	if (session.statusBar) { session.statusBar.dispose(); }
 	if (session.timer.isRunning()) { session.timer.reset(); }
+	await session.bootedGroups.teardownAll();
 	await session.practice.restore();
 }
 

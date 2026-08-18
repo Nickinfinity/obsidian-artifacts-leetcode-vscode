@@ -12,7 +12,19 @@ import { isLangId, LANGUAGES } from '../../types/languages.js';
  * still written in that registry's notation; the id names the client, the way
  * `pip`, `cargo` and `maven` already did.
  */
-export type LibEcosystem = 'pnpm' | 'pip' | 'cargo' | 'maven';
+export const LIB_ECOSYSTEMS = ['pnpm', 'pip', 'cargo', 'maven'] as const;
+
+/**
+ * Derived from {@link LIB_ECOSYSTEMS}, never written out beside it.
+ *
+ * The inversion is the point: a consumer that needs to *iterate* the
+ * ecosystems (`packages-parser.helpers.ts` derives the library-seam variable
+ * names by asking `libEnvVars` for each) cannot reflect over a union type, so
+ * it used to hand-list the four ids with a comment conceding the copy could go
+ * stale. Declaring the array first and taking the type from it means a fifth
+ * ecosystem is added in exactly one place and every consumer follows.
+ */
+export type LibEcosystem = typeof LIB_ECOSYSTEMS[number];
 
 /**
  * The registry that serves a `libs:` language key, or `undefined` when no

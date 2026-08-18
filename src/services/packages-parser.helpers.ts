@@ -1,7 +1,7 @@
 import * as path from 'node:path';
 import { safeJsonParse } from '../utils/safe-json.js';
 import { libEnvVars } from './libs/lib-env.helpers.js';
-import type { LibEcosystem } from './libs/lib-ecosystem.js';
+import { LIB_ECOSYSTEMS } from './libs/lib-ecosystem.js';
 
 /**
  * `packages:` config-block grammar (T3.1) — a `leetcodeType: stack`'s boot
@@ -118,14 +118,6 @@ const EXPOSE_NAME_RE = /^[A-Z][A-Z0-9_]*$/;
  * not yet know about.
  */
 const EXPOSE_VALUE_RE = /^http:\/\/127\.0\.0\.1:\$\{PORT\}(\/\S*)?$/;
-
-/**
- * Every `LibEcosystem` this extension resolves `libs:` through — the
- * closed set `libEnvVars` switches on. Hand-listed because the union type
- * itself has no runtime reflection; extend this alongside a fifth
- * `LibEcosystem` member, the same day that member is added.
- */
-const LIB_ECOSYSTEMS: readonly LibEcosystem[] = ['pnpm', 'pip', 'cargo', 'maven'];
 
 /**
  * Variable names *this extension itself* sets to point a child process at
