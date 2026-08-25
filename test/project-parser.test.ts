@@ -39,7 +39,7 @@ suite('project parser', () => {
 		'  type: project',
 		'  checks:',
 		'    - name: catalogue filter',
-		'      kind: function',
+		'      kind: call',
 		'      file: src/lib/catalogue.ts',
 		'      function: filterInStock',
 		'    - name: app builds',
@@ -131,8 +131,8 @@ suite('project parser', () => {
 			assert.strictEqual(checks.length, 2);
 
 			const [fn, build] = checks;
-			assert.strictEqual(fn.kind, 'function');
-			if (fn.kind !== 'function') { throw new Error('narrowing failed'); }
+			assert.strictEqual(fn.kind, 'call');
+			if (fn.kind !== 'call') { throw new Error('narrowing failed'); }
 			assert.strictEqual(fn.file, 'src/lib/catalogue.ts');
 			assert.strictEqual(fn.function, 'filterInStock');
 
@@ -194,7 +194,7 @@ suite('project parser', () => {
 			'test:',
 			'  checks:',
 			'    - name: catalogue filter',
-			'      kind: function',
+			'      kind: call',
 			'      file: a.ts',
 			'      function: f',
 			'    - name: alternates',
@@ -273,7 +273,10 @@ suite('project parser', () => {
 	 */
 	suite('unimplementedKinds', () => {
 
-		const HTTP_CHECKS = [
+		// `class`, not `http`: T3.5 implemented `http`, and a pin written
+		// against whichever id happens to be unimplemented stops testing
+		// anything the day that id lands — going green while asserting nothing.
+		const RESERVED_CHECKS = [
 			'test:',
 			'  type: project',
 			'  checks:',
@@ -282,13 +285,13 @@ suite('project parser', () => {
 			'      dir: client',
 			'      argv: ["npx", "tsc", "--noEmit"]',
 			'    - name: api contract',
-			'      kind: http',
+			'      kind: class',
 			'      file: src/api.ts',
 		].join('\n');
 
 		test('a declared kind no environment implements is recorded, not merely warned about', () => {
-			const { checks, unimplementedKinds } = parseProjectArtifact(HTTP_CHECKS, FILES_SECTION);
-			assert.deepStrictEqual([...unimplementedKinds], ['http']);
+			const { checks, unimplementedKinds } = parseProjectArtifact(RESERVED_CHECKS, FILES_SECTION);
+			assert.deepStrictEqual([...unimplementedKinds], ['class']);
 			// And the reason the field has to exist: the dropped check is gone
 			// from `checks`, so a caller reading `checks` alone cannot see it.
 			assert.deepStrictEqual(checks.map(c => c.kind), ['build']);
@@ -300,19 +303,39 @@ suite('project parser', () => {
 		});
 
 		test('the same unimplemented kind declared twice is recorded once', () => {
-			const twice = HTTP_CHECKS + [
+			const twice = RESERVED_CHECKS + [
 				'',
 				'    - name: api errors',
-				'      kind: http',
+				'      kind: class',
 				'      file: src/api.ts',
 			].join('\n');
-			assert.deepStrictEqual([...parseProjectArtifact(twice, FILES_SECTION).unimplementedKinds], ['http']);
+			assert.deepStrictEqual([...parseProjectArtifact(twice, FILES_SECTION).unimplementedKinds], ['class']);
 		});
 
 		test('re-derives from raw .md text, for a caller holding only the source', () => {
 			const md = ['---', 'type: leetcode', 'title: P', '---', '', 'Body.', '',
-				'```yaml leetcode', HTTP_CHECKS, '```', '', FILES_SECTION].join('\n');
-			assert.deepStrictEqual([...unimplementedCheckKindsFromContent(md)], ['http']);
+				'```yaml leetcode', RESERVED_CHECKS, '```', '', FILES_SECTION].join('\n');
+			assert.deepStrictEqual([...unimplementedCheckKindsFromContent(md)], ['class']);
+		});
+
+		test('an `http` check is implemented as of T3.5, and records nothing', () => {
+			const httpChecks = RESERVED_CHECKS
+				.replace('      kind: class', '      kind: http')
+				.replace('      file: src/api.ts', '      package: api');
+			const { checks, unimplementedKinds } = parseProjectArtifact(httpChecks, FILES_SECTION);
+			assert.deepStrictEqual([...unimplementedKinds], []);
+			assert.deepStrictEqual(checks.map(c => c.kind), ['build', 'http']);
+		});
+
+		test('an http check declaring no package is dropped by name, not recorded as unimplemented', () => {
+			// The distinction matters: a malformed check is the author's typo,
+			// an unimplemented kind is this extension's gap, and only the second
+			// makes the whole artifact ungradeable.
+			const noPackage = RESERVED_CHECKS.replace('      kind: class', '      kind: http');
+			const { checks, unimplementedKinds, warnings } = parseProjectArtifact(noPackage, FILES_SECTION);
+			assert.deepStrictEqual([...unimplementedKinds], []);
+			assert.deepStrictEqual(checks.map(c => c.kind), ['build']);
+			assert.ok(warnings.some(w => w.includes('needs a package')), warnings.join(' · '));
 		});
 
 		test('an artifact declaring no checks at all re-derives an empty list', () => {
@@ -389,9 +412,11 @@ suite('project parser', () => {
 
 		test('a legacy libs:/test: in frontmatter is ignored, not read', () => {
 			const parsed = parseLeetCode(legacyProject);
-			// `test.type` never reaches `project`, so the multi-file grammar never
-			// runs at all — which is exactly what makes the failure quiet.
-			assert.strictEqual(parsed.test.type, 'function');
+			// `test.type` never reaches the fence, so the multi-file grammar never
+			// runs at all — which is exactly what makes the failure quiet. The
+			// value is `DEFAULT_TEST_TYPE`, and `project` is not a test type any
+			// more in any case (T3.5).
+			assert.strictEqual(parsed.test.type, 'call');
 			assert.strictEqual(parsed.libs, undefined);
 			assert.strictEqual(parsed.checks, undefined);
 		});
@@ -451,7 +476,9 @@ suite('project parser', () => {
 				].join('\n'));
 
 			const parsed = parseLeetCode(migrated);
-			assert.strictEqual(parsed.test.type, 'project');
+			// The legacy `type: project` collapses to the default — what proves
+			// the fence was read is `libs` and `checks`, not the scalar.
+			assert.strictEqual(parsed.test.type, 'call');
 			assert.deepStrictEqual(parsed.libs, { javascript: ['react@^19.0.0'] });
 			assert.strictEqual(parsed.checks?.length, 1);
 			assert.strictEqual(parsed.checks?.[0].name, 'counter');
@@ -471,7 +498,7 @@ suite('project parser', () => {
 				'  checks:',
 				'    - name: api answers',
 				`      kind: ${kind}`,
-				'      service: api',
+				'      package: api',
 				'```', ''].join('\n');
 		}
 
@@ -481,7 +508,8 @@ suite('project parser', () => {
 		 * spelled correctly.
 		 */
 		test('a documented-but-unimplemented kind says so', () => {
-			const parsed = parseLeetCode(artifactWithKind('http'));
+			// `class` — `http` was the example until T3.5 implemented it.
+			const parsed = parseLeetCode(artifactWithKind('class'));
 			const warning = (parsed.warnings ?? []).find(w => w.includes('api answers')) ?? '';
 
 			assert.match(warning, /no environment implements yet/);
@@ -501,9 +529,17 @@ suite('project parser', () => {
 		 * which needs a starter to fail on its merits.
 		 */
 		test('both are dropped, whatever they are called', () => {
-			for (const kind of ['http', 'htpp']) {
+			for (const kind of ['class', 'htpp']) {
 				assert.deepStrictEqual(parseLeetCode(artifactWithKind(kind)).checks, []);
 			}
+		});
+
+		test('`http` is neither — it parses, and binds to its package', () => {
+			const checks = parseLeetCode(artifactWithKind('http')).checks ?? [];
+			assert.strictEqual(checks.length, 1);
+			assert.strictEqual(checks[0].kind, 'http');
+			assert.deepStrictEqual((parseLeetCode(artifactWithKind('http')).warnings ?? [])
+				.filter(w => w.includes('api answers')), []);
 		});
 	});
 });

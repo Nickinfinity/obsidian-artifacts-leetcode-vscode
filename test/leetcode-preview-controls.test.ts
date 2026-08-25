@@ -25,6 +25,7 @@ suite('leetcodePreview.controls', () => {
     function fixture(overrides: Partial<ParsedLeetCode> = {}): ParsedLeetCode {
         return {
             title:        'Two Sum',
+            leetcodeType: 'function',
             difficulty:   'easy',
             functionName: 'twoSum',
             status:       'unsolved',
@@ -141,32 +142,33 @@ suite('leetcodePreview.controls', () => {
         // left the exercise impossible to open at all. Grading stays refused
         // downstream — this only decides what the selector may offer.
         //
-        // The shape is declared on the **leetcode-type axis**, not by
-        // `test.type: 'service'`. Asking the test-type value a question about
-        // the artifact's shape is the flattening the axis split undoes, and a
+        // The shape is declared on the **leetcode-type axis**, never by a
+        // `test.type` value. Asking the test-type value a question about the
+        // artifact's shape is the flattening the axis split undoes, and a
         // fixture that omits `leetcodeType` is read as a buffer — which is what
         // this assertion caught the moment `isMultiFile` stopped reading
-        // `test.type`.
+        // `test.type`. (`type: 'service'` was the spelling here until T3.5
+        // deleted the legacy ids; `call` is what a migrated tree parses to, and
+        // `languagesForType('call', 'stack')` is `[]` all the same.)
         test('a multi-file type with no env still offers its declared languages', () => {
-            const p = fixture({ leetcodeType: 'stack', test: { type: 'service', timeoutMs: 5000 } });
+            const p = fixture({ leetcodeType: 'stack', test: { type: 'call', timeoutMs: 5000 } });
             assert.deepStrictEqual(availableLanguages(p), ['javascript', 'python']);
         });
 
-        // The `leetcodeType` argument T1.4 appended to `languagesForType` is
-        // load-bearing here, and nothing pinned it until this test: the case
-        // above cannot, because `languagesForType('service', …)` is `[]` with
-        // or without the third argument, so it passes either way.
+        // The `leetcodeType` argument `languagesForType` takes is load-bearing
+        // here, and nothing pinned it until this test: the case above cannot,
+        // because that call answers `[]` for a `stack` either way.
         //
         // This is the shape D14's migration actually produces — a check-graded
         // `package` whose `type:` line was deleted, so `test.type` falls back
-        // to the default. Two answers diverge: with the argument,
-        // `languagesForType('function', 'package')` is `[]` (a function env
+        // to `DEFAULT_TEST_TYPE`, now `call`. Two answers diverge: with the
+        // shape, `languagesForType('call', 'package')` is `[]` (a `call` env
         // serves one buffer, never a tree), the multi-file relaxation applies,
         // and every declared language is offered so the tree can be opened at
-        // all. Drop the argument and the answer is all five runnable
-        // languages, the relaxation switches off, and `ruby` — declared by
-        // this artifact, runnable by nothing — silently disappears from the
-        // selector.
+        // all. Answer it as "any shape" instead and the result is all five
+        // runnable languages, the relaxation switches off, and `ruby` —
+        // declared by this artifact, runnable by nothing — silently disappears
+        // from the selector.
         test('a migrated package offers every declared language, because the shape argument reaches the registry', () => {
             const p = fixture({
                 leetcodeType: 'package',
@@ -256,7 +258,11 @@ suite('leetcodePreview.controls', () => {
         });
 
         test('names the offending test type when it is a reserved one', () => {
-            const html = renderLanguageRow(fixture({ test: { type: 'class', timeoutMs: 5000 } }));
+            // No declared language, so `refusalHint` has nothing to name and the
+            // generic hint renders — the three-axis sentence is the test below.
+            const html = renderLanguageRow(fixture({
+                test: { type: 'class', timeoutMs: 5000 }, setups: [], solutions: [],
+            }));
             assert.ok(!html.includes('<select'));
             assert.ok(html.includes('<code>class</code>'));
         });
@@ -307,13 +313,13 @@ suite('leetcodePreview.controls', () => {
         });
 
         test('keeps the generic hint when leetcodeType is undefined — never defaulted to function', () => {
-            // Same reserved-type shape as above, but `leetcodeType` is left
-            // undeclared (as a hand-built fixture elsewhere in the codebase
-            // might). `refusalFor` requires a `LeetcodeTypeId`, so defaulting it
-            // with `?? 'function'` would grade a `stack` as a buffer — the C15
-            // instruction is explicit that this must never happen at a call site.
-            const p = fixture({ test: { type: 'class', timeoutMs: 5000 } });
-            const html = renderLanguageRow(p);
+            // Same reserved-type shape as above, but `leetcodeType` is stripped.
+            // The field became **required** at T3.5 (C1/C6), so the cast is what
+            // makes this reachable at all — and the guard stays because the
+            // alternative at this call site is `?? 'function'`, which would
+            // describe a `stack` as a buffer in a sentence shown to the solver.
+            const p = { ...fixture({ test: { type: 'class', timeoutMs: 5000 } }), leetcodeType: undefined };
+            const html = renderLanguageRow(p as unknown as ParsedLeetCode);
             assert.ok(html.includes('<code>class</code>'), html);
             assert.ok(!html.includes('cannot run'), html);
         });
@@ -321,14 +327,21 @@ suite('leetcodePreview.controls', () => {
         test('does not consult refusalFor for a check-graded package, even when its declared language has no matching env', () => {
             // A `package` with `checks:` grades through `gradeProjectDir`, never
             // the suite registry `refusalFor` reads — consulting it there is the
-            // inert guard T1.16 shipped twice. `test.type: 'project'` plus a
-            // `ruby` setup (no env registered for either) proves the guard is
-            // load-bearing: without it this scenario has a genuine non-null
-            // `refusalFor` answer and would leak the specific sentence.
+            // inert guard T1.16 shipped twice.
+            //
+            // **The shape had to change at T3.5 and the reason is the point.**
+            // This used to declare `test.type: 'project'`, which resolved five
+            // stub envs, so the registry gate switched on and filtered `ruby`
+            // out. Those envs are gone: for a check-graded tree the registry now
+            // answers `[]`, the multi-file relaxation applies, and every declared
+            // language is offered — there is no empty-selector branch left to
+            // reach. `program` is the one suite type a tree *can* resolve, so it
+            // is what still produces the branch this guard sits in: five program
+            // languages, `ruby` among none of them.
             const p = fixture({
                 leetcodeType: 'package',
                 checks: [{ name: 'builds', kind: 'build', argv: ['true'], cases: [], publicCount: 0 }],
-                test:      { type: 'project', timeoutMs: 5000 },
+                test:      { type: 'program', timeoutMs: 5000 },
                 setups:    [{ language: 'ruby', code: '' }],
                 solutions: [],
             });
@@ -588,7 +601,7 @@ suite('leetcodePreview.controls', () => {
                 tests: twoCases, finalTests: [twoCases[0]],
                 checks: [
                     {
-                        name: 'catalogue filter', kind: 'function',
+                        name: 'catalogue filter', kind: 'call',
                         file: 'src/lib/catalogue.ts', function: 'filterInStock',
                         cases: [...twoCases, twoCases[0]], publicCount: 2,
                     },

@@ -180,21 +180,23 @@ export const PRACTICE_OPTIONS: readonly PracticeOption[] = [
 export const TEST_TYPES: readonly TestType[] = [
 	{
 		id: 'call',
-		// Reserved until the function envs register under `call` rather than
-		// the legacy `function`. Marking it implemented while every env still
-		// answers to `function` would make this table disagree with the
-		// registry — and the registry is what `languagesForType` reads.
-		status: 'reserved',
+		// The five function envs register under this id (T3.5), so the table
+		// and the registry now agree — `languagesForType('call')` answers with
+		// all five, and `kind: call` is what a check inside a tree declares.
+		status: 'implemented',
 		description: 'Call a free function with positional args, compare the return value.',
 	},
 	{
 		id: 'program',
-		status: 'reserved',
+		status: 'implemented',
 		description: 'Deliver a case by argv, named flags or stdin; compare the value the program writes to $LEET_OUT.',
 	},
 	{
 		id: 'http',
-		status: 'reserved',
+		// Dispatched per check by `runOneCheck`, exactly like `build` and the
+		// two render kinds — it has no registry entry, because what it grades
+		// is a booted process rather than a language's candidate buffer.
+		status: 'implemented',
 		description: 'Send a real request to a server booted on an assigned loopback port; compare status, headers and body.',
 	},
 	{
@@ -222,44 +224,28 @@ export const TEST_TYPES: readonly TestType[] = [
 		status: 'reserved',
 		description: 'Compare a mutated argument rather than the return value (removeDuplicates).',
 	},
-
-	// ── Legacy, transitional — removed with the code paths that still branch on them ──
-	{
-		id: 'function',
-		status: 'implemented',
-		description: 'Legacy spelling of `call`. Retained so an unmigrated artifact still parses.',
-	},
-	{
-		id: 'stdin-stdout',
-		status: 'reserved',
-		description: 'Legacy; subsumed by `program`, whose stdin channel delivers the same thing.',
-	},
-	{
-		id: 'project',
-		status: 'implemented',
-		description: 'Legacy; never a test type but an artifact *shape*, now the `package` leetcode type.',
-	},
-	{
-		id: 'service',
-		status: 'reserved',
-		description: 'Legacy; never a test type but an artifact *shape*, now the `stack` leetcode type.',
-	},
 ];
 
 /**
  * Legacy ids that describe an artifact's **shape**, never a way to deliver a case.
  *
- * Named once so a check's `kind:` can exclude them: `kind: project` was never
- * meaningful, and admitting it just because the id still parses as a
- * `test.type` would re-create the exact overlap the merge removes. `function`
- * is deliberately **not** here — it is the legacy spelling of `call` and a
- * live check kind in the vault until the migration rewrites it.
+ * They left `TEST_TYPES` with T3.5's narrowing, so nothing derived from that
+ * table can produce one any more. This set survives because two consumers read
+ * an artifact's **raw** declared scalar rather than a parsed `TestTypeId`: the
+ * verifier's mirror rule, which must tolerate `test.type: project` in an
+ * artifact the migration has not reached, and the coverage sweep, which must
+ * never *demand* an example for a cell no one can author. `function` is
+ * deliberately not here — it was the legacy spelling of `call`, not a shape.
  */
 export const SHAPE_TEST_TYPE_IDS: ReadonlySet<string> =
 	new Set<string>(['project', 'service']);
 
-/** Test type assumed when the artifact declares no `test:` block. */
-export const DEFAULT_TEST_TYPE = 'function';
+/**
+ * Test type assumed when the artifact declares no `test:` block — and the value
+ * `parseTestType` collapses any unrecognised scalar to, the legacy spellings
+ * (`function`, `project`, `service`, `stdin-stdout`) included.
+ */
+export const DEFAULT_TEST_TYPE = 'call';
 
 /**
  * Is this artifact a **file tree**, rather than one candidate buffer?

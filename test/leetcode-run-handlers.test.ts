@@ -1,6 +1,7 @@
 import * as assert from 'node:assert';
 import { parseLeetCode } from '../src/services/leetcode-parser.service.js';
 import { projectGradeRefusal } from '../src/commands/leetcode-run.helpers.js';
+import type { ParsedLeetCode } from '../src/types/leetcode.types.js';
 
 /**
  * T1.16 — the `vscode`-free half of the run handlers' directory-grading
@@ -36,6 +37,11 @@ suite('run handlers — directory-grading refusal', () => {
 			`    - name: check ${i}`,
 			`      kind: ${kind}`,
 			'      file: src/api.ts',
+			'      function: handler',
+			// An `http` check names a package instead of a file, and is dropped
+			// without one — which would make it look "unimplemented" to this
+			// guard for entirely the wrong reason.
+			...(kind === 'http' ? ['      package: api'] : []),
 			...(kind === 'build' ? ['      argv: ["npx", "tsc", "--noEmit"]'] : []),
 		]);
 		return ['---', 'type: leetcode', 'title: P', '---', '', 'Body.', '',
@@ -80,20 +86,26 @@ suite('run handlers — directory-grading refusal', () => {
 	});
 
 	/**
-	 * **The pin.** A `build` check that parses fine sits beside an `http` check
+	 * **The pin.** A `build` check that parses fine sits beside a `class` check
 	 * that was dropped as unimplemented. Grading the survivor alone reports the
 	 * exercise solved while the half it is actually about never ran — so the
 	 * refusal is artifact-wide, and it names the kind.
+	 *
+	 * The kind here was `http` until T3.5 implemented it. That is exactly the
+	 * hazard this suite exists for: a pin written against *whichever id happens
+	 * to be unimplemented* stops testing anything the day that id lands, and
+	 * would have gone green while asserting nothing. `class` is reserved with
+	 * no dispatch, and the test below proves `http` moved to the other side.
 	 */
 	test('SEC: an artifact declaring a kind nothing implements is refused as a whole, by name', () => {
-		const md = artifact(['build', 'http']);
+		const md = artifact(['build', 'class']);
 		const refusal = projectGradeRefusal(md, parseLeetCode(md));
 		assert.ok(refusal !== null, 'expected a refusal, got null — the S3 guard is inert');
-		assert.ok(refusal.includes('http'), refusal);
+		assert.ok(refusal.includes('class'), refusal);
 	});
 
 	test('SEC: the refusal survives the check being dropped from `checks`', () => {
-		const md = artifact(['build', 'http']);
+		const md = artifact(['build', 'class']);
 		const parsed = parseLeetCode(md);
 		// `checks` holds only the survivor, which is precisely why the guard may
 		// not be built from it.
@@ -102,14 +114,30 @@ suite('run handlers — directory-grading refusal', () => {
 	});
 
 	/**
-	 * `leetcodeType` is optional on `ParsedLeetCode` (carried condition C1), so
-	 * the absent case is reachable by type. It is answered explicitly rather
-	 * than defaulted — `?? 'function'` would silently measure a tree against a
-	 * buffer's rules.
+	 * The other half of the same rule, and the one that changed meaning at
+	 * T3.5: an `http` check is now dispatched by `runOneCheck`, so it must
+	 * **stop** being refused. Four vault artifacts declare one; until this
+	 * wave every one of them was ungradeable by name.
+	 */
+	test('an artifact declaring `http` is no longer refused — the kind is dispatched now', () => {
+		const md = artifact(['build', 'http']);
+		const parsed = parseLeetCode(md);
+		assert.deepStrictEqual(parsed.checks?.map(c => c.kind), ['build', 'http']);
+		assert.strictEqual(projectGradeRefusal(md, parsed), null);
+	});
+
+	/**
+	 * `leetcodeType` became **required** on `ParsedLeetCode` at T3.5 (C1/C6),
+	 * so this case is no longer reachable through the type system — the cast
+	 * is what makes it reachable at all. The guard stays because the two CLI
+	 * harnesses (`verify-exercise.mjs`, `grade-candidate.mjs`) are plain JS
+	 * importing from `dist/`, where no compiler enforces the field, and
+	 * because the honest answer to an absent axis is a refusal rather than
+	 * `?? 'function'` — which would measure a tree against a buffer's rules.
 	 */
 	test('a parsed artifact with no leetcode type is refused, never defaulted', () => {
 		const md = artifact(['build']);
-		const parsed = { ...parseLeetCode(md), leetcodeType: undefined };
+		const parsed = { ...parseLeetCode(md), leetcodeType: undefined } as unknown as ParsedLeetCode;
 		assert.ok(projectGradeRefusal(md, parsed) !== null);
 	});
 });

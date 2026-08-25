@@ -47,7 +47,7 @@ const { unimplementedCheckKindsFromContent } = await import(
 	pathToFileURL(join(distServices, 'project-parser.helpers.js')).href);
 const { isProgramSuite } = await import(
 	pathToFileURL(join(distServices, 'test-envs', 'program', 'program.runner.js')).href);
-const { TEST_TYPES, SHAPE_TEST_TYPE_IDS, isMultiFile } = await import(
+const { TEST_TYPES, isMultiFile } = await import(
 	pathToFileURL(join(dist, 'types', 'constants.js')).href);
 const { LEETCODE_TYPES } = await import(
 	pathToFileURL(join(dist, 'types', 'leetcode-type.js')).href);
@@ -72,7 +72,7 @@ const { LEETCODE_TYPES } = await import(
  *
  * @example
  * dispatchableKinds().has('build');   // → true
- * dispatchableKinds().has('http');    // → false, until an environment implements it
+ * dispatchableKinds().has('class');   // → false — reserved, nothing dispatches it
  */
 function dispatchableKinds() {
 	const probe = (kind) => `---
@@ -91,6 +91,7 @@ test:
       argv: ["true"]
       file: src/probe.js
       function: probe
+      package: api
 \`\`\`
 
 ## Files
@@ -123,19 +124,16 @@ const DISPATCHABLE = dispatchableKinds();
  * @returns True when something in the tree can execute that pair.
  *
  * @example
- * cellImplemented('function', 'function'); // → true
- * cellImplemented('package', 'build');     // → true — a dispatchable check kind
- * cellImplemented('function', 'build');    // → false — a buffer has no checks
+ * cellImplemented('function', 'call');  // → true
+ * cellImplemented('package', 'build');  // → true — a dispatchable check kind
+ * cellImplemented('function', 'build'); // → false — a buffer has no checks
  */
 function cellImplemented(leetcodeType, testType) {
-	// A legacy shape id is not an authorable test type, so it can never be
-	// covered and must never be demanded. `project` still resolves an
-	// environment — it is the key the directory-grading path goes through — but
-	// no artifact declares it: the migration deleted that line from every
-	// check-graded file, and a check may not name it as a `kind:` either. Left
-	// in, it is a permanently unsatisfiable gap that would make this gate
-	// impossible to ever pass.
-	if (SHAPE_TEST_TYPE_IDS.has(testType)) { return false; }
+	// The legacy shape ids left `TEST_TYPES` with T3.5's narrowing, so the
+	// guard that used to exclude them here has nothing left to match: this
+	// function is only ever called across the ids that table declares. What
+	// still reads a raw declared scalar — the verifier's mirror rule — keeps
+	// `SHAPE_TEST_TYPE_IDS` for itself.
 	if (languagesForType(testType, leetcodeType).length > 0) { return true; }
 	return isMultiFile(leetcodeType) && DISPATCHABLE.has(testType);
 }
@@ -239,7 +237,9 @@ for (const file of markdownFiles(vault)) {
 
 	artifacts += 1;
 	const parsed = parseLeetCode(md);
-	const leetcodeType = parsed.leetcodeType ?? 'function';
+	// No `?? 'function'`: the parser always resolves the axis (C1/C6), and a
+	// default here is the exact move that files a `stack` under the buffer row.
+	const leetcodeType = parsed.leetcodeType;
 	for (const testType of declaredTestTypes(md, parsed)) {
 		const key = keyFor(leetcodeType, testType);
 		tally.set(key, (tally.get(key) ?? 0) + 1);

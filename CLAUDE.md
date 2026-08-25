@@ -81,6 +81,11 @@ invites a test to guard the copy instead of the real thing.
   the other question, whether every *implemented* cell of the capability matrix has an artifact
   behind it at all.
 
+  **Four of the 79 are `stack` artifacts and print `SKIP … — stack, LEET_STACK_E2E not set`,
+  exiting `0`.** They still count toward `total` — the floor is unchanged — but nothing about
+  them was examined beyond the parse. Set `LEET_STACK_E2E=1` to include them, and expect
+  minutes plus a network: a stack installs several ecosystems and boots several servers.
+
   `verifyExercise` already enforces everything a parse-only guard could (missing title,
   missing `function:`, the case floors, `params`/`returns`) and more.
 - Scratch files for a debugging session go in the session scratchpad, not the repo.
@@ -307,11 +312,12 @@ enforced rather than remembered:
 **Execution configuration lives in the body**, in ` ```yaml leetcode ` fences placed next to
 what they configure: `function`/`functions`/`params`/`returns` after the description,
 `test`/`practice` before `## Tests`, `libs`/`packages` before `# Setup` or `## Files`.
-(`packages:` is now the key on disk **and** in `BODY_SET_KEYS`; `services:` is gone from both.
-It has a grammar — [packages-parser.helpers.ts](src/services/packages-parser.helpers.ts) — but
-**no caller yet**: nothing in `parseLeetCode` invokes `parsePackages`, so the block is
-recognised and validated in isolation rather than reaching a run. See
-`ARTIFACT_LEETCODE_FILE_FORMAT.md` §9.3.)
+(`packages:` is the key on disk **and** in `BODY_SET_KEYS`; `services:` is gone from both.
+Its grammar — [packages-parser.helpers.ts](src/services/packages-parser.helpers.ts) — is now
+**reached**: `parseLeetCode` calls `parsePackages`, a parsed artifact carries `packages`, and
+an `http` check resolves its `package:` name against that list before booting. Booting several
+packages in `dependsOn` order, running each one's `install`, and computing `exposeAs` are still
+the `stack` runner's, unbuilt. See `ARTIFACT_LEETCODE_FILE_FORMAT.md` §9.3.)
 Placement is convention — the parser is order-independent — but the marker is not: `yaml`
 first (so Obsidian still highlights it), then a **bare** `leetcode` token, because a
 `## Files` entry always carries `path=` and must never be mistaken for config. Fence content
@@ -367,22 +373,40 @@ Behaviour the spec does **not** cover:
   artifact, so all three comparisons went false on exactly the files that need grading.
   **What replaces it is not `refusalFor`.** That function asks "is this
   `(leetcodeType × testType × language)` triple registered?", and on the directory path the
-  answer is always yes — the project envs serve both `package` and `stack`, and the path is
-  reached only once `isMultiFile` is true, so a guard consulting it refuses **nothing**. That
-  guard was built twice, gated green twice, and was inert both times. The faithful signal is
-  the **artifact's own dropped kinds**: `projectGradeRefusal`
+  answer used to be always yes; since T3.5 deleted the `project` stub envs it is always
+  **no**, and a guard consulting it there would refuse every tree instead of none. Either way
+  it answers the wrong question. That guard was built twice, gated green twice, and was inert
+  both times. The faithful signal is the **artifact's own dropped kinds**: `projectGradeRefusal`
   ([leetcode-run.helpers.ts](src/commands/leetcode-run.helpers.ts)) reads the structured
   `unimplementedKinds` the project parser records and refuses the artifact **as a whole**,
   by name, before anything is written — *"checks declare kind(s) no environment implements
-  yet: http — the whole artifact is ungradeable, not just the checks that parsed."* Grading
-  only the survivors is the false-green vector: a tree whose `http` checks were dropped at
+  yet: class — the whole artifact is ungradeable, not just the checks that parsed."* Grading
+  only the survivors is the false-green vector: a tree whose checks were dropped at
   parse time would otherwise pass on its surviving `build` check and be reported **solved**.
+  **`http` was the standing example until T3.5 dispatched it** — the pins moved to `class`,
+  because a test written against whichever id happens to be unimplemented stops testing
+  anything the day that id lands, and goes green while asserting nothing.
+- **A malformed check is not an unimplemented one.** An `http` check with no `package:`, or a
+  `call` check with no `function:`, is dropped by name as the author's mistake and is **not**
+  recorded in `unimplementedKinds`. The gap is the artifact's, not the extension's, so it does
+  not make the artifact ungradeable — but it does mean fewer checks than the author wrote,
+  which is why the vault migration renamed the four `http` checks' `service:` binding to
+  `package:` in the same change that made the kind dispatchable.
 - **Verification deliberately answers differently from grading.** An artifact with an
   unimplemented kind is refused for grading and still reports structure-only `ok` — *well
   formed* and *executable* are different claims — and the CLI prints
-  `structure only for kind(s) http — no environment implements them, so those checks were
-  dropped at parse time and never graded`. Four vault artifacts declare `kind: http`; had the
-  refusal failed verification instead, no vault sweep could ever read `failures 0`.
+  `structure only for kind(s) class — no environment implements them, so those checks were
+  dropped at parse time and never graded`. Had the refusal failed verification instead, no
+  vault sweep could ever read `failures 0` while any kind was unimplemented.
+- **A `stack` is skipped by the default vault sweep (P6).** `verify-exercise.mjs` prints
+  `SKIP … — stack, LEET_STACK_E2E not set` and exits `0` unless `LEET_STACK_E2E=1`. This
+  arrived with T3.5 for a concrete reason: `http` became dispatchable, so the four stack
+  artifacts stopped being refused and started installing ecosystems and booting servers inside
+  a sweep that is otherwise offline and seconds long. A `package` declaring an `http` check
+  boots one server and stays in the sweep. Measured with the flag on, `fastapi-react.md` fails
+  before booting anything: its `## Tests` fences carry no `check=` attribute and the artifact
+  has two checks, so its cases bind to neither and the http check has none. That is an
+  artifact defect the stack wave owns, not a toolchain one.
 
 ### Language registry — the one authority
 
@@ -458,19 +482,29 @@ matrix, `refusalFor` and `coverage-sweep.mjs` all reporting an implemented cell 
 
 **The `Map` stays keyed `"<testType>::<language>"`** and the lookup *filters* on the env's
 declared `leetcodeTypes`. A three-key table would be mostly empty slots plus a second list to
-drift out of sync with the first. The third argument is **optional and appended**, not
-prepended and required: it has seven call sites spread across three phases of work, and a
-required parameter would have made the tree red in a wave that could only be cleared by
-editing four other concerns' files. It becomes required once the last call site passes it.
+drift out of sync with the first. The third argument is **appended and required** — it was
+optional through Phases 1 and 2, because a required parameter would have reddened four other
+concerns' files at once, and T3.5 was the last of its seven call sites. An absent shape meant
+"any", which is what let a `stack` resolve a single-buffer env.
 
-**A check `kind:` is not resolved here.** `build` / `dom-assert` / `css-assert` have no
-registry entry at all (`languagesForType('build')` is `[]`) — they are dispatched per check by
-`runOneCheck` against an already-written directory. Both draw from the one `TEST_TYPES`
-vocabulary; only one of them goes through the registry.
+**Only two rows are registered, and that is the point.** `call × {the five languages}` for a
+buffer, `program × {the five}` for a `package`. **`project` is not a registry key any more**:
+it was never a way to deliver a case, and the five stub envs behind it refused every candidate
+they were handed — a matrix entry claiming a tree could be graded *through the suite runner*.
+Deleted with `project.env.ts`. One behaviour moved with them: a check-graded tree now resolves
+`[]` from the registry, so `availableLanguages`' multi-file relaxation always applies and every
+language the tree declares is offered. Grading stays refused elsewhere.
 
-The five `function` envs come from `makeFunctionEnv(spec)`
+**A check `kind:` is not resolved here.** `build` / `dom-assert` / `css-assert` / `http` have no
+registry entry at all (`languagesForType('build', 'package')` is `[]`) — they are dispatched per
+check by `runOneCheck` against an already-written directory. Both draw from the one `TEST_TYPES`
+vocabulary; only one of them goes through the registry. A `call` check inside a tree is the one
+crossing point: it asks `testEnvFor('call', <the file's language>, 'function')`, because what it
+grades is one extracted file, as a buffer.
+
+The five `call` envs come from `makeFunctionEnv(spec)`
 ([make-function-env.ts](src/services/test-envs/function/make-function-env.ts)), which owns
-`type: 'function'`, the two-file emit shape, and the shared sentinel parser; each language
+`type: 'call'`, the two-file emit shape, and the shared sentinel parser; each language
 supplies only its `runnerSource` / `candidateContent` / `validate`. The **generated driver**
 is still self-contained — it can never assume a JUnit jar, because nothing the extension ships
 installs one. What an *artifact* declares is a different matter: `libs:` is resolved before
@@ -504,26 +538,26 @@ panel shows *"Java setup must be a bare method, not a class"* instead of a compi
 ### `package` and `stack` — checks, not one return value
 
 A `package` (and a `stack`) is a **file tree graded by declared checks**
-([`test-envs/project/`](src/services/test-envs/project/)); *solved = every check green*. It
-is parsed and graded today, registered for **every `LANG_IDS`** (`projectEnvs =
-LANG_IDS.map(projectEnvFor)`) — derived, not hand-listed, because `build` and `function`
-checks are language-agnostic and a second language list is exactly the drift `LANGUAGES`
-exists to prevent. **`project` survives only as the registry key and the directory name**
-under `src/services/test-envs/`; on disk the axis is `leetcodeType: package | stack`, and
-those envs declare `leetcodeTypes: ['package', 'stack']`. Never `javascriptreact`/`typescriptreact`: those are display ids with no
-runtime, and a `.jsx`/`.tsx` file maps onto its runnable pair at bundle time. The registered
-env is a **capability-matrix entry only** — its `validate` refuses every candidate
-(*"a project exercise is graded as a file tree, not as a single solution buffer"*), because
-grading goes through `gradeProjectDir`, never `runSuite`.
+([`test-envs/project/`](src/services/test-envs/project/)); *solved = every check green*. It is
+parsed and graded today, and it registers **nothing**: grading goes through `gradeProjectDir`
+dispatching each check by `kind:`, never through `runSuite`. **`project` survives only as a
+directory name** under `src/services/test-envs/`; on disk the axis is
+`leetcodeType: package | stack`. The five `projectEnvFor` stubs that used to hold the
+`project::<language>` registry slots are **deleted** (T3.5) — each refused every candidate it
+was handed, so what they registered was a claim that a tree could be graded through the suite
+runner. A check kind reaches its machinery per check instead, and the only registry lookup on
+this path is a `call` check asking for the buffer env of the one file it grades. Never
+`javascriptreact`/`typescriptreact` anywhere here: those are display ids with no runtime, and a
+`.jsx`/`.tsx` file maps onto its runnable pair at bundle time.
 
 | Piece | File | Owns |
 |---|---|---|
-| Grammar | [project-parser.helpers.ts](src/services/project-parser.helpers.ts) | `## Files`, `libs:`, `checks:`, `check=<name>` case binding, warnings |
+| Grammar | [project-parser.helpers.ts](src/services/project-parser.helpers.ts) | `## Files`, `libs:`, `checks:`, `packages:` (via `parsePackages`), `check=<name>` case binding, warnings |
 | Containment | [files.writer.ts](src/services/test-envs/project/files.writer.ts) | `resolveContained` — **the** path authority; writes the tree, `role: readonly` → mode `0o444` |
 | Toolchain | [libs/](src/services/libs/) | grammar → argv install → shared cache under `os.tmpdir()`, one door (`ensureLibEnv`) |
 | Linking | [modules.linker.ts](src/services/test-envs/project/modules.linker.ts) | per-run `node_modules` of symlinks into that cache — pnpm's layout |
 | Render | [render.driver.ts](src/services/test-envs/project/render.driver.ts) | esbuild bundle + jsdom mount, one `__LEET__` line per case |
-| Check kinds | [checks.ts](src/services/test-envs/project/checks.ts) · [build.check.ts](src/services/test-envs/project/build.check.ts) | `dom-assert` / `css-assert` / `build` |
+| Check kinds | [checks.ts](src/services/test-envs/project/checks.ts) · [build.check.ts](src/services/test-envs/project/build.check.ts) · [http/http.check.ts](src/services/test-envs/http/http.check.ts) | `dom-assert` / `css-assert` / `build` / `http` |
 | Orchestration | [project.runner.ts](src/services/test-envs/project/project.runner.ts) | temp run dir → write tree → dispatch every check |
 
 Rules that are load-bearing, not stylistic:
@@ -711,8 +745,8 @@ and it is **enforced, not remembered**:
   the vault is both trees' folders, not just the projects.
   **It exits `2` a second way, and that one is not bad input:** it consults
   `projectGradeRefusal` before grading anything, so an artifact declaring a kind nothing
-  implements is refused by name. Four vault artifacts declare `kind: http` and exit `2` for
-  exactly that reason — read the message, not the status.
+  implements is refused by name — read the message, not the status. The four `kind: http`
+  vault artifacts exited `2` that way until T3.5 dispatched the kind.
 - **`--starter-red` cannot yet tell "the starter genuinely failed" from "the toolchain is
   broken", and it reports both as red.** Its pass condition is *some check failed*, so a
   `Cannot find module 'jsdom'` from a swept cache satisfies it exactly as an incomplete starter

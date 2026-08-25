@@ -16,6 +16,7 @@ suite('preview library chips', () => {
 	function artifact(libs?: LibSpec): ParsedLeetCode {
 		return {
 			title: 'T', difficulty: 'easy', functionName: 'f', status: 'unsolved',
+			leetcodeType: 'function',
 			params: [], returns: 'int', description: '', examples: [], tests: [], finalTests: [],
 			test: defaultTestConfig(), setups: [], practice: defaultPracticeConfig(),
 			solutions: [], attempts: [], tags: [],

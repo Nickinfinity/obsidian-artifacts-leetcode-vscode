@@ -1,5 +1,8 @@
-import type { FileRole, FileSpec, LibSpec, ProjectCheck, TestCase, TestTypeId } from '../types/leetcode.types.js';
-import { SHAPE_TEST_TYPE_IDS, TEST_TYPES } from '../types/constants.js';
+import type {
+	FileRole, FileSpec, LibSpec, PackageSpec, ProjectCheck, TestCase, TestTypeId,
+} from '../types/leetcode.types.js';
+import { TEST_TYPES } from '../types/constants.js';
+import { parsePackages } from './packages-parser.helpers.js';
 import { safeJsonParse } from '../utils/safe-json.js';
 import {
 	BODY_SET_KEYS,
@@ -31,6 +34,14 @@ export interface ProjectSections {
 	libs: LibSpec;
 	/** `checks:` entries with their bound cases */
 	checks: ProjectCheck[];
+	/**
+	 * `packages:` entries — what an `http` check's `package:` name resolves
+	 * against. `[]` when the block is absent **and** when it was refused: a
+	 * cap breach or a `dependsOn` cycle is a whole-block error (T3.1), and the
+	 * artifact must be left with no packages rather than a truncated list that
+	 * grades against a subset nobody declared.
+	 */
+	packages: PackageSpec[];
 	/** `# Solutions` fences carrying `path=` — reference overlays for `## Files` */
 	solutionFiles: FileSpec[];
 	/** Author-facing problems that degraded to a default instead of failing */
@@ -84,7 +95,7 @@ const VALID_ROLES = new Set<FileRole>(['editable', 'readonly', 'hidden']);
  * a `CHECK_KINDS` left stale merely drops the new kind as *reserved*, which is
  * safe but silent.
  */
-const CHECK_KINDS = ['function', 'build', 'dom-assert', 'css-assert'] as const satisfies readonly TestTypeId[];
+const CHECK_KINDS = ['call', 'build', 'dom-assert', 'css-assert', 'http'] as const satisfies readonly TestTypeId[];
 
 /** Membership form of `CHECK_KINDS`, for the untrusted string a `kind:` line carries. */
 const VALID_KINDS: ReadonlySet<string> = new Set<string>(CHECK_KINDS);
@@ -128,11 +139,11 @@ const VALID_KINDS: ReadonlySet<string> = new Set<string>(CHECK_KINDS);
 const RESERVED_KINDS: ReadonlySet<string> = new Set(
 	TEST_TYPES
 		.map(t => t.id)
-		.filter(id => !VALID_KINDS.has(id) && !SHAPE_TEST_TYPE_IDS.has(id)),
+		.filter(id => !VALID_KINDS.has(id)),
 );
 
 /** Fields a `checks:` entry may set. Anything else — `__proto__` included — never lands. */
-const CHECK_FIELDS = new Set(['name', 'kind', 'file', 'function', 'argv', 'dir']);
+const CHECK_FIELDS = new Set(['name', 'kind', 'file', 'function', 'argv', 'dir', 'package']);
 
 /**
  * Every key the near-miss warning considers legitimate, wherever it appeared.
@@ -188,10 +199,14 @@ export function parseProjectArtifact(configRaw: string, body: string): ProjectSe
 	const checks = parseChecks(lines, warn, onReservedKind);
 	bindCases(checks, body, warn);
 
+	const packages = parsePackages(lines, warn);
+	if (!packages.ok) { warn(packages.error); }
+
 	return {
 		files: parseFiles(body, FILES_RE, HEADING_RE, warn),
 		libs: parseLibDeclarations(lines, warn),
 		checks,
+		packages: packages.ok ? [...packages.packages] : [],
 		// A `# Solutions` fence without `path=` is a plain reference solution for a
 		// function-type artifact; only path-bearing ones overlay a project's tree.
 		solutionFiles: parseFiles(body, SOLUTIONS_RE, TOP_HEADING_RE, warn),
@@ -490,6 +505,18 @@ function buildCheck(
 		return null;
 	}
 
+	// The only kind that names a **process** rather than a file: an `http`
+	// check boots the `packages:` entry it names and sends requests at it, so
+	// it needs no `file:` and the `file` requirement below must not run for it.
+	if (kind === 'http') {
+		const pkg = unquote(fields.get('package') ?? '');
+		if (!pkg) {
+			warn(`checks: http check '${name}' needs a package — dropped`);
+			return null;
+		}
+		return { name, kind, package: pkg, cases: [], publicCount: 0 };
+	}
+
 	if (kind === 'build') {
 		const argv = safeJsonParse(fields.get('argv') ?? '');
 		if (!isStringArray(argv)) {
@@ -505,10 +532,10 @@ function buildCheck(
 		warn(`checks: '${name}' needs a file — dropped`);
 		return null;
 	}
-	if (kind === 'function') {
+	if (kind === 'call') {
 		const fn = unquote(fields.get('function') ?? '');
 		if (!fn) {
-			warn(`checks: function check '${name}' needs a function — dropped`);
+			warn(`checks: call check '${name}' needs a function — dropped`);
 			return null;
 		}
 		return { name, kind, file, function: fn, cases: [], publicCount: 0 };

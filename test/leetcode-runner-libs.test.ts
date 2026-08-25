@@ -21,6 +21,7 @@ suite('runner library seam', () => {
 	function artifact(libs?: Record<string, string[]>): ParsedLeetCode {
 		return {
 			title: 'seam', difficulty: 'easy', functionName: 'identity', status: 'unsolved',
+			leetcodeType: 'function',
 			params: [{ name: 'n', type: 'int' }], returns: 'int', description: '',
 			examples: [], tests: cases, finalTests: [], test: defaultTestConfig(),
 			setups: [], practice: defaultPracticeConfig(), solutions: [], attempts: [], tags: [],
@@ -37,7 +38,7 @@ suite('runner library seam', () => {
 	} {
 		const seen: EnvContext[] = [];
 		const env: TestEnv = {
-			type: 'function',
+			type: 'call',
 			language: 'javascript',
 			leetcodeTypes: ['function'],
 			emit: (ctx: EnvContext): EmittedProgram => {

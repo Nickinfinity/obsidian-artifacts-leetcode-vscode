@@ -1,6 +1,5 @@
 import * as assert from 'node:assert';
 import type { BuildCheck, FileSpec, LibSpec, ProjectCheck } from '../src/types/leetcode.types.js';
-import { projectEnvFor } from '../src/services/test-envs/project/project.env.js';
 
 /**
  * Type-level tests for the `project` domain shape (eval-fixes TB.1).
@@ -37,19 +36,35 @@ suite('project types', () => {
 		assert.strictEqual(check.dir, undefined);
 	});
 
-	test('a function check carries the file and export it grades', () => {
+	test('a call check carries the file and export it grades', () => {
 		const check: ProjectCheck = {
 			name: 'catalogue filter',
-			kind: 'function',
+			kind: 'call',
 			file: 'src/lib/catalogue.ts',
 			function: 'filterInStock',
 			cases: [{ input: { stock: 1 }, expected: true }],
 			publicCount: 1,
 		};
 
-		if (check.kind !== 'function') { throw new Error('discriminant failed to narrow'); }
+		if (check.kind !== 'call') { throw new Error('discriminant failed to narrow'); }
 		assert.strictEqual(check.file, 'src/lib/catalogue.ts');
 		assert.strictEqual(check.cases.length, 1);
+	});
+
+	test('an http check names a package, and carries no file at all', () => {
+		const check: ProjectCheck = {
+			name: 'orders api',
+			kind: 'http',
+			package: 'api',
+			cases: [],
+			publicCount: 0,
+		};
+
+		if (check.kind !== 'http') { throw new Error('discriminant failed to narrow'); }
+		assert.strictEqual(check.package, 'api');
+		// The narrowing is the assertion: `file` is not a member of `HttpCheck`,
+		// so reading one would not compile. What it grades is a process.
+		assert.ok(!('file' in check));
 	});
 
 	test('dom-assert and css-assert both carry a component file', () => {
@@ -78,29 +93,13 @@ suite('project types', () => {
 		assert.deepStrictEqual(Object.keys(libs).sort(), ['javascript', 'typescript']);
 	});
 
-	// ── Env skeleton ──────────────────────────────────────────────────────────
-
-	suite('project env skeleton', () => {
-
-		test('is shaped like a TestEnv for its language', () => {
-			const env = projectEnvFor('javascript');
-			assert.strictEqual(env.type, 'project');
-			assert.strictEqual(env.language, 'javascript');
-		});
-
-		test('validate refuses every candidate until the driver lands', () => {
-			const message = projectEnvFor('typescript').validate?.({
-				parsed: { test: { type: 'project' } } as never,
-				langId: 'typescript',
-				code: '',
-				cases: [],
-			});
-			assert.ok(typeof message === 'string' && message.length > 0, String(message));
-		});
-
-		test('parse reads the shared __LEET__ sentinel protocol', () => {
-			const outcomes = projectEnvFor('javascript').parse('__LEET__{"index":0,"actual":"true","ms":1}\n');
-			assert.deepStrictEqual(outcomes, [{ index: 0, actual: 'true', ms: 1 }]);
-		});
-	});
+	// The `project env skeleton` suite that used to sit here is **deleted with
+	// its subject** (T3.5): `project` is no longer a `TestTypeId`, so the five
+	// stub envs keyed on it are gone, and its three tests pinned the stub —
+	// `type === 'project'`, a `validate` that refused every candidate, and a
+	// `parse` delegating to the shared sentinel helper. The first two describe
+	// code that no longer exists; the third is `parseSentinelLines`, still
+	// covered by `leetcode-function-env-factory.test.ts` ('parse recovers
+	// sentinel-prefixed case lines'). Nothing moved to a new home because
+	// nothing live was left uncovered.
 });

@@ -4,7 +4,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { MAX_HTTP_BODY_BYTES } from '../src/services/test-envs/http/http-case.helpers.js';
 import { runHttpCheck } from '../src/services/test-envs/http/http.check.js';
-import type { PackageSpec } from '../src/services/packages-parser.helpers.js';
+import type { PackageSpec } from '../src/types/leetcode.types.js';
 
 /**
  * The `http` check kind (T3.4, VSX-122 §G): one boot serves every case, per-

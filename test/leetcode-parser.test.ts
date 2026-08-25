@@ -612,7 +612,8 @@ suite('functionNameFor', () => {
 
     function fixture(overrides: Partial<ParsedLeetCode> = {}): ParsedLeetCode {
         return {
-            title: 'AB Check', difficulty: 'easy', functionName: 'ABCheck', status: 'unsolved',
+            title: 'AB Check', leetcodeType: 'function',
+            difficulty: 'easy', functionName: 'ABCheck', status: 'unsolved',
             params: [], returns: 'bool', description: '', examples: [],
             tests: [], finalTests: [], test: defaultTestConfig(),
             setups: [], practice: defaultPracticeConfig(), solutions: [], attempts: [], tags: [],

@@ -1,7 +1,7 @@
 import { MAX_SUITE_TIMEOUT_MS, MIN_TEST_TIMEOUT_MS } from '../../../types/constants.js';
 import type { ProjectCheckOutcome } from '../../../types/leetcode.types.js';
 import { suiteTimeout } from '../../leetcode-runner.service.js';
-import type { PackageSpec } from '../../packages-parser.helpers.js';
+import type { PackageSpec } from '../../../types/leetcode.types.js';
 import { MAX_HTTP_BODY_BYTES, parseHttpCase, runHttpCase, type HttpCase } from './http-case.helpers.js';
 import { bootServer, type BootOptions } from './server.lifecycle.js';
 

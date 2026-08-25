@@ -324,6 +324,12 @@ export async function handleSubmit(ctx: PanelCtx, language: string | undefined):
  * missing save would silently grade the previous version of whatever is being
  * typed.
  *
+ * The live session's booted-group registry rides along (S12): an `http` check
+ * boots a real server, and its own `finally` only covers a run that *ends*.
+ * Registering the group on the session is what makes `endChallenge()` — and
+ * therefore `deactivate()` — tear it down when VS Code exits or the panel is
+ * disposed mid-check, exactly as the practice-mode snapshot is restored.
+ *
  * @param ctx     - Panel session state.
  * @param dir     - The run's project directory.
  * @param options - `publicOnly` for the mid-challenge Run Tests loop.
@@ -336,7 +342,9 @@ async function gradeLiveProject(
 	ctx: PanelCtx, dir: vscode.Uri, options: { publicOnly?: boolean },
 ): Promise<ProjectCheckOutcome[]> {
 	await saveProjectDocuments(dir);
-	return gradeProjectDir(ctx.parsed, dir.fsPath, options);
+	return gradeProjectDir(ctx.parsed, dir.fsPath, {
+		...options, registry: activeChallenge()?.bootedGroups,
+	});
 }
 
 /**

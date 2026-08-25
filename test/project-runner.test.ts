@@ -51,7 +51,7 @@ suite('project runner', () => {
 			'  type: project',
 			'  checks:',
 			'    - name: doubles',
-			'      kind: function',
+			'      kind: call',
 			'      file: src/double.js',
 			'      function: double',
 			'```',
@@ -185,7 +185,7 @@ suite('project runner', () => {
 				'  type: project',
 				'  checks:',
 				'    - name: doubles',
-				'      kind: function',
+				'      kind: call',
 				'      file: src/double.js',
 				'      function: double',
 				'```',
@@ -220,6 +220,42 @@ suite('project runner', () => {
 		}
 
 		/** A `dom-assert` check (with one real case) plus a `build` check that always exits 0. */
+		/** A `package` graded by one `http` check that names a package it never declares. */
+		function httpArtifact(): string {
+			return [
+				'---',
+				'artifactType: leetcode',
+				'leetcodeType: package',
+				'title: Api',
+				'---',
+				'',
+				'Serve it.',
+				'',
+				'```yaml leetcode',
+				'libs:',
+				'  python:',
+				'    - requests>=2',
+				'test:',
+				'  checks:',
+				'    - name: api answers',
+				'      kind: http',
+				'      package: api',
+				'```',
+				'',
+				'## Tests',
+				'',
+				'```json check="api answers"',
+				'[{ "request": { "method": "GET", "path": "/health" }, "expect": { "status": 200 } }]',
+				'```',
+				'',
+				'## Files',
+				'',
+				'```python path=server/main.py role=editable',
+				'print("hi")',
+				'```',
+			].join('\n');
+		}
+
 		function multiCheckArtifact(): string {
 			return [
 				'---',
@@ -366,6 +402,48 @@ suite('project runner', () => {
 				calls.some(c => c.cwd.startsWith(npmKey) && c.cwd.includes('requests')), false,
 				'a python requirement must never reach the npm install set',
 			);
+		});
+
+		/**
+		 * T3.5's "installSetsFor accounts for a booted package's ecosystem".
+		 *
+		 * It needed no new code and that is the finding, not an omission: the
+		 * set is already the union of **every** `parsed.libs[lang]`, so a
+		 * package booted by an `http` check gets its ecosystem installed for
+		 * the same reason a `call` check's does. What this pins is that the
+		 * install happens **before** any check is dispatched — the check here
+		 * cannot resolve its package and fails, and the pip install still ran.
+		 */
+		test('an http check gets its ecosystem installed, before any check is dispatched', async () => {
+			const calls: { cwd: string }[] = [];
+			const countingRun = async (_file: string, _args: string[], cwd: string): Promise<void> => {
+				calls.push({ cwd });
+				fs.mkdirSync(path.join(cwd, 'bin'), { recursive: true });
+				fs.writeFileSync(path.join(cwd, 'bin', 'python3'), '', 'utf-8');
+			};
+
+			const outcomes = await gradeProjectDir(parseLeetCode(httpArtifact()), runDir, { installRun: countingRun });
+
+			assert.ok(calls.some(c => c.cwd.startsWith(libEnvDir('pip', ['requests>=2']))),
+				'the booted package\'s ecosystem must install: ' + JSON.stringify(calls));
+			assert.strictEqual(outcomes.length, 1);
+			assert.strictEqual(outcomes[0].passed, false);
+		});
+
+		/**
+		 * The `package:` name is artifact-authored text, so it is resolved
+		 * against `packages:` rather than trusted. A check naming a package the
+		 * artifact never declared must fail **by name** — booting nothing and
+		 * reporting an empty, green suite is the false-green shape.
+		 */
+		test('an http check naming an undeclared package fails by name, and boots nothing', async () => {
+			const noop = async (): Promise<void> => { /* no install needed to reach the dispatch */ };
+			const outcomes = await gradeProjectDir(parseLeetCode(httpArtifact()), runDir, { installRun: noop });
+
+			assert.strictEqual(outcomes.length, 1);
+			assert.strictEqual(outcomes[0].passed, false);
+			assert.match(outcomes[0].detail ?? '', /does not declare/);
+			assert.match(outcomes[0].detail ?? '', /api/);
 		});
 
 		test('the install set still spans every npm-servable language, not just the render ones', () => {

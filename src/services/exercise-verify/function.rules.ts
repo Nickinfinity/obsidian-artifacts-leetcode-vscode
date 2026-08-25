@@ -47,7 +47,16 @@ const MIN_RESERVED_TESTS = 1;
  * await verifyFunctionExercise(parseLeetCode(md)); // → null, or a reason string
  */
 export async function verifyFunctionExercise(parsed: ParsedLeetCode): Promise<string | null> {
-	const reserved = languagesForType(parsed.test.type).length === 0;
+	// C9: `'function'`, and never `parsed.leetcodeType`. This rule set is
+	// reached only through `VERIFY_RULES['function']`, so the artifact's shape
+	// is already known to be a buffer — but the argument became required at
+	// T3.5, and the two honest answers are not the same. Asking the registry
+	// about a *tree* here would answer "reserved" for every tree, which is
+	// meaningless: a tree declares no suite the registry can serve, and what
+	// makes it ungradeable is a dropped check kind, not an empty language
+	// list. Reserved therefore keeps its one meaning — *this buffer's
+	// `test.type` has no environment* — and a tree is never asked.
+	const reserved = languagesForType(parsed.test.type, 'function').length === 0;
 
 	const parseReason = checkParses(parsed, reserved);
 	if (parseReason) { return parseReason; }
@@ -127,7 +136,7 @@ async function checkSolutionsGreen(parsed: ParsedLeetCode): Promise<string | nul
 	const suite = submitSuite(parsed);
 
 	for (const lang of languages) {
-		const env = testEnvFor(parsed.test.type, lang);
+		const env = testEnvFor(parsed.test.type, lang, 'function');
 		const solution = parsed.solutions.find(s => s.language === lang);
 		// A non-batch env (`program`) never reaches here: this rule set is
 		// dispatched for `leetcodeType: function` only, and a `program` env

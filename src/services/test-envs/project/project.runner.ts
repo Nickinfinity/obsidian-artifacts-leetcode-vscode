@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import type {
 	FileSpec,
 	FunctionCheck,
+	HttpCheck,
 	ParsedLeetCode,
 	ProjectCheck,
 	ProjectCheckOutcome,
@@ -19,6 +20,8 @@ import { isBatchEnv, testEnvFor } from '../env.registry.js';
 import { entryFileFor } from '../program/make-program-env.js';
 import { programLanguageOf, runProgramSuite } from '../program/program.runner.js';
 import { runBuildCheck } from './build.check.js';
+import { runHttpCheck } from '../http/http.check.js';
+import type { BootedGroupRegistry } from '../http/server.lifecycle.js';
 import { renderLibsFor, runRenderCheck } from './checks.js';
 import { resolveContained, writeProjectFiles } from './files.writer.js';
 import { ensureLibEnv } from '../../libs/lib-cache.service.js';
@@ -91,7 +94,13 @@ export async function runProjectChecks(
  * @param runDir  - Directory holding the tree to grade.
  * @param options - `publicOnly` restricts every check to its public cases;
  *                  `installRun` injects the install subprocess for tests,
- *                  which must never reach the network or a developer's real cache.
+ *                  which must never reach the network or a developer's real cache;
+ *                  `registry` is the live challenge session's booted-group
+ *                  registry, so a server an `http` check boots is torn down by
+ *                  `endChallenge()` as well as by the check's own `finally`
+ *                  (S12 — the `finally` cannot cover VS Code exiting or the
+ *                  panel being disposed mid-check). The harness path has no
+ *                  session and passes none.
  * @returns One outcome per declared check, in declaration order.
  *
  * @example
@@ -99,7 +108,7 @@ export async function runProjectChecks(
  */
 export async function gradeProjectDir(
 	parsed: ParsedLeetCode, runDir: string,
-	options: { publicOnly?: boolean; installRun?: RunArgv } = {},
+	options: { publicOnly?: boolean; installRun?: RunArgv; registry?: BootedGroupRegistry } = {},
 ): Promise<ProjectCheckOutcome[]> {
 	const checks = parsed.checks ?? [];
 	if (checks.length === 0) { return []; }
@@ -123,7 +132,7 @@ export async function gradeProjectDir(
 	const outcomes: ProjectCheckOutcome[] = [];
 	for (const check of checks) {
 		const graded = options.publicOnly ? publicCasesOf(check) : check;
-		outcomes.push(await runOneCheck(graded, parsed, runDir, dirs));
+		outcomes.push(await runOneCheck(graded, parsed, runDir, dirs, options.registry));
 	}
 	return outcomes;
 }
@@ -179,15 +188,17 @@ function publicCasesOf(check: ProjectCheck): ProjectCheck {
  * build`) resolves it exactly like a real project checkout, and a render
  * check is handed the same cache dir so it never installs a second one.
  *
- * @param check   - The check to run.
- * @param parsed  - The artifact, for `params` / `returns` / `libs`.
- * @param runDir  - Run directory holding the materialised tree and its linked `node_modules`.
- * @param dirs    - Resolved cache directory per ecosystem for this run.
+ * @param check    - The check to run.
+ * @param parsed   - The artifact, for `params` / `returns` / `libs` / `packages`.
+ * @param runDir   - Run directory holding the materialised tree and its linked `node_modules`.
+ * @param dirs     - Resolved cache directory per ecosystem for this run.
+ * @param registry - The session's booted-group registry, when this run has a
+ *   session; only the `http` kind boots anything.
  * @returns The check's verdict.
  */
 async function runOneCheck(
 	check: ProjectCheck, parsed: ParsedLeetCode, runDir: string,
-	dirs: ReadonlyMap<LibEcosystem, string>,
+	dirs: ReadonlyMap<LibEcosystem, string>, registry?: BootedGroupRegistry,
 ): Promise<ProjectCheckOutcome> {
 	switch (check.kind) {
 		case 'build':
@@ -195,12 +206,59 @@ async function runOneCheck(
 		case 'dom-assert':
 		case 'css-assert':
 			return runRenderCheck(check, runDir, undefined, dirs.get('pnpm'));
-		case 'function':
-			// Nothing is threaded in: a function check runs through `runSuite`,
+		case 'http':
+			return runPackageHttpCheck(check, parsed, runDir, registry);
+		case 'call':
+			// Nothing is threaded in: a call check runs through `runSuite`,
 			// which resolves its own library environment from `parsed.libs`.
 			// A second resolver here would install the same set twice.
 			return runFunctionCheck(check, parsed, runDir);
 	}
+}
+
+/**
+ * Resolve an `http` check's `package:` name against the artifact's own
+ * `packages:` list, then hand the spec to the check kind that boots it.
+ *
+ * The name is **artifact-authored text**, so it is looked up rather than
+ * trusted: a check naming a package the artifact never declared fails by name
+ * instead of booting nothing and reporting an empty, green suite.
+ *
+ * The per-request budget is the artifact's own `test.timeoutMs`, clamped again
+ * inside `runHttpCheck` — `parseTimeoutMs` already bounds it at parse time,
+ * and the second clamp is that module's contract with direct callers.
+ *
+ * **Libraries are not threaded into the boot, and that is a stated ceiling.**
+ * A node package resolves its imports through the `node_modules` `linkModules`
+ * already put in the run directory, so an Express server boots; a package
+ * whose ecosystem is reached by environment variable instead (a venv, a
+ * classpath) does not see them yet, and fails loudly naming the missing
+ * import rather than grading green without them. Closing it belongs with the
+ * `stack` boot ordering (T4.1), which is where the environment for a booted
+ * package is assembled anyway.
+ *
+ * @param check    - The `http` check.
+ * @param parsed   - The artifact, for `packages:` and the per-case budget.
+ * @param runDir   - Run directory holding the materialised tree.
+ * @param registry - The session's booted-group registry, when there is a session.
+ * @returns The check's verdict.
+ *
+ * @example
+ * await runPackageHttpCheck(check, parsed, '/tmp/run', session.bootedGroups);
+ */
+async function runPackageHttpCheck(
+	check: HttpCheck, parsed: ParsedLeetCode, runDir: string, registry?: BootedGroupRegistry,
+): Promise<ProjectCheckOutcome> {
+	const pkg = (parsed.packages ?? []).find(p => p.name === check.package);
+	if (!pkg) {
+		return {
+			name: check.name, passed: false,
+			detail: `http check names package '${check.package}', which this artifact does not declare`,
+		};
+	}
+	return runHttpCheck(
+		{ name: check.name, cases: check.cases }, pkg, runDir, parsed.test.timeoutMs, { registry },
+	);
 }
 
 /**
@@ -286,8 +344,8 @@ function overlaySolutions(files: FileSpec[], solutions: FileSpec[]): FileSpec[] 
 }
 
 /**
- * Grade a `function` check by running the declared export through the existing
- * `function` environment for its language.
+ * Grade a `call` check by running the declared export through the existing
+ * `call` environment for its language.
  *
  * There is no second execution path: the check's file becomes the candidate and
  * the artifact's own `params` / `returns` type it, which is exactly why a
@@ -316,13 +374,19 @@ async function runFunctionCheck(
 	}
 
 	const langId = languageOf(check.file);
-	const env = testEnvFor('function', langId);
+	// `'function'`, never `parsed.leetcodeType`: what this resolves is an env
+	// for the **one file** the check names, extracted from the tree and graded
+	// exactly as a single candidate buffer. The shape asked of the registry is
+	// the buffer's, not the artifact's — a `call` env serves buffers, and
+	// passing `'package'` here would resolve nothing and fail every function
+	// check inside a tree.
+	const env = testEnvFor('call', langId, 'function');
 	// `isBatchEnv` because the registry now holds per-case `program` envs too;
-	// only a batch env can be handed to `runSuite`. A `function` key can only
+	// only a batch env can be handed to `runSuite`. A `call` key can only
 	// resolve a batch env today, so this narrowing is a compiler-enforced
 	// statement of that fact rather than a branch anyone expects to take.
 	if (!env || !isBatchEnv(env)) {
-		return { name: check.name, passed: false, detail: `no function environment for '${langId}'` };
+		return { name: check.name, passed: false, detail: `no call environment for '${langId}'` };
 	}
 
 	// The check names its own export, which is not the artifact's `function:`.

@@ -735,27 +735,30 @@ same structural type system at the declaration level the codegen writes to.
 
 How a test executes is data, not a branch. A **test environment** is a
 `(test type × language)` pair that also declares which **leetcode types** it
-serves. `testEnvFor(testType, langId, leetcodeType?)` returns the pair or
+serves. `testEnvFor(testType, langId, leetcodeType)` returns the pair or
 `undefined`; the absence of a pair **is** the capability matrix, and
-`languagesForType(testType, leetcodeType?)` drives the panel's language selector.
+`languagesForType(testType, leetcodeType)` drives the panel's language selector.
 
 **The registry stays keyed `"<testType>::<language>"`** and filters on the env's
-declared `leetcodeTypes`. A three-key table would be 3 × 12 × 5 slots almost all
-empty, plus a second list to drift out of sync with the first. The third argument
-is currently **optional**: omitted, the lookup behaves exactly as it did before
-the axis existed.
+declared `leetcodeTypes`. A three-key table would be 3 × 8 × 5 slots almost all
+empty, plus a second list to drift out of sync with the first. All three
+arguments are **required**: an absent shape used to mean "any", and answering it
+that way is what let a `stack` resolve a single-buffer environment.
 
 | leetcode type | test type | Languages with an environment |
 |---|---|---|
-| `function` | `function` | `java`, `javascript`, `python`, `rust`, `typescript` |
-| `package` · `stack` | `project` | `java`, `javascript`, `python`, `rust`, `typescript` |
+| `function` | `call` | `java`, `javascript`, `python`, `rust`, `typescript` |
 | `package` | `program` | `java`, `javascript`, `python`, `rust`, `typescript` |
-| *(any)* | `call`, `http`, `class`, `in-place`, `stdin-stdout`, `service` | *(none — reserved)* |
+| *(any)* | `http`, `build`, `dom-assert`, `css-assert` | *(none — dispatched per check, never registered)* |
+| *(any)* | `class`, `in-place` | *(none — reserved)* |
 
-Read that table as *the registry today*, not as the format's ambition: `call`
-and `http` are declared ids with no environment yet, and `project` is still the
-key the directory-grading path resolves through even though it is a shape id on
-disk (§2.5.1).
+Read that table as *the registry today*. Two rows that used to be in it are
+gone, and both for the same reason: `function` was renamed `call` on this axis,
+and `project` was never a way to deliver a case at all — it was the artifact's
+shape. The five `project` envs keyed on it refused every candidate they were
+handed, so what they registered was a claim that a tree could be graded
+*through the suite runner*, which it never can. A tree is graded by dispatching
+its checks (§9.2).
 
 **`program` is registered but is not a `TestEnv`.** `RegisteredEnv` is a union:
 a `TestEnv` runs a whole suite in one process and recovers outcomes from
@@ -766,20 +769,26 @@ from *how does a suite execute?* — and every caller narrows with `isBatchEnv`
 before reaching the batch runner. It is registered for `package` only: a
 `stack` boots several packages, which is the `http` axis, not this one.
 
-**A check `kind:` is not looked up here.** `build`, `dom-assert` and `css-assert`
-have **no** registry entry — `languagesForType('build')` is `[]` — because they
-are dispatched per check by `runOneCheck` against an already-written directory,
-not resolved per language before a buffer is compiled. Both questions draw from
-one vocabulary; only one of them goes through the registry.
+**A check `kind:` is not looked up here.** `build`, `dom-assert`, `css-assert`
+and `http` have **no** registry entry — `languagesForType('build', 'package')`
+is `[]` — because they are dispatched per check by `runOneCheck` against an
+already-written directory, not resolved per language before a buffer is
+compiled. Both questions draw from one vocabulary; only one of them goes
+through the registry.
 
-The `project` envs cover the whole runnable set (`projectEnvs =
-LANG_IDS.map(projectEnvFor)`), derived rather than hand-listed, because `build`
-and `function` checks are language-agnostic. The two **render** kinds are
+`build` and `call` checks are language-agnostic. The two **render** kinds are
 narrower: `dom-assert` / `css-assert` mount a JavaScript bundle in jsdom, so a
 check whose file is python, rust or java is refused at validation, naming the
 language. `javascriptreact` / `typescriptreact` are display ids with no runtime
 of their own, and a `.jsx` / `.tsx` file maps onto the runnable pair at bundle
-time.
+time. An `http` check is language-agnostic in a different way again: what it
+grades is a **process**, booted from the argv its `packages:` entry declares, so
+no language is consulted at all.
+
+**A `call` check inside a tree resolves the buffer environment, not a tree one.**
+`runOneCheck` asks `testEnvFor('call', <the file's language>, 'function')`: the
+check extracts one file and grades it exactly as a single candidate buffer, so
+the shape asked of the registry is the buffer's, not the artifact's.
 
 ### 6.1 Opening is one question, grading is another
 
@@ -794,13 +803,19 @@ They are answered by different authorities, and conflating them is what let a
   The reason names the kinds:
 
   ```
-  checks declare kind(s) no environment implements yet: http —
+  checks declare kind(s) no environment implements yet: class —
   the whole artifact is ungradeable, not just the checks that parsed.
   ```
 
   Grading only the survivors is the false-green vector this closes: a tree whose
-  `http` checks were dropped at parse time would otherwise be graded on its
+  `class` checks were dropped at parse time would otherwise be graded on its
   surviving `build` check and reported **solved**.
+
+  The example used to be `http`, and the change is worth stating rather than
+  quietly editing: `http` is **dispatched** now, so the artifacts that were
+  refused by name are graded. What still lands here is a kind the vocabulary
+  declares and nothing runs — `class`, `in-place`, or `program` named as a
+  check `kind:` rather than as a suite `type:`.
 
 **Verification is a third question, and it deliberately answers differently.**
 `verifyExercise` still reports structure-only `ok` for such an artifact — *well
@@ -808,8 +823,15 @@ formed* and *executable* are not the same claim — and the CLI says so out loud
 rather than printing a bare `OK`:
 
 ```
-structure only for kind(s) http — no environment implements them, nothing executed
+structure only for kind(s) class — no environment implements them, nothing executed
 ```
+
+**A `stack` is skipped by the default sweep.** `verify-exercise.mjs` prints
+`SKIP … — stack, LEET_STACK_E2E not set` and exits `0` unless `LEET_STACK_E2E=1`
+is in the environment. A stack installs several ecosystems and boots several
+servers; a gate that goes from seconds to minutes and needs a network is a gate
+that stops being run. A `package` declaring an `http` check boots one server and
+stays in the default sweep.
 
 The five `function` environments are self-contained (the extension ships zero
 runtime dependencies). The solver's code is written verbatim as its own file and
@@ -985,13 +1007,16 @@ test:
   timeoutMs: 10000             # no `type:` — see the mirror rule, §2.5.1
   checks:
     - name: catalogue filter     # unique; results group by it
-      kind: function             # runs on the existing function environments
+      kind: call                 # runs on the existing `call` environments
       file: src/lib/catalogue.ts
       function: filterInStock
     - name: app builds
       kind: build                # declared argv must exit 0
       dir: client                # optional, relative to the run directory
       argv: ["npx", "tsc", "--noEmit"]
+    - name: orders api
+      kind: http                 # boots a `packages:` entry and grades responses
+      package: api               # the entry's name — no `file:`
 ```
 ````
 
@@ -1006,20 +1031,26 @@ A `kind:` draws from the one test-type vocabulary (§2.5.1), narrowed to the ids
 
 | `kind` | Compares | Status |
 |---|---|---|
-| `function` | one file's export, through the five `function` environments | **dispatched** |
+| `call` | one file's export, through the five `call` environments; needs `file:` and `function:` | **dispatched** |
 | `build` | a declared argv **array** exits 0; optional `dir:` runs it in a contained subtree | **dispatched** |
 | `css-assert` | **declared** style: inline/`style` properties and class presence | **dispatched** |
 | `dom-assert` | DOM after mounting the component and firing events | **dispatched** |
-| `http` | a real request to a booted server on an assigned loopback port | **reserved** — parses, then the whole artifact is refused for grading (§6.1) |
-| `call` · `program` · `class` · `in-place` · `stdin-stdout` | — | reserved, as above |
-| `project` · `service` | — | **not kinds at all.** They are shape ids (§2.5.1); a check declaring one is *unknown*, not reserved, and is dropped with a typo-style warning. |
+| `http` | a real request to a booted server on an assigned loopback port; needs `package:`, never `file:` | **dispatched** |
+| `program` · `class` · `in-place` | — | reserved: parses, then the whole artifact is refused for grading (§6.1) |
+| `function` · `project` · `service` | — | **not kinds at all.** `function` was renamed `call`; the other two are shape ids (§2.5.1). A check declaring one is *unknown*, not reserved, and is dropped with a typo-style warning. |
 
 The two are told apart deliberately, because they send an author to different places:
-`kind: htpp` is a spelling mistake they can fix, while `kind: http` is spelled correctly and
+`kind: htpp` is a spelling mistake they can fix, while `kind: class` is spelled correctly and
 names a contract this extension has not implemented yet. Both are **dropped** from `checks`
 at parse time — a check nothing can run must not reach the panel's check line, and must
 never count as a red check for `--starter-red`, which requires a starter to fail *on its
 merits*. The drop is hygiene; the artifact-level refusal (§6.1) is what makes it safe.
+
+**A malformed check is a third case, and it is neither.** An `http` check with no
+`package:`, or a `call` check with no `function:`, is dropped as the author's own
+mistake — named in a warning, and **not** recorded as an unimplemented kind, so it
+does not make the artifact ungradeable. The distinction is which side the gap is
+on: this extension's, or the artifact's.
 
 `css-assert` never asserts layout geometry — the render environment is jsdom, which
 computes no layout, so a width-from-box-model assertion is refused rather than silently
@@ -1062,7 +1093,7 @@ This widened fence applies to **every** artifact, `function` included: a second 
 under `## Tests`, previously ignored in silence, is now appended to the suite, and one
 malformed fence costs only its own cases.
 
-### 9.3 `packages:` (`leetcodeType: stack`)
+### 9.3 `packages:` (`leetcodeType: package` · `stack`)
 
 A body config fence (§2.5), canonically placed before `## Files`:
 
@@ -1088,26 +1119,33 @@ packages:
 ```
 ````
 
-> **`packages:` has a grammar and no caller — and the distinction is the whole
-> status.** The block is spelled `packages:` on disk (the migration renamed it in
-> the four vault artifacts that declare it), `BODY_SET_KEYS` and the near-miss key
-> warning now know that spelling and no longer know `services`, and
+> **`packages:` is parsed and reached now.** `parseLeetCode` calls
+> `parsePackages`, a parsed artifact carries a `packages` field, and an `http`
+> check resolves its `package:` name against that list before booting (§9.2).
 > `packages-parser.helpers.ts` reads `name`, `dir`, `install`, `start`, `ready`,
 > `exposeAs` and `dependsOn`. **`envFile` is not among them** — it appears in the
 > worked example above and in the vault's own `fastapi-react.md`, and the parser
 > drops it silently, without even the near-miss warning an unknown key would
-> earn. Treat it as documented-but-unparsed until the boot task reads it. But
-> **nothing invokes the parser either**:
-> `parseLeetCode` never calls `parsePackages`, so no parsed artifact carries
-> a `packages` field and no run boots anything. The fields below are therefore
-> *validated in isolation* — an author who mis-declares one finds out from the
-> parser's own tests, not from opening the exercise. Wiring it into the parse and
-> the boot ordering belongs to the tasks that build the server lifecycle.
+> earn. Treat it as documented-but-unparsed until the boot task reads it.
 >
-> The rename landed with the vault write rather than with the parser so that the
-> vault is written exactly once; the key set caught up when the grammar did, and
-> keeping `services` there any longer would have made the warner call the four
-> migrated artifacts' own block an unknown key and suggest renaming it back.
+> **What is still not wired: boot ordering, `install`, and `exposeAs`.** Booting
+> **one** package is implemented (an `http` check does exactly that, and tears
+> the process group down on every path out); booting *several* in `dependsOn`
+> order, running each one's `install`, and computing `exposeAs` from the ports
+> that were assigned are the `stack` runner's, not this check's. A `stack` is
+> therefore skipped by the default vault sweep (§6.1).
+>
+> **Libraries do not reach a booted process yet.** A node package resolves its
+> imports through the run directory's own `node_modules`, so an Express server
+> boots; a package whose ecosystem is reached by environment variable instead
+> (a venv, a classpath) does not see the installed set and fails naming the
+> missing import — loud, never a false green.
+>
+> The `services:` → `packages:` rename landed with the vault write rather than
+> with the parser so that the vault is written exactly once. A check's binding
+> field was renamed with it, one wave later: `service: api` became
+> `package: api`, because a check field the grammar does not know is dropped —
+> which would have read as an artifact declaring fewer checks than it does.
 
 - `install` / `start` are **argv arrays**, never command strings.
 - `${PORT}` is the **only** substitution, templated into argv and injected as a `PORT`
@@ -1125,7 +1163,7 @@ packages:
 - `dependsOn` orders the boot; a cycle is a parse error, as is a duplicate `name` or more
   than eight entries.
 
-**Trust class, stated plainly:** a `service` artifact executes declared commands and
+**Trust class, stated plainly:** a `packages:`-declaring artifact executes declared commands and
 package scripts from the `.md` — arbitrary code by design, the same trust class as running
 the solver's own candidate locally. The argv rules and the per-registry spec grammars bound the
 *shape* of what runs; they do not make artifact-authored code safe.

@@ -17,6 +17,7 @@ suite('leetcode-codegen — TypeScript', () => {
     function fixture(overrides: Partial<ParsedLeetCode> = {}): ParsedLeetCode {
         return {
             title:        'Two Sum',
+            leetcodeType: 'function',
             difficulty:   'easy',
             functionName: 'twoSum',
             algorithm:    'hash-map',

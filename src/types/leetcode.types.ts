@@ -59,6 +59,12 @@ export interface ParamDef {
  * why several ids below are reserved and why `service` could be opened but
  * never graded.
  *
+ * The legacy spellings — `function`, `stdin-stdout`, `project`, `service` —
+ * are **not members**. They survive only as *derivation inputs* read from the
+ * raw frontmatter scalar (`deriveLeetcodeType`), so an unmigrated artifact
+ * still resolves a shape; `parseTestType` collapses them to
+ * `DEFAULT_TEST_TYPE` like any other unrecognised value.
+ *
  * - `call`        — call a free function with positional args, compare the return
  * - `program`     — deliver argv/flags/stdin, compare what the program writes to `$LEET_OUT`
  * - `http`        — a real request to a booted server, compare status/headers/body
@@ -69,25 +75,8 @@ export interface ParamDef {
  * - `in-place`    — reserved: compare a mutated argument rather than the return value
  */
 export type TestTypeId =
-	| MergedTestTypeId
-	| LegacyTestTypeId;
-
-/** The vocabulary this extension is moving to — the only ids an artifact should declare. */
-export type MergedTestTypeId =
 	| 'call' | 'program' | 'http' | 'build' | 'dom-assert' | 'css-assert'
 	| 'class' | 'in-place';
-
-/**
- * Ids retained only until their consumers are rewritten. **Do not add to this.**
- *
- * `function` became `call`, `stdin-stdout` was subsumed by `program`, and
- * `project` / `service` were never test types at all — they described the
- * artifact's *shape*, which is now the leetcode-type axis (`package` /
- * `stack`). They stay in the union for exactly as long as the code paths
- * that still branch on them do, and the derivation in the parser is what
- * keeps an unmigrated artifact readable after they go.
- */
-export type LegacyTestTypeId = 'function' | 'stdin-stdout' | 'project' | 'service';
 
 /** One entry in the `TEST_TYPES` capability table. */
 export interface TestType {
@@ -103,7 +92,7 @@ export interface TestType {
  * Execution configuration for a challenge, from the `test:` frontmatter block.
  *
  * Structurally a sibling of `PracticeConfig`. An absent block yields
- * `{ type: 'function', timeoutMs: 5000 }`.
+ * `{ type: 'call', timeoutMs: 5000 }`.
  */
 export interface TestConfig {
 	/** Execution strategy — selects the test environment alongside the language */
@@ -387,7 +376,7 @@ interface ProjectCheckBase {
  * have nowhere to declare its own types.
  */
 export interface FunctionCheck extends ProjectCheckBase {
-	kind: 'function';
+	kind: 'call';
 	/** File within the run directory holding the export */
 	file: string;
 	/** Name of the export to call */
@@ -421,13 +410,45 @@ export interface CssAssertCheck extends ProjectCheckBase {
 	file: string;
 }
 
+/** One `packages:` entry — a single process this exercise's `stack` boots. */
+export interface PackageSpec {
+	readonly name: string;
+	/** Shape-guarded only (see module doc) — relative, no `..`, no `node_modules` segment. */
+	readonly dir: string;
+	/** Argv array, never a command string. */
+	readonly install: readonly string[];
+	/** Argv array, never a command string. `${PORT}` is the only admitted substitution. */
+	readonly start: readonly string[];
+	/** Optional stdout substring an *additional* readiness signal may look for. */
+	readonly ready?: string;
+	/** Variable name → value template, S9-validated names only. */
+	readonly exposeAs?: Readonly<Record<string, string>>;
+	/** Package names this one boots after. */
+	readonly dependsOn?: readonly string[];
+}
+
 /**
- * How a `project` exercise is graded. **Solved = every check green.**
+ * Sends real requests to a server this run booted, and compares the responses.
+ *
+ * The only check kind that names a `package` rather than a `file`: what it
+ * grades is a *process*, booted from the `packages:` entry of that name, not
+ * a file the driver reads. Its cases carry the request/response shape
+ * `parseHttpCase` validates — loopback-only, never an artifact-supplied host.
+ */
+export interface HttpCheck extends ProjectCheckBase {
+	kind: 'http';
+	/** Name of the `packages:` entry to boot and send requests to */
+	package: string;
+}
+
+/**
+ * How a `package` / `stack` exercise is graded. **Solved = every check green.**
  *
  * Discriminated on `kind` so a consumer narrows to exactly the fields that
- * kind owns — a `build` check has an `argv`, a `dom-assert` has a component.
+ * kind owns — a `build` check has an `argv`, a `dom-assert` has a component,
+ * an `http` check has a package to boot.
  */
-export type ProjectCheck = FunctionCheck | BuildCheck | DomAssertCheck | CssAssertCheck;
+export type ProjectCheck = FunctionCheck | BuildCheck | DomAssertCheck | CssAssertCheck | HttpCheck;
 
 /**
  * One instruction the render driver performs against a mounted component.
@@ -477,11 +498,13 @@ export interface ParsedLeetCode {
 	 * The leetcode-type axis (`src/types/leetcode-type.ts`) — what the artifact
 	 * *is*: one buffer, one package, or several. Declared `leetcodeType:` when
 	 * recognised, else derived from the legacy `test.type` scalar (plan §C.6).
-	 * Optional so a hand-built `ParsedLeetCode` fixture elsewhere in the
-	 * codebase (test-envs, codegen, …) does not have to supply it — every value
-	 * that goes through `parseLeetCode` always sets it.
+	 * **Required (C1/C6).** It was optional while nothing outside the parser
+	 * read it, so a hand-built fixture need not supply one. The moment a call
+	 * site does read it, the cheap fix for an absent value — `?? 'function'`
+	 * — silently grades a `stack` as a single buffer, which is the exact
+	 * flattening the axis split exists to remove. Fixtures declare it instead.
 	 */
-	leetcodeType?: LeetcodeTypeId;
+	leetcodeType: LeetcodeTypeId;
 	/** Canonical difficulty tier */
 	difficulty: LeetCodeDifficulty;
 	/** Identifier of the candidate function the user is expected to implement */
@@ -531,7 +554,7 @@ export interface ParsedLeetCode {
 	 * exercise has no file tree, and an empty array would imply it does.
 	 */
 	files?: FileSpec[];
-	/** `libs:` dependency lists — `project` / `service` only */
+	/** `libs:` dependency lists — `package` / `stack` only */
 	libs?: LibSpec;
 	/**
 	 * Reference implementations for `## Files` entries, from `# Solutions` fences
@@ -543,8 +566,18 @@ export interface ParsedLeetCode {
 	 * as `# Solutions` stays behind a spoiler in the panel.
 	 */
 	solutionFiles?: FileSpec[];
-	/** `checks:` grading rules — `project` / `service` only. **Solved = every check green.** */
+	/** `checks:` grading rules — `package` / `stack` only. **Solved = every check green.** */
 	checks?: ProjectCheck[];
+	/**
+	 * `packages:` entries — the processes this artifact can boot, one per
+	 * buildable unit. An `http` check names one by `package:`, and that name
+	 * is resolved against this list at dispatch time.
+	 *
+	 * `undefined` rather than `[]` when the block is absent, for the reason
+	 * `libs` is: `JSON.stringify` omits an undefined key, so a `function`
+	 * artifact's serialised shape is unchanged by a field it can never carry.
+	 */
+	packages?: readonly PackageSpec[];
 	/**
 	 * `program:` block — how a `program` case is delivered (argv / flags /
 	 * stdin) and which file is the entry point.

@@ -12,6 +12,7 @@ import type { ParsedLeetCode, TestCase } from '../src/types/leetcode.types.js';
 function fixture(overrides: Partial<ParsedLeetCode> = {}): ParsedLeetCode {
     return {
         title: 'Add', difficulty: 'easy', functionName: 'add', status: 'unsolved',
+        leetcodeType: 'function',
         params: [{ name: 'a', type: 'int' }, { name: 'b', type: 'int' }],
         returns: 'int', description: '', examples: [],
         tests: [], finalTests: [], test: defaultTestConfig(),
@@ -43,7 +44,7 @@ suite('function × typescript env', () => {
     suite('emit', () => {
 
         test('declares the env identity', () => {
-            assert.strictEqual(typescriptFunctionEnv.type, 'function');
+            assert.strictEqual(typescriptFunctionEnv.type, 'call');
             assert.strictEqual(typescriptFunctionEnv.language, 'typescript');
         });
 

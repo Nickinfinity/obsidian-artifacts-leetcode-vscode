@@ -103,6 +103,13 @@ suite('migrate-exercise-axes', () => {
 		assert.ok(migrateExerciseAxes(V2_FUNCTION).includes('  type: function'));
 	});
 
+	test("renames an http check's `service:` binding to `package:`", () => {
+		const md = V2_PROJECT.replace('kind: build', 'kind: http\n      service: api');
+		const out = migrateExerciseAxes(md);
+		assert.ok(out.includes('package: api'), out);
+		assert.ok(!/^\s+service:/m.test(out), out);
+	});
+
 	test('renames a services: block to packages:', () => {
 		const md = V2_PROJECT.replace('test:', 'services:\n  - name: api\ntest:');
 		const out = migrateExerciseAxes(md);
@@ -110,9 +117,25 @@ suite('migrate-exercise-axes', () => {
 		assert.ok(!out.includes('services:'), out);
 	});
 
-	test('never touches a kind: value — `call` has no environment until wave 3.D', () => {
+	test('rewrites `kind: function` to `kind: call` (T3.5 — the envs answer to `call` now)', () => {
 		const md = V2_PROJECT.replace('kind: build', 'kind: function');
-		assert.ok(migrateExerciseAxes(md).includes('kind: function'));
+		const out = migrateExerciseAxes(md);
+		assert.ok(out.includes('kind: call'), out);
+		assert.ok(!out.includes('kind: function'), out);
+	});
+
+	test('leaves every other kind alone', () => {
+		for (const kind of ['build', 'dom-assert', 'css-assert', 'http']) {
+			const md = V2_PROJECT.replace('kind: build', `kind: ${kind}`);
+			assert.ok(migrateExerciseAxes(md).includes(`kind: ${kind}`), kind);
+		}
+	});
+
+	test('a `function` word that is not a kind: value is untouched', () => {
+		// The rename is anchored on the whole line, so a check *named* function
+		// — or a `file:` path containing the word — cannot be rewritten.
+		const md = V2_PROJECT.replace('kind: build', 'kind: build\n      file: src/function.js');
+		assert.ok(migrateExerciseAxes(md).includes('file: src/function.js'));
 	});
 
 	// ── what it must leave alone ──────────────────────────────────────────────

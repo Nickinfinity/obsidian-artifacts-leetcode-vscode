@@ -188,14 +188,19 @@ function migrateFrontmatter(fmRaw: string, leetcodeType: string): string {
 }
 
 /**
- * Drops the legacy `type:` line from a check-graded `test:` block and renames
- * a `services:` block to `packages:` — the only two body edits (D14, §D).
+ * Drops the legacy `type:` line from a check-graded `test:` block, renames a
+ * `services:` block to `packages:`, and rewrites `kind: function` to
+ * `kind: call` (D14, §D, T3.5).
  *
  * A `test:` block declaring `checks:` must not also declare `type:`: after the
  * axis split neither `project` nor `service` is a test-type id, and an artifact
  * carrying both a `leetcodeType` and a legacy `test.type` is a named verifier
  * failure. Migrating frontmatter alone would therefore write every check-graded
  * artifact into a guaranteed-fail state.
+ *
+ * The `kind:` rename is safe **only after** the envs answer to `call` (T3.5):
+ * run earlier it makes every `function` check an unknown kind, which drops it
+ * at parse time and leaves two vault artifacts ungradeable.
  *
  * @param fence - The text of one ` ```yaml leetcode ` fence, opener and closer included.
  * @returns The fence with those lines rewritten, every other byte untouched.
@@ -224,10 +229,18 @@ function migrateConfigFence(fence: string): string {
 		if (!children.some(j => /^\s+checks:/.test(parts[j]))) { continue; }
 		for (const j of children) {
 			if (/^\s+type:/.test(parts[j])) { drop.add(j); }
+			// In place, indentation preserved: `function` was the check spelling
+			// of what the test-type axis now calls `call`.
+			parts[j] = parts[j].replace(/^(\s+kind:\s*)function(\s*)$/, '$1call$2');
+			// An `http` check binds to a **package** by name. `service:` was the
+			// pre-rename spelling of that binding, and it is not a `CHECK_FIELDS`
+			// member: left alone, the check parses with no package and is dropped
+			// as malformed — which reads as an artifact declaring fewer checks
+			// than it does, the false-green shape S3 exists to close.
+			parts[j] = parts[j].replace(/^(\s+)service:(\s)/, '$1package:$2');
 		}
 	}
 
-	if (drop.size === 0) { return fence; }
 	const out: string[] = [];
 	for (let i = 0; i < parts.length; i += 2) {
 		if (drop.has(i)) { continue; }

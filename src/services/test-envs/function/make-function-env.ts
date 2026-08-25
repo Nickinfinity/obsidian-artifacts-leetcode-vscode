@@ -6,7 +6,7 @@ import { parseSentinelLines } from '../sentinel.helpers.js';
 
 /**
  * The per-language pieces of a `function` env — everything that actually differs
- * between Java, Python, and JavaScript. Everything else (the `type: 'function'`
+ * between Java, Python, and JavaScript. Everything else (the `type: 'call'`
  * tag, the shared `parseSentinelLines` output parser, and the two-file
  * emit shape) is identical and lives in `makeFunctionEnv`.
  */
@@ -98,7 +98,11 @@ function withLibraries(
  */
 export function makeFunctionEnv(spec: FunctionEnvSpec): TestEnv {
 	return {
-		type: 'function',
+		// The **test**-type axis, not the artifact's shape: `call` is "deliver
+		// positional args to a named callable and compare the return value",
+		// which is what every one of these five envs does. It was spelled
+		// `function` while one value answered both questions.
+		type: 'call',
 		language: spec.language,
 		// One candidate buffer, one bare top-level callable — the `buffer`
 		// shape and nothing else. A tree is graded by declared checks, which

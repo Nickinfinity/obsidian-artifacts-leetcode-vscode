@@ -30,6 +30,7 @@ suite('function envs — library consumption', () => {
 	function artifact(libs?: Record<string, string[]>): ParsedLeetCode {
 		return {
 			title: 'Identity', difficulty: 'easy', functionName: 'identity', status: 'unsolved',
+			leetcodeType: 'function',
 			params: [{ name: 'n', type: 'int' }], returns: 'int', description: '',
 			examples: [], tests: [], finalTests: [], test: defaultTestConfig(),
 			setups: [], practice: defaultPracticeConfig(), solutions: [], attempts: [], tags: [],

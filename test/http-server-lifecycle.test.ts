@@ -3,7 +3,7 @@ import * as fs from 'node:fs';
 import * as net from 'node:net';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import type { PackageSpec } from '../src/services/packages-parser.helpers.js';
+import type { PackageSpec } from '../src/types/leetcode.types.js';
 import {
 	assertMintedPortSafe,
 	bootServer,

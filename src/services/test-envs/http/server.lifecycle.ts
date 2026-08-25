@@ -1,6 +1,6 @@
 import { spawn as spawnProcess, type ChildProcess } from 'node:child_process';
 import * as net from 'node:net';
-import type { PackageSpec } from '../../packages-parser.helpers.js';
+import type { PackageSpec } from '../../../types/leetcode.types.js';
 import { resolveContained } from '../project/files.writer.js';
 
 /**

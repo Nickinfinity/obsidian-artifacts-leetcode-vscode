@@ -110,6 +110,10 @@ export function parseLeetCode(content: string): ParsedLeetCode {
 		files:        project?.files,
 		libs,
 		checks:       project?.checks,
+		// Empty ⇒ absent, exactly as `libs` is: a tree that declares no
+		// `packages:` must serialise byte-identically to one that never could,
+		// so the parser golden does not move for a field it cannot carry.
+		packages:     project?.packages?.length ? project.packages : undefined,
 		program,
 		solutionFiles: project?.solutionFiles,
 		warnings,

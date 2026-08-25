@@ -2,6 +2,7 @@ import * as path from 'node:path';
 import { safeJsonParse } from '../utils/safe-json.js';
 import { libEnvVars } from './libs/lib-env.helpers.js';
 import { LIB_ECOSYSTEMS } from './libs/lib-ecosystem.js';
+import type { PackageSpec } from '../types/leetcode.types.js';
 
 /**
  * `packages:` config-block grammar (T3.1) — a `leetcodeType: stack`'s boot
@@ -64,23 +65,6 @@ import { LIB_ECOSYSTEMS } from './libs/lib-ecosystem.js';
  */
 
 // ── types ──────────────────────────────────────────────────────────────────
-
-/** One `packages:` entry — a single process this exercise's `stack` boots. */
-export interface PackageSpec {
-	readonly name: string;
-	/** Shape-guarded only (see module doc) — relative, no `..`, no `node_modules` segment. */
-	readonly dir: string;
-	/** Argv array, never a command string. */
-	readonly install: readonly string[];
-	/** Argv array, never a command string. `${PORT}` is the only admitted substitution. */
-	readonly start: readonly string[];
-	/** Optional stdout substring an *additional* readiness signal may look for. */
-	readonly ready?: string;
-	/** Variable name → value template, S9-validated names only. */
-	readonly exposeAs?: Readonly<Record<string, string>>;
-	/** Package names this one boots after. */
-	readonly dependsOn?: readonly string[];
-}
 
 /**
  * `parsePackages`'s result — a discriminated union, not an always-present

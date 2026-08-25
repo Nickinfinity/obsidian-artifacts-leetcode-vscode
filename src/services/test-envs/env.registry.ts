@@ -7,7 +7,6 @@ import { javascriptFunctionEnv } from './function/javascript.env.js';
 import { pythonFunctionEnv } from './function/python.env.js';
 import { rustFunctionEnv } from './function/rust.env.js';
 import { typescriptFunctionEnv } from './function/typescript.env.js';
-import { projectEnvs } from './project/project.env.js';
 
 /**
  * Anything the registry can hold.
@@ -65,71 +64,63 @@ export function register(env: RegisteredEnv): void {
 }
 
 /**
- * Look up the environment that can run `type` in `language`.
+ * Look up the environment that can run `type` in `language` for an artifact of
+ * shape `leetcodeType`.
+ *
+ * **All three axes are required (C1/C6).** The parameter was appended and
+ * optional through Phases 1 and 2 because seven call sites spanned three
+ * phases and a required parameter would have reddened four other tasks' files
+ * at once; T3.5 is the last of those call sites, so the leniency — and the
+ * `servesShape` "absent means any" branch it needed — is deleted here. An
+ * optional shape is not a smaller version of this question: answering it as
+ * "any" is what let a `stack` resolve a single-buffer env.
  *
  * @param type         - Execution strategy from the artifact's `test.type`.
  * @param language     - Canonical `languageId`.
- * @param leetcodeType - Optional artifact shape; when given, the env must
- *   declare it in `leetcodeTypes` or the pair resolves to `undefined`.
+ * @param leetcodeType - The artifact's shape; the env must declare it in
+ *   `leetcodeTypes` or the triple resolves to `undefined`.
  * @returns The env, or `undefined` when the triple is unsupported.
  *
  * @example
- * testEnvFor('function', 'java');             // → javaFunctionEnv
- * testEnvFor('function', 'java', 'function'); // → javaFunctionEnv
- * testEnvFor('function', 'java', 'stack');    // → undefined — wrong shape
- * testEnvFor('class', 'java');                // → undefined
+ * testEnvFor('call', 'java', 'function');  // → javaFunctionEnv
+ * testEnvFor('call', 'java', 'stack');     // → undefined — wrong shape
+ * testEnvFor('class', 'java', 'function'); // → undefined
  */
 export function testEnvFor(
-	type: TestTypeId, language: string, leetcodeType?: LeetcodeTypeId,
+	type: TestTypeId, language: string, leetcodeType: LeetcodeTypeId,
 ): RegisteredEnv | undefined {
 	const env = registry.get(keyFor(type, language));
 	if (!env) { return undefined; }
-	return servesShape(env, leetcodeType) ? env : undefined;
+	return env.leetcodeTypes.includes(leetcodeType) ? env : undefined;
 }
 
 /**
- * Does `env` serve `leetcodeType`, treating an absent argument as "any"?
- *
- * The compatibility path from the old two-argument signature: seven call sites
- * span three phases, so the parameter is **appended and optional** rather than
- * prepended and required. A required parameter here is a red gate clearable
- * only by editing four other tasks' files — T3.5 is the last call site to pass
- * it, and deletes this leniency with the same change.
- *
- * @param env          - A registered environment.
- * @param leetcodeType - The artifact shape, or `undefined` for the legacy path.
- * @returns True when the env serves that shape, or when no shape was asked for.
- *
- * @example
- * servesShape(javaFunctionEnv, 'function'); // → true
- * servesShape(javaFunctionEnv, 'stack');    // → false
- * servesShape(javaFunctionEnv, undefined);  // → true
- */
-function servesShape(env: RegisteredEnv, leetcodeType?: LeetcodeTypeId): boolean {
-	return leetcodeType === undefined || env.leetcodeTypes.includes(leetcodeType);
-}
-
-/**
- * Every language that can run `type`, sorted for a stable selector order.
+ * Every language that can run `type` for `leetcodeType`, sorted for a stable
+ * selector order.
  *
  * This drives the panel's language `<select>` directly — there is no second
  * capability table to keep in sync with the registry.
  *
+ * **A check `kind:` is not answered here.** `build`, `dom-assert`,
+ * `css-assert` and `http` have no registration at all: they are dispatched per
+ * check by `runOneCheck` against an already-written directory, so this returns
+ * `[]` for them and the coverage sweep asks its second authority instead. The
+ * registry answers only *which language can run this artifact's own suite*.
+ *
  * @param type         - Execution strategy from the artifact's `test.type`.
- * @param leetcodeType - Optional artifact shape; when given, only envs
- *   declaring it contribute a language.
- * @returns Sorted canonical language ids; `[]` for a reserved type, and `[]`
- *   when no env serves that shape.
+ * @param leetcodeType - The artifact's shape; only envs declaring it contribute.
+ * @returns Sorted canonical language ids; `[]` for a reserved type, for a
+ *   check kind, and when no env serves that shape.
  *
  * @example
- * languagesForType('function');           // → ['java', 'javascript', 'python', 'rust', 'typescript']
- * languagesForType('function', 'package'); // → [] — function envs serve one buffer
- * languagesForType('class');              // → []
+ * languagesForType('call', 'function');  // → ['java', 'javascript', 'python', 'rust', 'typescript']
+ * languagesForType('call', 'package');   // → [] — function envs serve one buffer
+ * languagesForType('build', 'package');  // → [] — dispatched per check, never registered
  */
-export function languagesForType(type: TestTypeId, leetcodeType?: LeetcodeTypeId): string[] {
+export function languagesForType(type: TestTypeId, leetcodeType: LeetcodeTypeId): string[] {
 	const out: string[] = [];
 	for (const env of registry.values()) {
-		if (env.type === type && servesShape(env, leetcodeType)) { out.push(env.language); }
+		if (env.type === type && env.leetcodeTypes.includes(leetcodeType)) { out.push(env.language); }
 	}
 	return out.sort((a, b) => a.localeCompare(b));
 }
@@ -144,9 +135,15 @@ register(javaFunctionEnv);
 register(rustFunctionEnv);
 register(typescriptFunctionEnv);
 
-// `project` grades by declared checks, not one return value; it registers under
-// the runnable ids only — `javascriptreact`/`typescriptreact` have no runtime.
-projectEnvs.forEach(register);
+// A tree registers **nothing**, and that is the T3.5 correction: `project` was
+// a key in this table only because one value used to answer both axes. It is
+// not a `TestTypeId` any more, and the five stub envs behind it refused every
+// candidate they were handed — a capability-matrix entry claiming a tree could
+// be graded *through the suite runner*, which it never can. A tree is graded by
+// `gradeProjectDir` dispatching its checks, and the coverage sweep reads that
+// second authority directly. What remains registered here is exactly what the
+// registry can truthfully answer: `call` for a buffer, `program` for a tree
+// whose whole suite is one program.
 
 // `program` starts one process per case rather than one per suite, so it is a
 // `ProgramEnv` rather than a `TestEnv` — see `RegisteredEnv`. It registers here

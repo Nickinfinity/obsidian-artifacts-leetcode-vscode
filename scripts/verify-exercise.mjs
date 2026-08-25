@@ -138,6 +138,24 @@ for (const warning of parseLeetCode(md).warnings ?? []) {
 	console.error(`WARN ${mdPath}: ${warning}`);
 }
 
+// ── P6: a `stack` is not swept by default ────────────────────────────────────
+//
+// T3.5 made `kind: http` dispatchable, which changed what a sweep *does* to the
+// four vault artifacts that declare one: they stop being refused by name and
+// start installing ecosystems and booting real servers. A gate that goes from
+// seconds to minutes and needs a network is a gate that stops being run — the
+// same reasoning that already makes the render E2E tests opt-in. Exit **0**, so
+// a skip is not a failure, and say so on stdout so a sweep's log shows which
+// artifacts went unexamined rather than silently counting them as green.
+//
+// Scoped to `stack` deliberately, per the plan's §J: a `package` declaring an
+// `http` check boots one small server and stays in the default sweep, which is
+// what keeps the T3.6 smoke artifact and T3.7's `inventory-api.md` honest.
+if (parseLeetCode(md).leetcodeType === 'stack' && process.env.LEET_STACK_E2E !== '1') {
+	console.log(`SKIP ${mdPath} — stack, LEET_STACK_E2E not set`);
+	process.exit(0);
+}
+
 // ── Mode: expecteds cross-check ──────────────────────────────────────────────
 if (expectedsPath) {
 	if (!existsSync(expectedsPath)) { die(`verify-exercise: no such file: ${expectedsPath}`, 2); }

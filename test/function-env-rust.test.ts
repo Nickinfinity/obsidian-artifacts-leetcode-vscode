@@ -18,6 +18,7 @@ suite('function × rust env', () => {
     function fixture(overrides: Partial<ParsedLeetCode> = {}): ParsedLeetCode {
         return {
             title: 'Two Sum', difficulty: 'easy', functionName: 'twoSum', status: 'unsolved',
+            leetcodeType: 'function',
             params: [{ name: 'nums', type: 'int[]' }, { name: 'target', type: 'int' }],
             returns: 'int[]', description: '', examples: [],
             tests: [], finalTests: [], test: defaultTestConfig(),
@@ -47,7 +48,7 @@ suite('function × rust env', () => {
     suite('emit — files and commands', () => {
 
         test('declares the env identity', () => {
-            assert.strictEqual(rustFunctionEnv.type, 'function');
+            assert.strictEqual(rustFunctionEnv.type, 'call');
             assert.strictEqual(rustFunctionEnv.language, 'rust');
         });
 
