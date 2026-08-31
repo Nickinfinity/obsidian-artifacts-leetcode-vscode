@@ -11,9 +11,17 @@
 //   node scripts/verify-exercise.mjs "<file.md>" --starter-red
 //       → `package`/`stack` only (isMultiFile): grade `## Files` WITHOUT the
 //         `# Solutions` overlays and require at least one red check. Exit 0 = correctly
-//         red, 1 = the exercise ships pre-solved. `verifyExercise` already refuses a
-//         project that is green with *no* overlay at all; this catches the
-//         residual case — overlays exist, but the starter passes anyway.
+//         red, 1 = the exercise ships pre-solved, 3 = INCONCLUSIVE — every failure seen
+//         classified as a broken toolchain (a swept library cache, a missing compiler, a
+//         boot timeout), never the starter's own code, so this run is not evidence either
+//         way (ledger C14). `verifyExercise` already refuses a project that is green with
+//         *no* overlay at all; this catches the residual case — overlays exist, but the
+//         starter passes anyway.
+//
+// Exit statuses, across every mode: 0 = the expected/green outcome (OK, AGREE, correctly
+// RED, SKIP), 1 = a genuine failure (FAIL, MISMATCH, PRE-SOLVED), 2 = bad input (missing
+// file, malformed JSON, wrong leetcode type for --starter-red, an artifact declaring an
+// unimplemented check kind), 3 = INCONCLUSIVE (--starter-red only, see above).
 //
 // It imports the COMPILED, vscode-free harness from `dist/` and therefore asserts
 // the build exists FIRST — unlike the gate, this CLI has no `rm -rf dist && pnpm
@@ -72,6 +80,15 @@ const { projectGradeRefusal } = await import(
 	pathToFileURL(join(here, '..', 'dist', 'src', 'commands', 'leetcode-run.helpers.js')).href);
 const { unimplementedCheckKindsFromContent } = await import(
 	pathToFileURL(join(dist, 'project-parser.helpers.js')).href);
+// C14: distinguishes a genuinely failed starter from a broken toolchain
+// (a swept library cache, a missing compiler, a boot timeout) reporting the
+// exact same shape — "some check/case failed" — that --starter-red's pass
+// condition could not previously tell apart from each other.
+const { allInfrastructure, infrastructureCount } = await import(
+	pathToFileURL(join(dist, 'exercise-verify', 'starter-red.helpers.js')).href);
+
+/** `--starter-red`'s distinct exit status for an all-infrastructure result — see the header comment. */
+const INCONCLUSIVE_EXIT = 3;
 
 /**
  * The parenthetical after `OK` explaining what this mode did **not** run.
@@ -212,7 +229,20 @@ if (starterRed) {
 		const results = await runProgramArtifact(parsed, { withSolutions: false });
 		const failed = results.filter(r => !r.passed);
 		if (failed.length > 0) {
-			console.log(`RED  ${mdPath} — starter fails ${failed.length}/${results.length} case(s), as it must`);
+			const details = failed.map(r => r.error ?? `got ${r.actual}`);
+			// C14: `runProgramArtifact` reports "never ran" (no `program:` block, no
+			// runnable language, no registered environment) as a one-element failed
+			// suite — the exact shape a genuinely failing starter also produces. When
+			// every failure classifies as infrastructure this run proved nothing about
+			// the starter, so it must not read as RED.
+			if (allInfrastructure(details)) {
+				console.log(`INCONCLUSIVE ${mdPath} — every case failure is a broken toolchain, not the starter:`);
+				for (const d of details) { console.log(`  ${firstLines(d)}`); }
+				process.exit(INCONCLUSIVE_EXIT);
+			}
+			const infra = infrastructureCount(details);
+			const infraNote = infra > 0 ? ` (${infra} of them toolchain, not starter — see the case detail)` : '';
+			console.log(`RED  ${mdPath} — starter fails ${failed.length}/${results.length} case(s), as it must${infraNote}`);
 			for (const r of failed) {
 				const detail = r.error ?? `got ${r.actual}`;
 				console.log(`  case ${r.index}: ${firstLines(detail)}`);
@@ -233,7 +263,19 @@ if (starterRed) {
 		.sort((a, b) => a.localeCompare(b)).join(', ');
 	const red = outcomes.filter(o => !o.passed);
 	if (red.length > 0) {
-		console.log(`RED  ${mdPath} — starter fails ${red.length}/${outcomes.length} check(s) [${kinds}], as it must`);
+		const details = red.map(o => o.detail);
+		// C14: a swept library cache, a missing compiler or a boot timeout fails a
+		// check exactly as an incomplete starter does. When every failing check's
+		// detail classifies as infrastructure, nothing here is evidence the starter
+		// is unsolved — say so distinctly rather than printing RED.
+		if (allInfrastructure(details)) {
+			console.log(`INCONCLUSIVE ${mdPath} — every failing check is a broken toolchain, not the starter [${kinds}]:`);
+			for (const o of red) { console.log(`  ${o.name}: ${firstLines(o.detail ?? '(no detail)')}`); }
+			process.exit(INCONCLUSIVE_EXIT);
+		}
+		const infra = infrastructureCount(details);
+		const infraNote = infra > 0 ? ` (${infra} of them toolchain, not starter — see the check detail)` : '';
+		console.log(`RED  ${mdPath} — starter fails ${red.length}/${outcomes.length} check(s) [${kinds}], as it must${infraNote}`);
 		for (const o of red) { console.log(`  ${o.name}: ${firstLines(o.detail ?? '(no detail)')}`); }
 		process.exit(0);
 	}

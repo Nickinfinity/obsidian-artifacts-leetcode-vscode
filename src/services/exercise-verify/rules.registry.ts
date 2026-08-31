@@ -26,15 +26,21 @@ export type VerifyRule = (parsed: ParsedLeetCode, leetcodeType: LeetcodeTypeId) 
  * `if (parsed.test.type === 'project') { … }` chain — which is exactly the
  * shape this table replaces.
  *
- * `stack` intentionally reuses `verifyFunctionExercise`, not
- * `verifyPackageExercise`. No dedicated stack rule set exists yet — a real
- * stack artifact is *several* wired-together packages, which nothing in this
- * codebase grades — and `exercise-verify.test.ts`'s reserved-type suite pins
- * that a `service`-derived (`stack`) artifact verifies "well-formed" today via
- * the same reserved-relaxation path a `class`/`in-place` reserved *test* type
- * gets, with no `## Files` required. Routing `stack` to the strict `package`
- * rules would newly demand a file tree those fixtures never declare. A future
- * task can give `stack` its own rule set by changing this one entry — it does
+ * `stack` reuses `verifyPackageExercise`, and that routing is the model
+ * rather than a convenience: a stack is *several wired-together packages*, so
+ * it is graded by declared checks and never by one candidate buffer. An
+ * intermediate cut of T1.7 pointed it at `verifyFunctionExercise` to keep two
+ * `test.type: 'service'` fixtures green; that bought a `stack` which could not
+ * verify in any `test.type` spelling **and** one with duplicate check names,
+ * failing checks and no overlay reporting `ok` — the function rules never look
+ * at a file tree. Pinned by `exercise-verify-rules.test.ts`'s *held to the
+ * package rules* case (`stack: no ## Files declared`).
+ *
+ * Consequence, deliberate and currently biting: the package rules demand a
+ * file tree **and** cases bound to every check, which is why the four vault
+ * `stack` artifacts fail `check '…' has no cases` under `LEET_STACK_E2E=1`
+ * (ledger [[C30]]). That is the rule doing its job over artifacts that predate
+ * it. T4.4 gives `stack` its own rule set by changing this one entry — it does
  * not touch this table's shape, `package.rules.ts`, or `function.rules.ts`.
  *
  * @example

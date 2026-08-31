@@ -96,6 +96,8 @@ invites a test to guard the copy instead of the real thing.
 node scripts/verify-exercise.mjs "<file.md>"                      # conformance + own solutions green
 node scripts/verify-exercise.mjs "<file.md>" --expecteds <r.json> # diff stored vs recomputed expecteds
 node scripts/verify-exercise.mjs "<file.md>" --starter-red        # package/stack: starter must FAIL
+                                                                 #   0 red · 1 pre-solved · 2 bad input
+                                                                 #   3 INCONCLUSIVE — broken toolchain, not the starter
 node scripts/grade-candidate.mjs "<file.md>" <lang> <candidate>   # grade an EXTERNAL candidate
 ```
 
@@ -747,15 +749,30 @@ and it is **enforced, not remembered**:
   `projectGradeRefusal` before grading anything, so an artifact declaring a kind nothing
   implements is refused by name — read the message, not the status. The four `kind: http`
   vault artifacts exited `2` that way until T3.5 dispatched the kind.
-- **`--starter-red` cannot yet tell "the starter genuinely failed" from "the toolchain is
-  broken", and it reports both as red.** Its pass condition is *some check failed*, so a
-  `Cannot find module 'jsdom'` from a swept cache satisfies it exactly as an incomplete starter
-  does. It is the **only** evidence a check-graded exercise ships unsolved, so read a red
-  result together with the failure detail rather than the exit status alone.
-  **The `program` path inherits this through different code**, so a fix must cover both:
-  `runProgramArtifact` reports "never ran" as a **one-element** failed suite, which
-  `--starter-red` then prints as `starter fails 1/1 case(s), as it must` and exits `0` — the
-  same confusion, reached via a missing toolchain rather than a swept cache.
+- **`--starter-red` now separates "the starter genuinely failed" from "the toolchain is broken",
+  and says so with a fourth exit status.** It used to report both as red — its pass condition
+  was *some check failed*, so a `Cannot find module 'jsdom'` from a swept cache satisfied it
+  exactly as an incomplete starter did, and the `program` path reached the same false green
+  through different code (`runProgramArtifact` reports "never ran" as a **one-element** failed
+  suite, printed as `starter fails 1/1 case(s), as it must`, exit `0`). Both paths are fixed.
+  `classifyStarterFailure` ([exercise-verify/starter-red.helpers.ts](src/services/exercise-verify/starter-red.helpers.ts))
+  sorts each failure detail into `infrastructure` or `candidate`; when **every** failure is
+  infrastructure the run prints `INCONCLUSIVE …` and exits **`3`**, and a mixed suite stays red
+  while naming how many failures were toolchain. It is still the **only** evidence a
+  check-graded exercise ships unsolved, so read the detail, not just the status.
+  **The classifier's judgements are load-bearing in both directions, and two of them were
+  measured wrong before landing.** A *false green* certifies an artifact that ships pre-solved;
+  a *false `INCONCLUSIVE`* makes a genuinely red artifact uncertifiable, which is not as bad
+  (a pre-solved artifact has zero failures and leaves through `PRE-SOLVED`) but is not cheap
+  either. So: **a compiler diagnostic is a `candidate` failure, never infrastructure** — a
+  starter that does not compile is the canonical ships-unsolved state for java, rust and
+  typescript, and a missing *compiler* is caught instead by the `spawn <cmd> ENOENT` shape.
+  And **`Cannot find module` is only infrastructure for a bare package name** — a candidate's
+  own bad `require('./helper.js')` reaches the classifier as verbatim child stderr.
+  **The residual gap:** `build.check.ts` returns raw child stdout/stderr and never uses the
+  `compilation error:` prefix, so a missing `tsc` and a real `error TS2554` are textually
+  identical there. Closing it means a structured failure reason out of that check, not a longer
+  pattern list.
 - **A fence without `path=` is not an overlay.** It parses into `solutionFiles` as nothing at
   all — the failure mode is silent, and it has now bitten three artifacts (the Next.js spike,
   and both `stack` spikes, where the fences are deliberately fragments and say so).
