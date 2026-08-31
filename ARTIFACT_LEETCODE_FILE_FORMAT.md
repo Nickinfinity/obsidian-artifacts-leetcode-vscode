@@ -924,11 +924,12 @@ explicitly from the CLI, not part of the extension.
 > every path out. A `package` declaring one `http` check is graded exactly like one declaring
 > only `build`/`call`/`dom-assert`/`css-assert` — see the `package`/`http` smoke artifact,
 > `CoderByte/Tests/package/sum-endpoint.md` in the vault.
-> A `stack` **parses and opens** — it is a file tree, so *Solve It* materialises `## Files`
-> and opens the tabs — and what remains unbuilt is booting **several** packages together:
-> `dependsOn` ordering, running each entry's `install`, and computing `exposeAs` from the
-> ports assigned to the packages a later one depends on are still the `stack` runner's, not
-> any check's (§9.3). A `stack` is therefore still **skipped** by the default vault sweep
+> A `stack` **parses, opens and boots**: it is a file tree, so *Solve It* materialises
+> `## Files` and opens the tabs, and `bootStack` (VSX-178) now installs every package, boots
+> them in `dependsOn` order, and computes each `exposeAs` value from the **already-assigned**
+> ports of the packages it depends on (§9.3). What a `stack` still lacks is its own **verify
+> rules** — it borrows the `package` rules today — and any worked artifact of its own.
+> A `stack` is therefore still **skipped** by the default vault sweep
 > unless `LEET_STACK_E2E=1` (§6.1) — not because `http` is unimplemented any more, but because
 > exercising several booted ecosystems at once is comparatively slow and network-bound. With
 > the flag on, a `stack` whose checks each resolve to one already-implemented kind (a
@@ -1139,12 +1140,14 @@ packages:
 > drops it silently, without even the near-miss warning an unknown key would
 > earn. Treat it as documented-but-unparsed until the boot task reads it.
 >
-> **What is still not wired: boot ordering, `install`, and `exposeAs`.** Booting
-> **one** package is implemented (an `http` check does exactly that, and tears
-> the process group down on every path out); booting *several* in `dependsOn`
-> order, running each one's `install`, and computing `exposeAs` from the ports
-> that were assigned are the `stack` runner's, not this check's. A `stack` is
-> therefore skipped by the default vault sweep (§6.1).
+> **Boot ordering, `install` and `exposeAs` are wired (VSX-178).** `bootStack`
+> installs every package, boots them in `dependsOn` order — backends, then
+> frontend builds, then frontends — computes each package's `exposeAs` values
+> from the **already-assigned** ports of its dependencies, and tears the whole
+> set down in one `finally`, registering every group so a session-level cleanup
+> finds them. What a `stack` still lacks is its own **verify rules** and any
+> worked artifact, so it remains skipped by the default vault sweep (§6.1) and
+> is graded only under `LEET_STACK_E2E=1`.
 >
 > **Libraries do not reach a booted process yet.** A node package resolves its
 > imports through the run directory's own `node_modules`, so an Express server
@@ -1159,19 +1162,19 @@ packages:
 > which would have read as an artifact declaring fewer checks than it does.
 
 - `install` / `start` are **argv arrays**, never command strings.
-- `${PORT}` is the **only** substitution, and it is templated into every argv element
-  **after the command** — `bootServer` splits `pkg.start` into `[command, ...rawArgs]` and
-  only `rawArgs` is substituted, so `start: ["${PORT}"]` spawns a literal command named
-  `${PORT}`, not the port number, and a package must never rely on substitution reaching
-  index 0. **No `PORT` environment variable is ever set.** The child is spawned with no
-  `env` override, so it inherits the extension host's own environment wholesale:
-  `process.env.PORT` is whatever the parent process happens to have — usually absent,
-  possibly a stale, unrelated value left over from the developer's own shell — and never
-  this boot's port. A package whose `start` needs the port must take it as an argument
-  (`["node", "index.js", "${PORT}"]`, read back as `process.argv[…]`), never from the
-  environment — found writing the `package`/`http` smoke artifact (VSX-176), whose starter
-  and solution both read the port this way. The port itself is one the OS assigned (bind
-  `:0`, read it back), never a guess.
+- `${PORT}` is the **only** substitution, and it is templated into **every** argv element —
+  the command at index 0 included, so `start: ["./boot-${PORT}.sh", …]` resolves to a real
+  executable name rather than spawning a file literally called `boot-${PORT}.sh` (VSX-178;
+  before it, only the elements *after* the command were substituted).
+  **`PORT` is also set in the child's environment**, so `process.env.PORT` and the
+  substituted argv agree and either channel is correct. The child is otherwise spawned with
+  an environment composed by **allowlist**, not inherited wholesale: the harness spreads its
+  own environment, injects `PORT` as its own literal, and then assigns only those `exposeAs`
+  names that pass validation. `PORT` itself is therefore a **reserved** `exposeAs` name — an
+  artifact naming it is refused at parse time, because an artifact-supplied value would
+  otherwise overwrite the port the harness just assigned and the server would bind somewhere
+  the cases never reach. The port is one the OS assigned (bind `:0`, read it back), never a
+  guess.
 - `exposeAs` maps *variable name → value template*; the author names what their framework
   wants (`VITE_*`, `NEXT_PUBLIC_*`) — **the extension encodes no framework knowledge**.
   Both halves are constrained, and narrowly: the **name** must match `^[A-Z][A-Z0-9_]*$` and

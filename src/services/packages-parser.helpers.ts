@@ -120,8 +120,21 @@ const LIB_SEAM_VARS: ReadonlySet<string> = new Set(
  * own seam but the *runtime's* code-loading knobs. `DYLD_*` (macOS dynamic
  * linker) is a wildcard family, checked separately in
  * `isReservedExposeName`.
+ *
+ * **`PORT` is here for a different reason than the rest, and it is not a
+ * loader variable.** It is the one name `server.lifecycle.ts` sets *itself*,
+ * from its own minted port — so a dependency exposing `PORT: "http://127.0.0.1:${PORT}"`
+ * used to overwrite that literal in the dependent's environment with the
+ * *dependency's* URL, and the dependent then bound nothing (measured: `web`
+ * saw `PORT=http://127.0.0.1:52182` and exited before readiness). It fails
+ * closed rather than dangerously — the value shape is loopback-pinned by
+ * `EXPOSE_VALUE_RE`, so nothing executable could ever land there — but an
+ * author writing it has a bug, and a named parse-time refusal says so instead
+ * of a boot timeout three layers down. `composeChildEnv` closes the same hole
+ * a second time by assignment order, for a direct caller that never parsed.
  */
 const EXPOSE_DENYLIST: ReadonlySet<string> = new Set([
+	'PORT',
 	'PATH', 'NODE_OPTIONS', 'NODE_EXTRA_CA_CERTS', 'NODE_REPL_EXTERNAL_MODULE',
 	'PYTHONPATH', 'PYTHONSTARTUP',
 	'LD_PRELOAD', 'LD_LIBRARY_PATH', 'LD_AUDIT',
@@ -306,6 +319,34 @@ function readExposeEntry(line: string, warn: (m: string) => void, out: Record<st
 /** `DYLD_*` is a wildcard family (macOS dynamic-linker variables); everything else is an exact match. */
 function isReservedExposeName(name: string): boolean {
 	return EXPOSE_DENYLIST.has(name) || LIB_SEAM_VARS.has(name) || name.startsWith('DYLD_');
+}
+
+/**
+ * Whether `name` is safe to set as a booted child's environment variable
+ * (T4.1, item 5) — the shape check plus the reserved-name check this module
+ * already runs on a declared `exposeAs` key at parse time, exported as one
+ * predicate so `server.lifecycle.ts` never re-lists the denylist to run the
+ * same check again at the point a child's environment is actually composed.
+ *
+ * Parse-time validation already refuses an unsafe `exposeAs` name before it
+ * ever reaches a `PackageSpec`, so every caller of {@link bootServer} today
+ * only ever passes names that already satisfy this. The second check exists
+ * for the same reason `http.check.ts`'s `clampTimeoutMs` re-clamps a value
+ * `parseTimeoutMs` already bounds: a direct caller (a unit test, a future
+ * non-parsed entry point) can pass anything, and the module composing a real
+ * child process's environment must not assume the parse-time path ran.
+ *
+ * @param name - A candidate environment-variable name.
+ * @returns `true` when `name` matches `^[A-Z][A-Z0-9_]*$` and names neither a
+ *   loader/interpreter variable nor one this extension's own library seam sets.
+ *
+ * @example
+ * isSafeExposeName('VITE_API_URL'); // → true
+ * isSafeExposeName('PATH');         // → false
+ * isSafeExposeName('NODE_PATH');    // → false (library seam)
+ */
+export function isSafeExposeName(name: string): boolean {
+	return EXPOSE_NAME_RE.test(name) && !isReservedExposeName(name);
 }
 
 /** `true` when every `${…}` in `value` (if any) is exactly `${PORT}` — the only admitted substitution. */

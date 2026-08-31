@@ -1,5 +1,5 @@
 import * as assert from 'node:assert';
-import { MAX_PACKAGES, parsePackages } from '../src/services/packages-parser.helpers.js';
+import { isSafeExposeName, MAX_PACKAGES, parsePackages } from '../src/services/packages-parser.helpers.js';
 
 /**
  * Unit tests for the `packages:` config-block grammar (T3.1) — the
@@ -299,6 +299,36 @@ suite('packages parser', () => {
 		assert.ok(warnings.some(w => w.includes('DYLD_INSERT_LIBRARIES')), warnings.join(' | '));
 	});
 
+	/**
+	 * `PORT` is not a loader variable — it is the one name `server.lifecycle.ts`
+	 * sets **itself**, from its own `:0`-minted port. It passed every check here
+	 * (shape ✓, not in the denylist, not a lib-seam var), so a dependency
+	 * declaring it overwrote the *dependent's* minted port with the dependency's
+	 * URL: measured end to end, `web` saw `PORT=http://127.0.0.1:52182` and
+	 * exited before ever binding. Fails closed, never a false green — but an
+	 * author writing this has a bug, and a named parse-time refusal beats a boot
+	 * timeout three layers down. Carries a valid value on purpose (see above).
+	 */
+	test('exposeAs: PORT is refused — it is the one variable the booter sets itself', () => {
+		const result = parsePackages([
+			'packages:',
+			'  - name: api',
+			'    dir: server',
+			'    install: ["a"]',
+			'    start: ["b"]',
+			'    exposeAs:',
+			'      PORT: "http://127.0.0.1:${PORT}"',
+		], warn);
+		assert.ok(result.ok);
+		assert.strictEqual(result.ok && result.packages[0].exposeAs, undefined);
+		assert.ok(warnings.some(w => w.includes('PORT')), warnings.join(' | '));
+	});
+
+	test('isSafeExposeName refuses PORT — the predicate server.lifecycle.ts composes a child env through', () => {
+		assert.strictEqual(isSafeExposeName('PORT'), false);
+		assert.strictEqual(isSafeExposeName('VITE_API_URL'), true, 'an ordinary name must still pass');
+	});
+
 	test('an exposeAs name outside ^[A-Z][A-Z0-9_]*$ is refused, valid siblings survive', () => {
 		const result = parsePackages([
 			'packages:',
@@ -505,5 +535,32 @@ suite('packages parser', () => {
 		], warn);
 		assert.ok(result.ok);
 		assert.strictEqual(result.ok && result.packages.length, 3);
+	});
+
+	// ── isSafeExposeName: the one authority server.lifecycle.ts reuses (T4.1, item 5) ──
+
+	suite('isSafeExposeName — the exported allowlist server.lifecycle.ts reuses', () => {
+		test('accepts a well-shaped, non-reserved name', () => {
+			assert.strictEqual(isSafeExposeName('VITE_API_URL'), true);
+		});
+
+		test('refuses a loader/interpreter variable', () => {
+			assert.strictEqual(isSafeExposeName('PATH'), false);
+			assert.strictEqual(isSafeExposeName('LD_PRELOAD'), false);
+			assert.strictEqual(isSafeExposeName('DYLD_INSERT_LIBRARIES'), false);
+		});
+
+		test('refuses this extension\'s own library-seam variables, derived from libEnvVars', () => {
+			assert.strictEqual(isSafeExposeName('NODE_PATH'), false);
+			assert.strictEqual(isSafeExposeName('VIRTUAL_ENV'), false);
+			assert.strictEqual(isSafeExposeName('CLASSPATH'), false);
+			assert.strictEqual(isSafeExposeName('CARGO_TARGET_DIR'), false);
+		});
+
+		test('refuses a name outside ^[A-Z][A-Z0-9_]*$', () => {
+			assert.strictEqual(isSafeExposeName('lowercase'), false);
+			assert.strictEqual(isSafeExposeName('__proto__'), false);
+			assert.strictEqual(isSafeExposeName(''), false);
+		});
 	});
 });

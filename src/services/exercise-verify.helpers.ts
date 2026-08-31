@@ -1,7 +1,7 @@
 import { canonicalJson } from '../utils/canonical-json.js';
 import type { TestCase } from '../types/leetcode.types.js';
 import { checkFrontmatterRules } from './exercise-verify/frontmatter.rules.js';
-import { VERIFY_RULES } from './exercise-verify/rules.registry.js';
+import { VERIFY_RULES, type VerifyRunOptions } from './exercise-verify/rules.registry.js';
 import { parseLeetCode } from './leetcode-parser.service.js';
 
 /** `verifyExercise` succeeded — the exercise conforms and (if runnable) every declared language is green. */
@@ -80,13 +80,18 @@ export interface ExpectedMismatch {
  * @param md   - Full `.md` artifact content.
  * @param path - Optional file path, prefixed onto a failure's `reason` for a
  *   caller walking many files.
+ * @param options - What the *calling process* is, never what the artifact is —
+ *   `installSignals` is a **CLI-only** opt-in, see {@link VerifyRunOptions}.
+ *   Omitted by anything running inside the VS Code extension host.
  * @returns `{ ok: true }`, or `{ ok: false, reason }` naming the first broken rule.
  *
  * @example
  * await verifyExercise(fs.readFileSync(vaultPath, 'utf-8'));
  * // → { ok: true }
  */
-export async function verifyExercise(md: string, path?: string): Promise<VerifyResult> {
+export async function verifyExercise(
+	md: string, path?: string, options?: VerifyRunOptions,
+): Promise<VerifyResult> {
 	const fail = (reason: string): VerifyFail => ({ ok: false, reason: path ? `${path}: ${reason}` : reason });
 
 	// Rules 0-3 first, before the leetcode-type dispatch — see
@@ -99,7 +104,7 @@ export async function verifyExercise(md: string, path?: string): Promise<VerifyR
 	const leetcodeType = parsed.leetcodeType;
 	if (leetcodeType === undefined) { return fail('parse: missing leetcode type'); }
 
-	const reason = await VERIFY_RULES[leetcodeType](parsed, leetcodeType);
+	const reason = await VERIFY_RULES[leetcodeType](parsed, leetcodeType, options);
 	return reason ? fail(reason) : { ok: true };
 }
 

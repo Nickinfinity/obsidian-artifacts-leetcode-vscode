@@ -7,25 +7,36 @@ function isScopeLike(name: string): boolean {
 }
 
 /**
- * Refuse to proceed when `runModules` already exists as a symlink.
+ * Refuse to proceed when `target` already exists as a symlink.
  *
  * `fs.mkdir(path, { recursive: true })` treats an existing symlink-to-a-directory
  * as "already there" and returns without complaint — every later write would
- * then land inside the link's target rather than inside `runDir`. A path that
- * does not exist yet, or is already a real directory, is left untouched.
+ * then land inside the link's target rather than inside the intended directory.
+ * A path that does not exist yet, or is already a real directory, is left
+ * untouched.
  *
- * @param runModules - Absolute path of `<runDir>/node_modules`.
+ * Called against **both** levels `linkModules` creates: the directory it is
+ * asked to fill (`runDir` — for a `stack`, one sub-package directory such as
+ * `client/`) and the `node_modules` inside it. Checking only the leaf would
+ * miss a hijacked sub-package directory itself: `client/node_modules` might
+ * not exist yet, so a naive check would find nothing to refuse, and
+ * `fs.mkdir` would then silently create `node_modules` inside whatever
+ * `client` had been swapped to point at.
+ *
+ * @param target - Absolute path to check — either a run/sub-package directory
+ *                 or its `node_modules`.
  * @returns Nothing when safe to proceed.
- * @throws Error when `runModules` is a symlink.
+ * @throws Error when `target` is a symlink.
  *
  * @example
- * await assertNotSymlink('/tmp/run/node_modules');
+ * await assertNotSymlink('/tmp/run/client');
+ * await assertNotSymlink('/tmp/run/client/node_modules');
  */
-async function assertNotSymlink(runModules: string): Promise<void> {
-	const stat = await fs.lstat(runModules).catch(() => null);
+async function assertNotSymlink(target: string): Promise<void> {
+	const stat = await fs.lstat(target).catch(() => null);
 	if (stat?.isSymbolicLink()) {
 		throw new Error(
-			`refusing to link '${runModules}': it already exists as a symlink, not a real directory — `
+			`refusing to link '${target}': it already exists as a symlink, not a real directory — `
 			+ 'a check\'s own subprocess may have replaced it between gradings',
 		);
 	}
@@ -147,28 +158,40 @@ async function linkScopeChildren(cacheModules: string, runModules: string, name:
  * artifact content — so a hostile `.md` cannot steer a link anywhere; `runDir`
  * is the caller's own temp/attempt path, not artifact-controlled either.
  *
- * SEC: `runDir/node_modules` is `lstat`'d **before** `mkdir` and refused if it
- * is already a symlink. `fs.mkdir(…, { recursive: true })` silently succeeds
- * when the path is a symlink to a directory, and every entry linked below
- * would then land inside whatever that symlink points at. Harmless for a
- * fresh `mkdtemp`, but the solve flow's run directory is a *persistent*
- * `attempts/project_<slug>_<run>/` graded repeatedly across Run Tests and
- * Submit, and a `build` check's argv is arbitrary code by design — it could
- * replace `node_modules` with a symlink between two gradings, and a trusting
- * `mkdir` would accept it on the next one.
+ * SEC: both `runDir` itself and `runDir/node_modules` are `lstat`'d **before**
+ * `mkdir` and refused if either is already a symlink. `fs.mkdir(…, { recursive:
+ * true })` silently succeeds when a path component is a symlink to a
+ * directory, and every entry linked below would then land inside whatever
+ * that symlink points at. Harmless for a fresh `mkdtemp`, but the solve
+ * flow's run directory is a *persistent* `attempts/project_<slug>_<run>/`
+ * graded repeatedly across Run Tests and Submit, and a `build` check's argv
+ * is arbitrary code by design — it could replace `node_modules`, or the
+ * sub-package directory holding it, with a symlink between two gradings, and
+ * a trusting `mkdir` would accept it on the next one. Checking `runDir` too
+ * (not only the leaf) is what makes this safe to call once per sub-package:
+ * a `stack` passes a different `runDir` per package (`client/`, `server/`),
+ * any of which could be the hijacked one.
  *
- * @param runDir   - Absolute path of the run directory (already created).
+ * @param runDir   - Absolute path of the directory to fill with a
+ *                   `node_modules` (already created) — the run root for a
+ *                   single-package artifact, or one sub-package directory for
+ *                   a `stack`.
  * @param cacheDir - Absolute path of the shared cache for this lib set
  *                   (`libEnvDir('pnpm', libs)`); its `node_modules` must already exist.
  * @returns Nothing. Throws on failure — the caller (`runProjectChecks`) already
  *          catches and maps a throw onto every check red with the reason.
  * @throws Error when `<cacheDir>/node_modules` does not exist or is unreadable,
- *         or when `<runDir>/node_modules` already exists as a symlink.
+ *         or when `runDir` or `<runDir>/node_modules` already exists as a symlink.
  *
  * @example
  * await linkModules('/tmp/leet-project-abc', libEnvDir('pnpm', ['react@^19.0.0']));
  */
 export async function linkModules(runDir: string, cacheDir: string): Promise<void> {
+	// `runDir` itself is checked too, not only `runModules` below: for a `stack`
+	// this is one sub-package directory (`client/`), and a hijacked `client`
+	// pointing elsewhere would otherwise pass the leaf check below simply
+	// because `client/node_modules` does not exist yet at that target.
+	await assertNotSymlink(runDir);
 	const runModules = path.join(runDir, 'node_modules');
 	await assertNotSymlink(runModules);
 	await fs.mkdir(runModules, { recursive: true });

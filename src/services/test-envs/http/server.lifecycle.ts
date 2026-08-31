@@ -1,6 +1,7 @@
 import { spawn as spawnProcess, type ChildProcess } from 'node:child_process';
 import * as net from 'node:net';
 import type { PackageSpec } from '../../../types/leetcode.types.js';
+import { isSafeExposeName } from '../../packages-parser.helpers.js';
 import { resolveContained } from '../project/files.writer.js';
 
 /**
@@ -158,14 +159,85 @@ export interface BootedGroupRegistry {
  */
 export function createGroupRegistry(): BootedGroupRegistry {
 	const pids = new Set<number>();
+	// C35: a registry that has begun draining never stores another pid — it
+	// kills on arrival instead. Measured, not theorised: a `Ctrl-C` landing
+	// mid-boot orphaned a server that had not been spawned yet when
+	// `teardownAll()` ran. `teardownAll` clears the set and then awaits
+	// `killProcessGroup` (up to 500ms of polling); killing the child makes
+	// `waitReady` return `childExited: true`, which S13 treats as **retryable**,
+	// so `bootServer`'s retry loop spawns a fresh detached child and registers
+	// it into a set nobody will drain again — all before the signal handler's
+	// `.finally(() => exit(…))` resolves. Reproduced end to end: the registered
+	// pid was reaped and a *new* child on a *new* port survived the CLI, where
+	// a control run with no signal leaves none.
+	let draining = false;
 	return {
-		register(pid) { pids.add(pid); },
+		register(pid) {
+			if (draining) {
+				void killProcessGroup(pid);
+				return;
+			}
+			pids.add(pid);
+		},
 		unregister(pid) { pids.delete(pid); },
 		async teardownAll() {
+			draining = true;
 			const toKill = [...pids];
 			pids.clear();
 			await Promise.all(toKill.map(pid => killProcessGroup(pid)));
 		},
+	};
+}
+
+/**
+ * Drain `registry` before a `SIGINT`/`SIGTERM`-killed process actually exits
+ * (S12/C33).
+ *
+ * **Measured, not assumed: Node runs neither a `finally` block nor the
+ * `'exit'` event for an unhandled `SIGINT`/`SIGTERM`.** A process with no
+ * listener for either signal is torn down immediately — confirmed against a
+ * real child process, `SIGINT` and `SIGTERM` alike, in both cases with zero
+ * chance for in-flight `async`/`await` code (including every `try/finally`
+ * this module and `http.check.ts` already have) to run. `runHttpCheck`'s own
+ * `finally` therefore covers a run that *ends*, but nothing before this
+ * function covered a sweep interrupted mid-check — `verify-exercise.mjs` has
+ * no VS Code session and no `endChallenge()` to fall back on, so a `Ctrl-C`
+ * or `kill` landing between a boot's `spawn` and that `finally` leaked a
+ * detached, still-listening process holding a port. Only an *explicit*
+ * listener changes that: registering one suppresses Node's default
+ * terminate-immediately behaviour, so the handler below can `await` the
+ * registry's teardown and only then end the process itself — confirmed the
+ * same way, a real registered handler observed to run its cleanup before the
+ * process actually exits.
+ *
+ * `SIGKILL` remains uncatchable by any process on any platform — a stated
+ * ceiling, not a gap this closes.
+ *
+ * @param registry - The registry to drain on either signal.
+ * @param exit     - Test-only seam, the same spirit as `BootOptions.mintPort`
+ *   — production callers omit it and get the real `process.exit`.
+ * @returns A function that removes the installed listeners — always call it
+ *   once the protected work is done, on every path out, successfully or not.
+ *
+ * @example
+ * const uninstall = installSignalTeardown(registry);
+ * try { await gradeProjectDir(parsed, runDir, { registry }); }
+ * finally { uninstall(); }
+ */
+export function installSignalTeardown(
+	registry: BootedGroupRegistry, exit: (code: number) => void = process.exit.bind(process),
+): () => void {
+	let handled = false;
+	const onSignal = (signal: NodeJS.Signals): void => {
+		if (handled) { return; }
+		handled = true;
+		void registry.teardownAll().finally(() => { exit(signal === 'SIGINT' ? 130 : 143); });
+	};
+	process.on('SIGINT', onSignal);
+	process.on('SIGTERM', onSignal);
+	return () => {
+		process.off('SIGINT', onSignal);
+		process.off('SIGTERM', onSignal);
 	};
 }
 
@@ -265,8 +337,17 @@ function mintPort(): Promise<number> {
 	});
 }
 
-/** `${PORT}` is the only substitution `packages-parser.helpers.ts` ever admits into an argv element — a plain literal replace is all runtime substitution needs. */
-function substitutePort(element: string, port: number): string {
+/**
+ * `${PORT}` is the only substitution `packages-parser.helpers.ts` ever admits
+ * into an argv element or an `exposeAs` value template — a plain literal
+ * replace is all runtime substitution needs.
+ *
+ * Exported so `stack.runner.ts` (T4.1) can resolve an `exposeAs` template
+ * against a **dependency's** already-assigned port with the exact same
+ * substitution rule this module uses for a package's own `start` argv,
+ * rather than a second copy of the same one-liner.
+ */
+export function substitutePort(element: string, port: number): string {
 	return element.replaceAll('${PORT}', String(port));
 }
 
@@ -386,6 +467,26 @@ export interface BootOptions {
 	 * all.
 	 */
 	readonly mintPort?: () => Promise<number>;
+	/**
+	 * Variables an already-booted **dependency** exposes to this package
+	 * (T4.1, `stack.runner.ts`) — its `exposeAs` templates, `${PORT}` already
+	 * resolved against the dependency's own assigned port. Omitted for a
+	 * package with no dependencies, or a single `package`-type boot.
+	 *
+	 * **Never spread wholesale.** {@link attemptBoot} composes the child's
+	 * real environment by spreading the *inherited* `process.env` and then
+	 * assigning each entry of this map individually, filtered through
+	 * {@link isSafeExposeName} — the same allowlist `packages-parser.helpers
+	 * .ts` already runs on every `exposeAs` name at parse time. This is
+	 * defense in depth, not a duplicate check: a direct caller of `bootServer`
+	 * (a unit test, a future non-parsed entry point) can pass anything here,
+	 * and this module must not assume the parse-time path ran — the exact
+	 * reasoning `http.check.ts`'s `clampTimeoutMs` already documents for its
+	 * own re-clamp. Without the filter, one artifact-influenced key landing in
+	 * a `{ ...process.env, ...opts.env }` spread could shadow `PATH` or a
+	 * loader variable (`NODE_OPTIONS`, `LD_PRELOAD`, …) for the spawned child.
+	 */
+	readonly env?: Readonly<Record<string, string>>;
 }
 
 /** One boot attempt's result — `retryable` is the S13 signal `bootServer`'s loop reads. */
@@ -396,12 +497,60 @@ interface AttemptResult {
 	readonly server?: BootedServer;
 }
 
-/** Spawn `pkg.start` once, with `${PORT}` substituted, and wait for readiness. */
+/**
+ * Compose a booted child's environment (C31, item 5): spread the *inherited*
+ * `process.env`, inject `PORT` (this module's own literal, never
+ * artifact-supplied text), then assign `extra`'s entries **individually**,
+ * each filtered through {@link isSafeExposeName} — never a wholesale
+ * `{ ...process.env, ...extra }` spread, which would let one artifact-
+ * influenced key shadow `PATH` or a loader variable outright.
+ *
+ * @param port  - The port this attempt just minted — every framework a stack
+ *   example uses (Express, uvicorn, Spring Boot) reads `PORT` directly (C31).
+ * @param extra - A dependency's already-resolved `exposeAs` values, when this
+ *   package has one; `undefined` for a package with none.
+ * @returns The full environment to spawn the child with.
+ *
+ * @example
+ * composeChildEnv(54321, { VITE_API_URL: 'http://127.0.0.1:54000' });
+ * // → { ...process.env, PORT: '54321', VITE_API_URL: 'http://127.0.0.1:54000' }
+ */
+function composeChildEnv(port: number, extra: Readonly<Record<string, string>> | undefined): NodeJS.ProcessEnv {
+	const env: NodeJS.ProcessEnv = { ...process.env };
+	for (const [key, value] of Object.entries(extra ?? {})) {
+		if (isSafeExposeName(key)) { env[key] = value; }
+	}
+	// **Last, deliberately.** Assigned before the loop, this literal was
+	// overwritable by an artifact: `PORT` passes `isSafeExposeName`'s shape
+	// check, so a dependency declaring `exposeAs: PORT: …` replaced the
+	// dependent's own minted port with the dependency's URL and the dependent
+	// then bound nothing. `PORT` is now refused at parse time too
+	// (`EXPOSE_DENYLIST`), but this module must not assume the parse-time path
+	// ran — the same reasoning its own doc gives for filtering `extra` at all.
+	// Ordering makes the invariant true by construction, for every caller.
+	env.PORT = String(port);
+	return env;
+}
+
+/** Bundled knobs {@link attemptBoot} needs beyond the package/cwd/argv it is booting — kept off the parameter list itself (`S107`). */
+interface AttemptOptions {
+	readonly bootTimeoutMs: number;
+	readonly registry: BootedGroupRegistry | undefined;
+	readonly mint: () => Promise<number>;
+	/** A dependency's already-resolved `exposeAs` values (T4.1) — `undefined` for a package with none. */
+	readonly extraEnv: Readonly<Record<string, string>> | undefined;
+}
+
+/**
+ * Spawn `pkg.start` once, with `${PORT}` substituted into **every** argv
+ * element including the command itself (C32 — a bare `start: ["${PORT}"]`
+ * used to parse clean and spawn a literal command named `${PORT}`), and wait
+ * for readiness.
+ */
 async function attemptBoot(
-	pkg: PackageSpec, cwd: string, command: string, rawArgs: readonly string[],
-	bootTimeoutMs: number, registry: BootedGroupRegistry | undefined,
-	mint: () => Promise<number>,
+	pkg: PackageSpec, cwd: string, command: string, rawArgs: readonly string[], opts: AttemptOptions,
 ): Promise<AttemptResult> {
+	const { bootTimeoutMs, registry, mint, extraEnv } = opts;
 	let port: number;
 	try {
 		port = await mint();
@@ -410,8 +559,10 @@ async function attemptBoot(
 		return { ok: false, reason: e instanceof Error ? e.message : String(e), retryable: false };
 	}
 
+	const resolvedCommand = substitutePort(command, port);
 	const args = rawArgs.map(el => substitutePort(el, port));
-	const child = spawnProcess(command, args, { cwd, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+	const env = composeChildEnv(port, extraEnv);
+	const child = spawnProcess(resolvedCommand, args, { cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
 
 	const state = { exited: false };
 	child.on('error', () => { state.exited = true; });
@@ -496,9 +647,10 @@ export async function bootServer(pkg: PackageSpec, runDir: string, opts: BootOpt
 		return { ok: false, reason: `packages: '${pkg.name}' start is an empty argv` };
 	}
 
+	const attemptOpts: AttemptOptions = { bootTimeoutMs, registry: opts.registry, mint, extraEnv: opts.env };
 	let lastReason = 'server never became ready';
 	for (let attempt = 0; attempt < BOOT_ATTEMPTS; attempt++) {
-		const result = await attemptBoot(pkg, cwd, command, rawArgs, bootTimeoutMs, opts.registry, mint);
+		const result = await attemptBoot(pkg, cwd, command, rawArgs, attemptOpts);
 		if (result.ok && result.server) { return { ok: true, server: result.server }; }
 		lastReason = result.reason ?? lastReason;
 		if (!result.retryable) { break; }

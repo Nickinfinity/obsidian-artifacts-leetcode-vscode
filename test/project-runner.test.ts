@@ -159,6 +159,58 @@ suite('project runner', () => {
 		assert.strictEqual(outcomes[0].passed, true, outcomes[0].detail);
 	});
 
+	// ── C33 scoping: the signal handler is CLI-only, never the extension host ──
+
+	/**
+	 * `installSignalTeardown` registers `process.on('SIGINT'/'SIGTERM')`
+	 * handlers that force `process.exit`. `runProjectChecks` runs **inside the
+	 * VS Code extension host** on the dry-run Submit path
+	 * (`leetcode-run.handlers.ts`), and `SIGTERM` is exactly how VS Code
+	 * terminates that host on window close, reload and update — so installing
+	 * one unconditionally forced an exit underneath the host's own shutdown,
+	 * racing `deactivate()`. `PracticeMode` restores the solver's **global**
+	 * editor settings there, so losing that race leaves `noCompletion` and
+	 * friends permanently applied with no live challenge left to end.
+	 *
+	 * The install is synchronous, before `runProjectChecks`' first `await`, so
+	 * the count observed between calling it and awaiting it is the count *during*
+	 * the run — which is what makes both directions observable from here.
+	 */
+	suite('installSignals — a process-wide exit handler only where the process owns its signals', () => {
+
+		test('the default path installs no SIGINT/SIGTERM handler at all', async () => {
+			const beforeTerm = process.listenerCount('SIGTERM');
+			const beforeInt = process.listenerCount('SIGINT');
+
+			const running = runProjectChecks(parseLeetCode(artifact()));
+			assert.strictEqual(
+				process.listenerCount('SIGTERM'), beforeTerm,
+				'the extension-host path must never register a SIGTERM handler that forces process.exit',
+			);
+			assert.strictEqual(process.listenerCount('SIGINT'), beforeInt);
+
+			await running;
+			assert.strictEqual(process.listenerCount('SIGTERM'), beforeTerm);
+			assert.strictEqual(process.listenerCount('SIGINT'), beforeInt);
+		});
+
+		test('installSignals: true installs one handler for the run, and removes it again', async () => {
+			const beforeTerm = process.listenerCount('SIGTERM');
+			const beforeInt = process.listenerCount('SIGINT');
+
+			const running = runProjectChecks(parseLeetCode(artifact()), { installSignals: true });
+			assert.strictEqual(
+				process.listenerCount('SIGTERM'), beforeTerm + 1,
+				'the CLI path must arm the teardown — a Ctrl-C mid-boot orphans a listening server otherwise',
+			);
+			assert.strictEqual(process.listenerCount('SIGINT'), beforeInt + 1);
+
+			await running;
+			assert.strictEqual(process.listenerCount('SIGTERM'), beforeTerm, 'the run must leave no handler behind');
+			assert.strictEqual(process.listenerCount('SIGINT'), beforeInt);
+		});
+	});
+
 	// ── T4 §B.1/§B.2: one install per grading run, linked into the run dir ───
 
 	suite('libs install + link', () => {
@@ -472,6 +524,76 @@ suite('project runner', () => {
 
 			fs.rmSync(evilTarget, { recursive: true, force: true });
 			fs.rmSync(cacheDir, { recursive: true, force: true });
+		});
+	});
+
+	// ── leetcodeType: stack wires bootStack into the http check dispatch (T4.1) ──
+
+	suite('stack: gradeProjectDir boots the whole packages: set once (T4.1)', () => {
+		/**
+		 * Two real packages, `web` depending on `api`. The http check binds
+		 * to `web` — the **dependent** — deliberately: `web`'s own start script
+		 * refuses to bind at all unless `process.env.API_URL` is already set, so
+		 * this check can only pass if `gradeProjectDir` actually routed through
+		 * `bootStack` (dependsOn ordering + exposeAs wiring) rather than the
+		 * single-package `runPackageHttpCheck` path, which never computes an
+		 * `exposeAs` environment at all. A regression back to the old path fails
+		 * this test by making `web` never come up, not by a subtler behaviour
+		 * difference.
+		 */
+		function stackArtifact(): string {
+			return [
+				'---',
+				'artifactType: leetcode',
+				'leetcodeType: stack',
+				'title: Two Packages',
+				'---',
+				'',
+				'Boots api then web, web wired to api\'s port.',
+				'',
+				'```yaml leetcode',
+				'test:',
+				'  checks:',
+				'    - name: web reachable',
+				'      kind: http',
+				'      package: web',
+				'packages:',
+				'  - name: api',
+				'    dir: server',
+				'    install: ["node", "-e", "process.exit(0)"]',
+				'    start: ["node", "-e", "require(\'net\').createServer(s=>s.end()).listen(Number(process.env.PORT),\'127.0.0.1\')"]',
+				'    exposeAs:',
+				'      API_URL: "http://127.0.0.1:${PORT}"',
+				'  - name: web',
+				'    dir: client',
+				'    install: ["node", "-e", "process.exit(0)"]',
+				'    start: ["node", "-e", "const h=require(\'http\');if(!process.env.API_URL){process.exit(1)}h.createServer((q,r)=>r.end(\'ok\')).listen(Number(process.env.PORT),\'127.0.0.1\')"]',
+				'    dependsOn: [api]',
+				'```',
+				'',
+				'## Tests',
+				'',
+				'```json check="web reachable"',
+				'[{ "request": { "method": "GET", "path": "/" }, "expect": { "status": 200 } }]',
+				'```',
+				'',
+				'## Files',
+				'',
+				'```javascript path=server/index.js role=hidden',
+				'// unused — packages: drives the real process',
+				'```',
+				'',
+			].join('\n');
+		}
+
+		test("web's http check only passes because bootStack wired api's port into web's environment before booting it", async function () {
+			this.timeout(15_000);
+			fs.mkdirSync(path.join(runDir, 'server'), { recursive: true });
+			fs.mkdirSync(path.join(runDir, 'client'), { recursive: true });
+
+			const outcomes = await gradeProjectDir(parseLeetCode(stackArtifact()), runDir);
+			assert.strictEqual(outcomes.length, 1);
+			assert.strictEqual(outcomes[0].passed, true, JSON.stringify(outcomes));
 		});
 	});
 });

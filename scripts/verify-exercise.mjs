@@ -258,7 +258,13 @@ if (starterRed) {
 	// The `projectGradeRefusal` call above already refused an artifact declaring
 	// an unimplemented kind (e.g. `http`) outright, so every check reaching this
 	// line is one an environment actually dispatches — no survivor-only grading.
-	const outcomes = await runProjectChecks(parsed, { withSolutions: false });
+	// `installSignals` is CLI-only, and this is a CLI: a short-lived process that
+	// owns its own signal disposition, so arming the SIGINT/SIGTERM teardown here
+	// is what stops a Ctrl-C landing between an http boot's `spawn` and its
+	// `finally` from orphaning a detached, still-listening server. The extension
+	// host reaches the same function and must NOT pass this — forcing an exit
+	// there races VS Code's own shutdown and `deactivate()`.
+	const outcomes = await runProjectChecks(parsed, { withSolutions: false, installSignals: true });
 	const kinds = [...new Set((parsed.checks ?? []).map(c => c.kind))]
 		.sort((a, b) => a.localeCompare(b)).join(', ');
 	const red = outcomes.filter(o => !o.passed);
@@ -284,7 +290,10 @@ if (starterRed) {
 }
 
 // ── Mode: full harness verify ────────────────────────────────────────────────
-const result = await verifyExercise(md, mdPath);
+// Same CLI-only opt-in as `--starter-red` above: the full-harness path boots
+// real servers too (`verifyPackageExercise` → `runProjectChecks`), so it needs
+// the same Ctrl-C backstop.
+const result = await verifyExercise(md, mdPath, { installSignals: true });
 if (result.ok) {
 	// `ok` here means well-formed, NOT verified green. Which parts went ungraded
 	// differs by shape, so `structureOnlyNote` owns that decision — see its

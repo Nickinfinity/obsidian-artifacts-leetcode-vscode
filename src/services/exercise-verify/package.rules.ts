@@ -1,5 +1,6 @@
 import { DEFAULT_TEST_TYPE, SHAPE_TEST_TYPE_IDS } from '../../types/constants.js';
 import type { LeetcodeTypeId } from '../../types/leetcode-type.js';
+import type { VerifyRunOptions } from './rules.registry.js';
 import type { ParsedLeetCode } from '../../types/leetcode.types.js';
 import { runProgramArtifact, runProjectChecks } from '../test-envs/project/project.runner.js';
 import { isProgramSuite } from '../test-envs/program/program.runner.js';
@@ -19,6 +20,10 @@ import { canonicalJson } from '../../utils/canonical-json.js';
  * @param leetcodeType - The resolved type, for the message prefix only
  *   (`package:` / `stack:`) — never used to branch, so this file stays a
  *   single rule set regardless of which id dispatched here.
+ * @param options      - The calling process's own properties. `installSignals`
+ *   is forwarded verbatim to `runProjectChecks`: this rule is the only one
+ *   that boots a real server, and only a CLI may arm a process-wide exit
+ *   handler for it.
  * @returns The first broken rule or failing check's reason, or `null` when it
  *   grades green.
  *
@@ -26,7 +31,7 @@ import { canonicalJson } from '../../utils/canonical-json.js';
  * await verifyPackageExercise({ ...parsed, files: [f], checks: [c] }, 'package'); // → null
  */
 export async function verifyPackageExercise(
-	parsed: ParsedLeetCode, leetcodeType: LeetcodeTypeId,
+	parsed: ParsedLeetCode, leetcodeType: LeetcodeTypeId, options?: VerifyRunOptions,
 ): Promise<string | null> {
 	// A tree is graded one of two ways and the artifact says which (D14's mirror
 	// rule keeps them exclusive). A `program` suite has **cases**, not checks, so
@@ -39,7 +44,9 @@ export async function verifyPackageExercise(
 
 	// The harness grades the reference tree: `## Files` is the solver's starter,
 	// so grading it as authored would fail every exercise by design.
-	const outcomes = await runProjectChecks(parsed, { withSolutions: true });
+	const outcomes = await runProjectChecks(parsed, {
+		withSolutions: true, installSignals: options?.installSignals,
+	});
 	const failed = outcomes.find(o => !o.passed);
 	if (failed) {
 		const detail = failed.detail ? `: ${failed.detail}` : '';

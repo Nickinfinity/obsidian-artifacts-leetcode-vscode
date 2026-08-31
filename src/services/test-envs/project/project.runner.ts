@@ -20,8 +20,11 @@ import { isBatchEnv, testEnvFor } from '../env.registry.js';
 import { entryFileFor } from '../program/make-program-env.js';
 import { programLanguageOf, runProgramSuite } from '../program/program.runner.js';
 import { runBuildCheck } from './build.check.js';
-import { runHttpCheck } from '../http/http.check.js';
-import type { BootedGroupRegistry } from '../http/server.lifecycle.js';
+import { runHttpCases, runHttpCheck } from '../http/http.check.js';
+import {
+	createGroupRegistry, installSignalTeardown, type BootedGroupRegistry,
+} from '../http/server.lifecycle.js';
+import { bootStack, type StackBoot } from '../stack/stack.runner.js';
 import { renderLibsFor, runRenderCheck } from './checks.js';
 import { resolveContained, writeProjectFiles } from './files.writer.js';
 import { ensureLibEnv } from '../../libs/lib-cache.service.js';
@@ -42,17 +45,48 @@ import { linkModules } from './modules.linker.js';
  * verify green: the harness grades the reference, a solver's run grades theirs.
  *
  * @param parsed  - Parsed `project` artifact.
- * @param options - `withSolutions` grades the reference tree instead of the starter.
+ * @param options - `withSolutions` grades the reference tree instead of the
+ *   starter; `installSignals` arms the process-wide `SIGINT`/`SIGTERM`
+ *   teardown, and belongs to a **CLI** caller only (see below).
  * @returns One outcome per declared check, in declaration order.
  *
  * @example
  * await runProjectChecks(parsed, { withSolutions: true }); // → [{ name: 'alternates', passed: true }]
  */
 export async function runProjectChecks(
-	parsed: ParsedLeetCode, options: { withSolutions?: boolean; publicOnly?: boolean } = {},
+	parsed: ParsedLeetCode,
+	options: {
+		withSolutions?: boolean; publicOnly?: boolean;
+		registry?: BootedGroupRegistry; installSignals?: boolean;
+	} = {},
 ): Promise<ProjectCheckOutcome[]> {
 	const checks = parsed.checks ?? [];
 	if (checks.length === 0) { return []; }
+
+	// C33: a fresh registry on every path — a harness/CLI/dry-run-Submit caller
+	// has no live VS Code session to register a booted `http` server on for
+	// `endChallenge()` to reap, so without one only `runHttpCheck`'s (or
+	// `bootStack`'s) own `finally` stands between a booted server and an
+	// orphan. A caller may inject its own (a test observing it directly, or the
+	// live challenge session).
+	const registry = options.registry ?? createGroupRegistry();
+
+	// **The signal handler is opt-in, and only a CLI may opt in.** Nothing
+	// before survives a `Ctrl-C`/`kill` landing between a boot's `spawn` and
+	// that `finally`, because Node runs neither for an unhandled
+	// `SIGINT`/`SIGTERM` (measured — see `installSignalTeardown`'s doc). But
+	// this function also runs **inside the VS Code extension host** (the
+	// dry-run Submit path, `leetcode-run.handlers.ts`), and `SIGTERM` is
+	// exactly how VS Code terminates that host on window close, reload and
+	// update: an unconditional handler fired there and forced `process.exit`
+	// underneath the host's own shutdown, racing `deactivate()` — which is
+	// where `PracticeMode` restores the solver's **global** editor settings.
+	// Losing that race leaves `noCompletion` and friends permanently applied,
+	// with no live challenge left to end and nothing in the UI explaining it.
+	// An extension must never force the exit of a process it does not own; a
+	// short-lived CLI (`verify-exercise.mjs`, both modes) owns its own signal
+	// disposition, which is what makes the same handler correct there.
+	const uninstall = options.installSignals ? installSignalTeardown(registry) : undefined;
 
 	const runDir = await fs.mkdtemp(path.join(os.tmpdir(), 'leet-project-'));
 	try {
@@ -61,13 +95,20 @@ export async function runProjectChecks(
 			: parsed.files ?? [];
 		await writeProjectFiles(runDir, tree);
 
-		return await gradeProjectDir(parsed, runDir, options);
+		return await gradeProjectDir(parsed, runDir, { ...options, registry });
 	} catch (e) {
 		// A failure to materialise the tree (a traversal path, an unwritable
 		// location) is not one check's problem — it fails all of them.
 		const reason = e instanceof Error ? e.message : String(e);
 		return checks.map(c => ({ name: c.name, passed: false, detail: reason }));
 	} finally {
+		uninstall?.();
+		// Idempotent backstop even on the normal path: `gradeProjectDir`'s own
+		// `finally` already tore down whatever `bootStack` booted, and every
+		// `http` check's own `finally` already stopped its own boot — this only
+		// does anything when one of those was itself skipped by a thrown error
+		// this function's `catch` above did not already attribute to a check.
+		await registry.teardownAll();
 		await fs.rm(runDir, { recursive: true, force: true }).catch(() => { /* ignore cleanup errors */ });
 	}
 }
@@ -129,12 +170,32 @@ export async function gradeProjectDir(
 	const npmDir = dirs.get('pnpm');
 	if (npmDir !== undefined) { await linkModules(runDir, npmDir); }
 
-	const outcomes: ProjectCheckOutcome[] = [];
-	for (const check of checks) {
-		const graded = options.publicOnly ? publicCasesOf(check) : check;
-		outcomes.push(await runOneCheck(graded, parsed, runDir, dirs, options.registry));
+	// T4.1: a `stack` boots its whole `packages:` list — dependsOn order,
+	// exposeAs wiring, one teardown for the group — exactly once, before any
+	// check runs, rather than each `http` check booting (and re-booting) its
+	// own package the way a single-package `leetcodeType: package` still does
+	// below in `runPackageHttpCheck`. Gated on the leetcode-type axis, not on
+	// `packages.length > 0` alone, so a `package` artifact's existing,
+	// already-working single-boot-per-check path is completely untouched.
+	const stackBoot = parsed.leetcodeType === 'stack' && (parsed.packages?.length ?? 0) > 0
+		? await bootStack(parsed.packages ?? [], runDir, { registry: options.registry })
+		: undefined;
+
+	try {
+		const outcomes: ProjectCheckOutcome[] = [];
+		for (const check of checks) {
+			const graded = options.publicOnly ? publicCasesOf(check) : check;
+			outcomes.push(await runOneCheck(graded, parsed, runDir, dirs, options.registry, stackBoot));
+		}
+		return outcomes;
+	} finally {
+		// Every package `bootStack` did boot is also registered on
+		// `options.registry` (S12) — this `finally` is the normal end-of-grading
+		// path; the registry is the backstop for VS Code exiting or the panel
+		// being disposed mid-check, exactly as a single `http` check's own boot
+		// already relies on both.
+		await stackBoot?.teardownAll();
 	}
-	return outcomes;
 }
 
 /**
@@ -188,17 +249,22 @@ function publicCasesOf(check: ProjectCheck): ProjectCheck {
  * build`) resolves it exactly like a real project checkout, and a render
  * check is handed the same cache dir so it never installs a second one.
  *
- * @param check    - The check to run.
- * @param parsed   - The artifact, for `params` / `returns` / `libs` / `packages`.
- * @param runDir   - Run directory holding the materialised tree and its linked `node_modules`.
- * @param dirs     - Resolved cache directory per ecosystem for this run.
- * @param registry - The session's booted-group registry, when this run has a
+ * @param check     - The check to run.
+ * @param parsed    - The artifact, for `params` / `returns` / `libs` / `packages`.
+ * @param runDir    - Run directory holding the materialised tree and its linked `node_modules`.
+ * @param dirs      - Resolved cache directory per ecosystem for this run.
+ * @param registry  - The session's booted-group registry, when this run has a
  *   session; only the `http` kind boots anything.
+ * @param stackBoot - The whole-group boot `gradeProjectDir` already ran for a
+ *   `stack` artifact (T4.1) — present only for `leetcodeType: stack`. An
+ *   `http` check dispatches against its already-known port instead of
+ *   booting (and re-booting) its own instance the way a single-package
+ *   `package` artifact still does.
  * @returns The check's verdict.
  */
 async function runOneCheck(
 	check: ProjectCheck, parsed: ParsedLeetCode, runDir: string,
-	dirs: ReadonlyMap<LibEcosystem, string>, registry?: BootedGroupRegistry,
+	dirs: ReadonlyMap<LibEcosystem, string>, registry?: BootedGroupRegistry, stackBoot?: StackBoot,
 ): Promise<ProjectCheckOutcome> {
 	switch (check.kind) {
 		case 'build':
@@ -207,7 +273,9 @@ async function runOneCheck(
 		case 'css-assert':
 			return runRenderCheck(check, runDir, undefined, dirs.get('pnpm'));
 		case 'http':
-			return runPackageHttpCheck(check, parsed, runDir, registry);
+			return stackBoot
+				? runStackHttpCheck(check, stackBoot, parsed.test.timeoutMs)
+				: runPackageHttpCheck(check, parsed, runDir, registry);
 		case 'call':
 			// Nothing is threaded in: a call check runs through `runSuite`,
 			// which resolves its own library environment from `parsed.libs`.
@@ -228,14 +296,19 @@ async function runOneCheck(
  * inside `runHttpCheck` — `parseTimeoutMs` already bounds it at parse time,
  * and the second clamp is that module's contract with direct callers.
  *
- * **Libraries are not threaded into the boot, and that is a stated ceiling.**
- * A node package resolves its imports through the `node_modules` `linkModules`
- * already put in the run directory, so an Express server boots; a package
- * whose ecosystem is reached by environment variable instead (a venv, a
- * classpath) does not see them yet, and fails loudly naming the missing
- * import rather than grading green without them. Closing it belongs with the
- * `stack` boot ordering (T4.1), which is where the environment for a booted
- * package is assembled anyway.
+ * **Libraries are not threaded into the boot, and that is a stated ceiling —
+ * still true after T4.1.** A node package resolves its imports through the
+ * `node_modules` `linkModules` already put in the run directory, so an
+ * Express server boots; a package whose ecosystem is reached by environment
+ * variable instead (a venv, a classpath) does not see them yet, and fails
+ * loudly naming the missing import rather than grading green without them.
+ * T4.1 (`bootStack`, `stack.runner.ts`) landed `dependsOn` ordering,
+ * `exposeAs` wiring and group teardown for a `stack`'s boot — a different
+ * environment seam (cross-package URLs, not `libs:` cache directories) — and
+ * did not close this one. Closing it means resolving `parsed.libs` through
+ * `ensureLibEnv` at this call site (or inside `bootStack`) and consuming it
+ * the same way `runProgramSuite` already does (`CLASSPATH` / `VIRTUAL_ENV`),
+ * which is its own task.
  *
  * @param check    - The `http` check.
  * @param parsed   - The artifact, for `packages:` and the per-case budget.
@@ -259,6 +332,53 @@ async function runPackageHttpCheck(
 	return runHttpCheck(
 		{ name: check.name, cases: check.cases }, pkg, runDir, parsed.test.timeoutMs, { registry },
 	);
+}
+
+/**
+ * Grade a `stack`'s `http` check against the package `bootStack` (T4.1)
+ * already booted, instead of booting one — the whole reason a `stack`'s
+ * packages are booted once up front rather than per check: a package that
+ * both exposes a port to a dependent (`web`'s `VITE_API_URL`) and is itself
+ * checked would otherwise be booted twice, on two different ports, and the
+ * dependent's baked-in URL would point at the wrong one.
+ *
+ * A package that never booted (a failed install, a failed `bootServer`, or
+ * an unresolved `dependsOn`) fails the check by name, carrying the boot
+ * outcome's own reason — the exact shape `gradeProjectDir`'s lib-install
+ * failure already uses (`checks.map(c => ({ …, detail: installed.reason }))`),
+ * just for one check instead of every check.
+ *
+ * **The request loop itself is `http.check.ts`'s {@link runHttpCases}, not a
+ * copy of it** — one authority for the per-case loop, the `[MIN_TEST_TIMEOUT_MS,
+ * MAX_SUITE_TIMEOUT_MS]` clamp and the `MAX_HTTP_BODY_BYTES` request cap.
+ * What must **not** collapse with it is the entry point: `runHttpCheck` always
+ * boots its own server, so routing a stack through it would double-boot a
+ * package that is both a dependency of another and separately checked, and
+ * strand the `exposeAs` port just computed for it.
+ *
+ * @param check     - The `http` check.
+ * @param stackBoot - The whole-group boot result from `bootStack`.
+ * @param timeoutMs - The artifact's own `test.timeoutMs`, clamped inside
+ *   {@link runHttpCases} exactly as it is for a direct `runHttpCheck` caller.
+ * @returns The check's verdict.
+ *
+ * @example
+ * await runStackHttpCheck(check, stackBoot, 5000);
+ */
+async function runStackHttpCheck(
+	check: HttpCheck, stackBoot: StackBoot, timeoutMs: number,
+): Promise<ProjectCheckOutcome> {
+	const outcome = stackBoot.outcomes.get(check.package);
+	if (!outcome) {
+		return {
+			name: check.name, passed: false,
+			detail: `http check names package '${check.package}', which this artifact does not declare`,
+		};
+	}
+	if (!outcome.ok) {
+		return { name: check.name, passed: false, detail: `server never started: ${outcome.reason}` };
+	}
+	return runHttpCases({ name: check.name, cases: check.cases }, outcome.port, timeoutMs);
 }
 
 /**

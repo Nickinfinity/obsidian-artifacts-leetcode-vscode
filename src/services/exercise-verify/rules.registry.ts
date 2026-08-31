@@ -4,16 +4,35 @@ import { verifyFunctionExercise } from './function.rules.js';
 import { verifyPackageExercise } from './package.rules.js';
 
 /**
+ * What the *caller's process* tells a rule about itself — never about the
+ * artifact.
+ *
+ * `installSignals` is the whole content today: a rule that boots a real server
+ * (`verifyPackageExercise` → `runProjectChecks`) may arm a process-wide
+ * `SIGINT`/`SIGTERM` teardown **only** when the caller owns its own signal
+ * disposition. A short-lived CLI (`verify-exercise.mjs`) does; the VS Code
+ * extension host does not, and forcing an exit there races `deactivate()` —
+ * see `runProjectChecks`' own comment for what that costs the solver.
+ */
+export interface VerifyRunOptions {
+	/** Arm the CLI-only `SIGINT`/`SIGTERM` teardown for anything this rule boots. */
+	readonly installSignals?: boolean;
+}
+
+/**
  * One leetcode type's full structural (and, where runnable, execution)
  * verification. Returns the first broken rule's reason, or `null` when the
  * artifact grades clean.
  *
- * A rule may ignore the `leetcodeType` argument (`verifyFunctionExercise`
- * does — its messages never name a type); TypeScript's excess-parameter
- * assignability is what lets a one-argument implementation satisfy this
- * two-argument type without a wrapper.
+ * A rule may ignore the `leetcodeType` and `options` arguments
+ * (`verifyFunctionExercise` does — its messages never name a type and it boots
+ * nothing); TypeScript's excess-parameter assignability is what lets a
+ * one-argument implementation satisfy this three-argument type without a
+ * wrapper.
  */
-export type VerifyRule = (parsed: ParsedLeetCode, leetcodeType: LeetcodeTypeId) => Promise<string | null>;
+export type VerifyRule = (
+	parsed: ParsedLeetCode, leetcodeType: LeetcodeTypeId, options?: VerifyRunOptions,
+) => Promise<string | null>;
 
 /**
  * The one authority mapping a leetcode type to the rules that verify it

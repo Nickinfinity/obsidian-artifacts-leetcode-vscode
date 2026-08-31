@@ -219,4 +219,54 @@ suite('project modules linker', () => {
 		assert.ok(fs.existsSync(path.join(cacheDir, 'node_modules', '@types', 'react', 'index.js')));
 		assert.ok(fs.existsSync(path.join(cacheDir, 'node_modules', '.bin', 'tool')));
 	});
+
+	// ── Per sub-package directory (T4.2 — a `stack` links one tree per package) ──
+
+	/**
+	 * A `stack` calls `linkModules` once per package directory (`client/`,
+	 * `server/`), not once at the run root — `runDir` here is a *sub*-directory
+	 * of a larger run, not the mkdtemp root itself. The symlink guard must hold
+	 * at both levels a call like this touches: the sub-package directory
+	 * `linkModules` is asked to fill, and the `node_modules` it creates inside
+	 * that directory.
+	 */
+	suite('linking into a sub-package directory', () => {
+
+		test('a sub-package directory that is itself a symlink is refused, not followed', async () => {
+			const evilTarget = fs.mkdtempSync(path.join(os.tmpdir(), 'leet-evil-'));
+			const clientDir = path.join(runDir, 'client');
+			fs.symlinkSync(evilTarget, clientDir, 'dir');
+
+			await assert.rejects(linkModules(clientDir, cacheDir), /symlink/);
+			assert.strictEqual(
+				fs.existsSync(path.join(evilTarget, 'node_modules')),
+				false,
+				'nothing should be written through the hijacked directory',
+			);
+
+			fs.rmSync(evilTarget, { recursive: true, force: true });
+		});
+
+		test("a sub-package's own node_modules already a symlink is refused too", async () => {
+			const clientDir = path.join(runDir, 'client');
+			fs.mkdirSync(clientDir, { recursive: true });
+			const evilTarget = fs.mkdtempSync(path.join(os.tmpdir(), 'leet-evil-'));
+			fs.symlinkSync(evilTarget, path.join(clientDir, 'node_modules'), 'dir');
+
+			await assert.rejects(linkModules(clientDir, cacheDir), /symlink/);
+
+			fs.rmSync(evilTarget, { recursive: true, force: true });
+		});
+
+		test('a fresh sub-package directory gets its own real node_modules, resolving from the same cache', async () => {
+			const clientDir = path.join(runDir, 'client');
+			fs.mkdirSync(clientDir, { recursive: true });
+
+			await linkModules(clientDir, cacheDir);
+
+			assert.strictEqual(fs.lstatSync(path.join(clientDir, 'node_modules')).isSymbolicLink(), false);
+			const resolved = require.resolve('react', { paths: [clientDir] });
+			assert.strictEqual(resolved, fs.realpathSync(path.join(cacheDir, 'node_modules', 'react', 'index.js')));
+		});
+	});
 });

@@ -1,4 +1,5 @@
 import * as assert from 'node:assert';
+import { spawn } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as net from 'node:net';
 import * as os from 'node:os';
@@ -8,6 +9,7 @@ import {
 	assertMintedPortSafe,
 	bootServer,
 	createGroupRegistry,
+	installSignalTeardown,
 	killProcessGroup,
 } from '../src/services/test-envs/http/server.lifecycle.js';
 
@@ -56,6 +58,43 @@ suite('http-server-lifecycle', () => {
 		} catch {
 			return false;
 		}
+	}
+
+	/**
+	 * Ask the OS for a free loopback port and release it again.
+	 *
+	 * Only for tests that must know the port **before** the boot, so a fixture
+	 * can be named after it (the C32 case below). Everything else lets
+	 * `bootServer` mint its own — this deliberately reproduces the same
+	 * bind-`:0`-and-read-it-back trick rather than guessing a number, because a
+	 * guessed port collides on a busy machine and fails a test for the wrong
+	 * reason.
+	 *
+	 * @returns A port that was free a moment ago — inherently racy, which is
+	 *   why the caller passes it straight to `mintPort` rather than binding it.
+	 *
+	 * @example
+	 * const port = await freePort(); // → 53124
+	 */
+	async function freePort(): Promise<number> {
+		return new Promise((resolve, reject) => {
+			const probe = net.createServer();
+			probe.on('error', reject);
+			probe.listen(0, '127.0.0.1', () => {
+				const addr = probe.address();
+				const port = typeof addr === 'object' && addr !== null ? addr.port : 0;
+				probe.close(() => { resolve(port); });
+			});
+		});
+	}
+
+	/** Poll `predicate` until it is true, or fail the assertion after `timeoutMs`. */
+	async function waitUntil(predicate: () => boolean, timeoutMs: number): Promise<void> {
+		const deadline = Date.now() + timeoutMs;
+		while (!predicate() && Date.now() < deadline) {
+			await new Promise(resolve => setTimeout(resolve, 20));
+		}
+		assert.ok(predicate(), `condition was not met within ${timeoutMs}ms`);
 	}
 
 	/** Poll until `pid` is gone, or fail the assertion after `timeoutMs`. */
@@ -402,6 +441,232 @@ suite('http-server-lifecycle', () => {
 		test('a pid that is already gone is a harmless no-op', async () => {
 			// A pid essentially guaranteed not to exist on this machine right now.
 			await assert.doesNotReject(killProcessGroup(999_999));
+		});
+	});
+
+	// ── C31: a booted package now receives PORT ──────────────────────────────
+
+	suite('bootServer — C31, PORT is injected into the child environment', () => {
+		test('a start script that reads process.env.PORT (never argv) still binds and is reachable', async function () {
+			this.timeout(10_000);
+			// No `${PORT}` anywhere in argv — before C31 this script would read
+			// `undefined`, `Number(undefined)` is `NaN`, and `listen(NaN, …)`
+			// throws inside the child. If this boots, PORT reached the child.
+			const READ_PORT_FROM_ENV = [
+				"const net = require('net');",
+				'const port = Number(process.env.PORT);',
+				"net.createServer(s => s.end()).listen(port, '127.0.0.1');",
+			].join('\n');
+
+			const result = await bootServer(pkg({ start: [process.execPath, '-e', READ_PORT_FROM_ENV] }), runDir);
+			assert.strictEqual(result.ok, true);
+			if (!result.ok) { return; }
+			await new Promise<void>((resolve, reject) => {
+				const socket = net.connect(result.server.port, '127.0.0.1');
+				socket.once('connect', () => { socket.destroy(); resolve(); });
+				socket.once('error', reject);
+			});
+			await result.server.stop();
+		});
+	});
+
+	// ── C32: ${PORT} substituted into argv[0] too ────────────────────────────
+
+	suite('bootServer — C32, ${PORT} at argv index 0', () => {
+		/**
+		 * **The obvious test here is vacuous, and this one exists because that
+		 * one shipped.** Asserting that `bootServer`'s failure *reason* does not
+		 * contain the literal `${PORT}` proves nothing: `bootServer` never
+		 * surfaces the spawn error text at all, so `start: ['${PORT}']` reports
+		 * the identical `… exited before the server became ready` whether argv[0]
+		 * is substituted or not. Deleting the fix left that suite 20 passing, 0
+		 * failing.
+		 *
+		 * So this pins the substitution by **making the port the only thing that
+		 * can make the command exist**. The port is forced with `mintPort`, a
+		 * real executable is written at `boot-<port>.sh`, and `start` names
+		 * `./boot-${PORT}.sh`: without argv[0] substitution `spawn` looks for a
+		 * file literally called `boot-${PORT}.sh`, which is not on disk, and the
+		 * boot can never succeed. Success is therefore only reachable through
+		 * the substitution — an outcome the two branches cannot share.
+		 */
+		test('${PORT} in argv[0] is substituted — a script only reachable by its substituted name boots', async function () {
+			this.timeout(10_000);
+			const port = await freePort();
+			const script = path.join(runDir, 'server', `boot-${port}.sh`);
+			fs.writeFileSync(
+				script,
+				['#!/bin/sh', `exec ${JSON.stringify(process.execPath)} -e "$1" "$2"`, ''].join('\n'),
+				'utf8',
+			);
+			fs.chmodSync(script, 0o755);
+
+			const LISTEN = "require('net').createServer(s => s.end()).listen(Number(process.argv[1]), '127.0.0.1');";
+			const result = await bootServer(
+				pkg({ start: ['./boot-${PORT}.sh', LISTEN, '${PORT}'] }),
+				runDir,
+				{ mintPort: () => Promise.resolve(port), bootTimeoutMs: 5_000 },
+			);
+
+			assert.strictEqual(result.ok, true, result.ok ? '' : result.reason);
+			if (!result.ok) { return; }
+			assert.strictEqual(result.server.port, port);
+			await result.server.stop();
+		});
+	});
+
+	// ── item 5: env composition is spread-then-allowlist, never a wholesale spread ──
+
+	suite('bootServer — item 5, the child env is spread-then-allowlist, not a wholesale spread', () => {
+		test('a safe exposeAs-shaped var reaches the child; a hostile PATH or PORT override in opts.env never does', async function () {
+			this.timeout(10_000);
+			const outFile = path.join(runDir, 'env-report.json');
+			const REPORT_ENV = [
+				"const net = require('net');",
+				"const fs = require('fs');",
+				'const port = Number(process.env.PORT);',
+				`fs.writeFileSync(${JSON.stringify(outFile)}, JSON.stringify({`,
+				'  path: process.env.PATH,',
+				'  safeVar: process.env.MY_SAFE_VAR,',
+				'  port: process.env.PORT,',
+				'}));',
+				"net.createServer(s => s.end()).listen(port, '127.0.0.1');",
+			].join('\n');
+
+			const inheritedPath = process.env.PATH ?? '';
+			const result = await bootServer(pkg({
+				start: [process.execPath, '-e', REPORT_ENV],
+				exposeAs: { MY_SAFE_VAR: 'http://127.0.0.1:${PORT}' },
+			}), runDir, {
+				// A direct caller's `env` is defense-in-depth territory (a unit
+				// test standing in for "some future non-parsed entry point") —
+				// `packages-parser.helpers.ts` would already have refused `PATH`
+				// as an `exposeAs` name at parse time, so this proves `bootServer`
+				// itself never trusts that the parser ran.
+				// `PORT` is the second half of the same rule, and it is the one that
+				// actually shipped broken: it passes `isSafeExposeName`'s shape check,
+				// so while it was assigned *before* the allowlist loop an artifact
+				// could overwrite the minted port with its own value. It fails closed
+				// (`Number('http://…')` is NaN, the child binds nothing and never
+				// becomes ready) rather than dangerously — but `composeChildEnv`'s doc
+				// claims the port is this module's own literal, and that has to be true.
+				env: { PATH: '/evil/shadow-path', PORT: 'http://127.0.0.1:9', MY_SAFE_VAR: 'http://127.0.0.1:9' },
+			});
+
+			assert.strictEqual(result.ok, true);
+			if (!result.ok) { return; }
+			await new Promise<void>((resolve, reject) => {
+				const socket = net.connect(result.server.port, '127.0.0.1');
+				socket.once('connect', () => { socket.destroy(); resolve(); });
+				socket.once('error', reject);
+			});
+			await result.server.stop();
+
+			const report = JSON.parse(fs.readFileSync(outFile, 'utf8')) as
+				{ path: string; safeVar: string; port: string };
+			assert.strictEqual(report.path, inheritedPath, 'PATH must never be shadowed by an opts.env entry');
+			assert.strictEqual(report.safeVar, 'http://127.0.0.1:9', 'an allowlisted name must still reach the child');
+			assert.strictEqual(
+				report.port, String(result.server.port),
+				'PORT must be this module\'s own minted literal, never an artifact-supplied override',
+			);
+		});
+	});
+
+	// ── C33: SIGINT/SIGTERM teardown, the harness/CLI backstop ───────────────
+
+	suite('installSignalTeardown — C33, the harness/CLI backstop for a Ctrl-C/kill mid-boot', () => {
+		test('emitting SIGINT drains the registry and calls the injected exit — proving the handler actually runs, not just that it is registered', async function () {
+			this.timeout(10_000);
+			const registry = createGroupRegistry();
+			const result = await bootServer(pkg(), runDir, { registry });
+			assert.strictEqual(result.ok, true);
+			if (!result.ok) { return; }
+
+			let exitCode: number | undefined;
+			const uninstall = installSignalTeardown(registry, code => { exitCode = code; });
+			try {
+				// A real OS signal to *this* test process would kill the test
+				// runner — `process.emit` fires the exact same listener a real
+				// `SIGINT` would (Node's own signal dispatch is nothing more than
+				// this emit), without touching the process actually running the
+				// suite. The registered server is real; only the delivery
+				// mechanism is substituted. A **real** SIGINT passes `'SIGINT'` as
+				// the listener's argument (confirmed against an actual `kill -INT`
+				// child) — `process.emit('SIGINT')` alone does not forward it, so
+				// the second argument here is required to reproduce that shape.
+				process.emit('SIGINT', 'SIGINT');
+				// Poll for `exit` itself, rather than for the pid's death: both this
+				// module's internal `killProcessGroup` and a separate poll of the
+				// same pid race the same 20ms-interval check, so waiting on pid
+				// death first can observe it before `.finally()`'s microtask has
+				// run — `exitCode` is the one signal that is authoritative, since
+				// `onSignal` calls it only *after* `registry.teardownAll()` settles.
+				await waitUntil(() => exitCode !== undefined, 3000);
+				assert.strictEqual(exitCode, 130, 'SIGINT must report the conventional 128+2 exit code');
+				await assertEventuallyDead(result.server.pid);
+			} finally {
+				uninstall();
+			}
+		});
+
+		/**
+		 * **Counts, not `doesNotThrow` — the obvious spelling asserts nothing.**
+		 * The handler's work happens inside `void registry.teardownAll()
+		 * .finally(…)`, so anything it throws is asynchronous and a synchronous
+		 * `assert.doesNotThrow(() => process.emit('SIGINT'))` cannot observe a
+		 * listener that is still installed. Replacing `uninstall` with a no-op
+		 * left that spelling at 20 passing, 0 failing.
+		 *
+		 * Deltas against `before`, never against zero: mocha's own process
+		 * already carries `SIGINT`/`SIGTERM` listeners, so an absolute
+		 * assertion would pass or fail by harness accident rather than by this
+		 * module's behaviour.
+		 */
+		/**
+		 * **C35 — a registry that has begun draining kills on arrival.**
+		 * Without this, a signal landing *mid-boot* still orphaned a server:
+		 * `teardownAll()` clears the set and awaits the kill, the killed child
+		 * makes `waitReady` report `childExited: true`, S13 treats that as
+		 * retryable, and `bootServer` spawns a **fresh** detached child into a
+		 * set nobody will drain again. Reproduced on the real CLI — the
+		 * registered pid reaped, a new child on a new port surviving.
+		 *
+		 * A real spawned process, not a fake pid: the assertion is that the
+		 * late arrival is actually dead, which only a real process can answer.
+		 */
+		test('C35: a pid registered after teardown began is killed on arrival, not stored', async function () {
+			this.timeout(10_000);
+			const registry = createGroupRegistry();
+			await registry.teardownAll();
+
+			const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000);'], { detached: true, stdio: 'ignore' });
+			assert.ok(child.pid !== undefined, 'the fixture child must have a pid');
+			const pid = child.pid;
+			try {
+				registry.register(pid);
+				await assertEventuallyDead(pid);
+			} finally {
+				// The assertion above is the whole test, so a FAILING run is exactly
+				// the run that left this child alive — reap it here or a red test
+				// leaks the very process this suite exists to stop leaking, and
+				// mocha never exits.
+				await killProcessGroup(pid).catch(() => { /* already gone */ });
+			}
+		});
+
+		test('uninstall() removes both listeners — asserted by count, since a late throw is unobservable', () => {
+			const registry = createGroupRegistry();
+			const beforeInt = process.listenerCount('SIGINT');
+			const beforeTerm = process.listenerCount('SIGTERM');
+
+			const uninstall = installSignalTeardown(registry, () => { throw new Error('must not be called after uninstall'); });
+			assert.strictEqual(process.listenerCount('SIGINT'), beforeInt + 1, 'install must add exactly one SIGINT listener');
+			assert.strictEqual(process.listenerCount('SIGTERM'), beforeTerm + 1, 'install must add exactly one SIGTERM listener');
+
+			uninstall();
+			assert.strictEqual(process.listenerCount('SIGINT'), beforeInt, 'uninstall must remove its SIGINT listener');
+			assert.strictEqual(process.listenerCount('SIGTERM'), beforeTerm, 'uninstall must remove its SIGTERM listener');
 		});
 	});
 });

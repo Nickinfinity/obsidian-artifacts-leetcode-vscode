@@ -39,7 +39,7 @@ import { bootServer, type BootOptions } from './server.lifecycle.js';
  * the same way it caps every other suite. A case that cannot run inside
  * what is left is reported by name (`suite timeout — …`), never silently
  * dropped, so the check fails closed rather than reading a truncated run as
- * green — `runCasesAgainst` checks the deadline **before** attempting each
+ * green — {@link runHttpCases} checks the deadline **before** attempting each
  * case, and clips whatever request it does attempt to `min(clampedPerCase,
  * remaining)`.
  *
@@ -160,9 +160,10 @@ export async function runHttpCheck(
 	check: HttpCheckInput, pkg: PackageSpec, runDir: string, timeoutMs: number, bootOpts: BootOptions = {},
 	now: () => number = Date.now,
 ): Promise<ProjectCheckOutcome> {
-	if (check.cases.length === 0) {
-		return { name: check.name, passed: false, detail: 'http check declares no cases' };
-	}
+	// Refused without booting anything: `runHttpCases` owns the message, and with
+	// no cases it never touches the port it is handed — the guard is delegated
+	// rather than copied, so the two callers cannot drift.
+	if (check.cases.length === 0) { return runHttpCases(check, 0, timeoutMs, now); }
 
 	const boot = await bootServer(pkg, runDir, bootOpts);
 	if (!boot.ok) {
@@ -170,21 +171,58 @@ export async function runHttpCheck(
 	}
 
 	try {
-		// Armed here, deliberately: after `bootServer` has already returned, so
-		// boot's own (separate, much larger) `BOOT_TIMEOUT_MS` budget is never
-		// charged against this one — see the module doc.
-		return await runCasesAgainst(check, boot.server.port, clampTimeoutMs(timeoutMs), now);
+		return await runHttpCases(check, boot.server.port, timeoutMs, now);
 	} finally {
 		// Owns the boot, owns killing it — every path above reaches this,
-		// including a case that threw past the try in `runCasesAgainst`.
+		// including a case that threw past the try in `runHttpCases`.
 		await boot.server.stop();
 	}
 }
 
-/** The request loop itself, isolated so `runHttpCheck`'s `finally` covers every exit from it. */
-async function runCasesAgainst(
-	check: HttpCheckInput, port: number, clampedPerCase: number, now: () => number,
+/**
+ * Grade every case of an `http` check against an **already-booted** server:
+ * the request loop, its budget clamp and its body cap, with nothing about
+ * booting or tearing one down in it.
+ *
+ * The one authority both callers share. {@link runHttpCheck} boots its own
+ * server and delegates here; `project.runner.ts`'s `runStackHttpCheck` calls
+ * this directly with the port `bootStack` (T4.1) already assigned to that
+ * package.
+ *
+ * **The stack path deliberately does not reach this through
+ * {@link runHttpCheck}, and that reasoning survives the extraction.** That
+ * function always boots its *own* server, so a package that both exposes a
+ * port to a dependent (`web`'s `VITE_API_URL`) and is itself checked would be
+ * booted **twice**, on two different ports — stranding the `exposeAs` value
+ * just computed for it, with the dependent's baked-in URL pointing at the
+ * instance nobody is checking. Only the copied loop is gone; the separate
+ * entry point is the whole point.
+ *
+ * The suite deadline is armed **here** rather than in {@link runHttpCheck},
+ * deliberately and on both paths: boot's own (separate, much larger)
+ * `BOOT_TIMEOUT_MS` budget is then never charged against the request loop —
+ * see the module doc.
+ *
+ * @param check     - The check's name and raw case data, graded exactly as received.
+ * @param port      - The already-listening port every case's request targets.
+ * @param timeoutMs - Per-request budget **before** clamping — clamped here, so
+ *   both callers inherit the identical `[MIN_TEST_TIMEOUT_MS,
+ *   MAX_SUITE_TIMEOUT_MS]` bound (C27b) from one place rather than two.
+ * @param now       - Clock injection, a test-only seam; production callers omit it.
+ * @returns One verdict for the whole check — first failure wins.
+ *
+ * @example
+ * await runHttpCases({ name: 'health', cases: [c] }, 54321, 5000);
+ * // → { name: 'health', passed: true }
+ */
+export async function runHttpCases(
+	check: HttpCheckInput, port: number, timeoutMs: number, now: () => number = Date.now,
 ): Promise<ProjectCheckOutcome> {
+	if (check.cases.length === 0) {
+		return { name: check.name, passed: false, detail: 'http check declares no cases' };
+	}
+
+	const clampedPerCase = clampTimeoutMs(timeoutMs);
 	const deadline = now() + suiteTimeout(check.cases.length, clampedPerCase);
 
 	for (const [index, raw] of check.cases.entries()) {
