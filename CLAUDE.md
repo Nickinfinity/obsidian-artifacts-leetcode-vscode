@@ -61,7 +61,7 @@ invites a test to guard the copy instead of the real thing.
   done < <(find "$VAULT" -name '*.md' \
              -not -path '*/.obsidian/*' -not -path '*/.git/*' -not -path '*/.trash/*')
   echo "verified $total · failures $fail"
-  [ "$total" -ge "${EXPECTED_ARTIFACTS:-80}" ] || { echo "SWEEP DID NOT SEE THE VAULT: $total"; exit 1; }
+  [ "$total" -ge "${EXPECTED_ARTIFACTS:-83}" ] || { echo "SWEEP DID NOT SEE THE VAULT: $total"; exit 1; }
   ```
   Three things the loop does that a one-line `find -exec` cannot, all of which have bitten:
   **it filters on the `artifactType: leetcode` discriminator** (a vault holds ordinary notes —
@@ -73,15 +73,15 @@ invites a test to guard the copy instead of the real thing.
   candidates reads the very key the format rename rewrote, so a filter left on the old
   `^type: leetcode` spelling now matches **nothing**: the loop prints `verified 0 · failures 0`
   and every gate downstream reads it as green. A pass by vacancy. Measured on this vault:
-  **80** of 81 `.md` files are artifacts (the odd one out is `CoderByte/Tests/README.md`,
-  correctly excluded) — 65 `function`, 11 `package`, 4 `stack`. **Raise the default in the same
+  **83** of 84 `.md` files are artifacts (the odd one out is `CoderByte/Tests/README.md`,
+  correctly excluded) — 65 `function`, 14 `package`, 4 `stack`. **Raise the default in the same
   change that adds an artifact.** A floor below the true total is worse than no floor: it still
   passes a sweep that silently missed a dozen files, which is the exact failure it exists to
   catch. There is also a second sweep — `node scripts/coverage-sweep.mjs "$VAULT"` — which asks
   the other question, whether every *implemented* cell of the capability matrix has an artifact
   behind it at all.
 
-  **Four of the 80 are `stack` artifacts and print `SKIP … — stack, LEET_STACK_E2E not set`,
+  **Four of the 83 are `stack` artifacts and print `SKIP … — stack, LEET_STACK_E2E not set`,
   exiting `0`.** They still count toward `total` — the floor is unchanged — but nothing about
   them was examined beyond the parse. Set `LEET_STACK_E2E=1` to include them, and expect
   minutes plus a network: a stack installs several ecosystems and boots several servers.
