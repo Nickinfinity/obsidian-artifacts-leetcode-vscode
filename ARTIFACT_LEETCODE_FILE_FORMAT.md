@@ -915,13 +915,24 @@ explicitly from the CLI, not part of the extension.
 > under `src/services/test-envs/`, never an id an author writes.
 
 > **Status, precisely.** A `package` is **parsed and graded**: `## Files`, `libs:`, `checks:`
-> and the `check=<name>` case binding all land on the parsed artifact, the render driver and
-> all three check kinds (`dom-assert`, `css-assert`, `build`) ship, and it grades end to end.
+> and the `check=<name>` case binding all land on the parsed artifact, and all **five** check
+> kinds — `dom-assert`, `css-assert`, `build`, `call`, and now `http` — dispatch through
+> `runOneCheck` and grade end to end. `packages:` is parsed (`parseLeetCode` calls
+> `parsePackages`, and a parsed artifact carries `packages`) and **reached**: an `http` check
+> resolves its `package:` name against that list, boots the one server it names
+> (`bootServer`), fires every bound case at it in request/response order, and tears it down on
+> every path out. A `package` declaring one `http` check is graded exactly like one declaring
+> only `build`/`call`/`dom-assert`/`css-assert` — see the `package`/`http` smoke artifact,
+> `CoderByte/Tests/package/sum-endpoint.md` in the vault.
 > A `stack` **parses and opens** — it is a file tree, so *Solve It* materialises `## Files`
-> and opens the tabs — and its distinguishing machinery is **half implemented**: `packages:`
-> now has a grammar and is a recognised body-set key, but **no caller invokes it** (§9.3), and
-> `http` has no environment, so an artifact declaring `kind: http` is refused for grading as a
-> whole (§6.1) while still verifying structure-only `ok`.
+> and opens the tabs — and what remains unbuilt is booting **several** packages together:
+> `dependsOn` ordering, running each entry's `install`, and computing `exposeAs` from the
+> ports assigned to the packages a later one depends on are still the `stack` runner's, not
+> any check's (§9.3). A `stack` is therefore still **skipped** by the default vault sweep
+> unless `LEET_STACK_E2E=1` (§6.1) — not because `http` is unimplemented any more, but because
+> exercising several booted ecosystems at once is comparatively slow and network-bound. With
+> the flag on, a `stack` whose checks each resolve to one already-implemented kind (a
+> single-package `http` check, a `build`) grades exactly as a `package` would.
 > Reference artifacts live in the **Obsidian vault**, not in this repo — see CLAUDE.md,
 > *Artifacts live in the vault*.
 
@@ -1148,8 +1159,19 @@ packages:
 > which would have read as an artifact declaring fewer checks than it does.
 
 - `install` / `start` are **argv arrays**, never command strings.
-- `${PORT}` is the **only** substitution, templated into argv and injected as a `PORT`
-  env var. The port is one the OS assigned (bind `:0`, read it back), never a guess.
+- `${PORT}` is the **only** substitution, and it is templated into every argv element
+  **after the command** — `bootServer` splits `pkg.start` into `[command, ...rawArgs]` and
+  only `rawArgs` is substituted, so `start: ["${PORT}"]` spawns a literal command named
+  `${PORT}`, not the port number, and a package must never rely on substitution reaching
+  index 0. **No `PORT` environment variable is ever set.** The child is spawned with no
+  `env` override, so it inherits the extension host's own environment wholesale:
+  `process.env.PORT` is whatever the parent process happens to have — usually absent,
+  possibly a stale, unrelated value left over from the developer's own shell — and never
+  this boot's port. A package whose `start` needs the port must take it as an argument
+  (`["node", "index.js", "${PORT}"]`, read back as `process.argv[…]`), never from the
+  environment — found writing the `package`/`http` smoke artifact (VSX-176), whose starter
+  and solution both read the port this way. The port itself is one the OS assigned (bind
+  `:0`, read it back), never a guess.
 - `exposeAs` maps *variable name → value template*; the author names what their framework
   wants (`VITE_*`, `NEXT_PUBLIC_*`) — **the extension encodes no framework knowledge**.
   Both halves are constrained, and narrowly: the **name** must match `^[A-Z][A-Z0-9_]*$` and
