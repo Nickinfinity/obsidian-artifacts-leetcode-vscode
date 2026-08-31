@@ -1,5 +1,6 @@
 import type { RenderStep } from '../../../types/leetcode.types.js';
 import { LEET_SENTINEL } from '../../../types/constants.js';
+import { MAX_HTTP_BODY_BYTES } from '../http/http-case.helpers.js';
 
 /**
  * Toolchain the render driver needs, installed into the shared cache beside the
@@ -14,6 +15,19 @@ export const HARNESS_LIBS = ['esbuild@^0.25.0', 'jsdom@^26.0.0'] as const;
 
 /** Filename of the generated driver inside the run directory. */
 export const RENDER_RUNNER = 'leet-render-runner.js';
+
+/**
+ * Per-request budget for a mounted component's own `fetch` (T4.3, VSX-180).
+ *
+ * Not yet the artifact's own `test.timeoutMs` — `RenderSpec` carries no case
+ * budget today, only the render-wide {@link RENDER_TIMEOUT_MS}-style wall
+ * clock the caller in `checks.ts` already enforces around the whole child
+ * process. A fixed, generous per-request bound closes S11 without that
+ * plumbing; threading the artifact's own budget through is a follow-up, not
+ * a silent gap — an unbounded request would otherwise burn the *whole*
+ * render timeout on one hung fetch.
+ */
+export const FETCH_TIMEOUT_MS = 10_000;
 
 /** One case: a sequence of steps whose last reading step is the observed value. */
 export interface RenderCase {
@@ -31,6 +45,15 @@ export interface RenderSpec {
 	cacheDir: string;
 	/** Cases to run, in order */
 	cases: RenderCase[];
+	/**
+	 * The loopback port a live backend was booted on for this run (T4.3,
+	 * VSX-180) — never discovered, guessed or defaulted inside the driver.
+	 * Omitted (or `undefined`) means no backend: the generated driver's
+	 * `fetch` then refuses every request by name rather than reaching the
+	 * real network, which is the closed default, not an open one a caller
+	 * must remember to lock down.
+	 */
+	apiPort?: number;
 }
 
 /**
@@ -64,7 +87,16 @@ export function renderRunnerCommand(): string {
  * non-erasable syntax esbuild refuses — fails that case with the runtime's own
  * message instead of taking the process down.
  *
- * @param spec - Entry, cache directory, and cases.
+ * **A component may now call `fetch` (T4.3, VSX-180)**, against a live
+ * backend this run itself booted — `spec.apiPort` names the one loopback port
+ * it may ever reach. The driver settles every in-flight fetch before each
+ * step acts or reads, so a `text`/`count`/`attr`/`style` step never observes
+ * a component mid-request. **Visibility stays ungradeable regardless** —
+ * jsdom still computes no layout, so a component that fetches real data and
+ * then renders it under `display: none` still passes; a live backend answers
+ * "is the data right", never "is the component visible".
+ *
+ * @param spec - Entry, cache directory, cases, and the assigned backend port.
  * @returns Source of a self-contained CommonJS program.
  *
  * @example
@@ -77,6 +109,7 @@ export function renderRunnerSource(spec: RenderSpec): string {
 		`const CACHE = ${JSON.stringify(spec.cacheDir)};`,
 		`const ENTRY = ${JSON.stringify(spec.entry)};`,
 		`const CASES = ${JSON.stringify(spec.cases)};`,
+		`const API_PORT = ${JSON.stringify(spec.apiPort ?? null)};`,
 		`const SENTINEL = ${JSON.stringify(LEET_SENTINEL)};`,
 		'',
 		'// Resolve the toolchain out of the shared cache, never this repo.',
@@ -85,6 +118,8 @@ export function renderRunnerSource(spec: RenderSpec): string {
 		'',
 		'/** One sentinel line per case — the solver\'s own console output cannot be mistaken for it. */',
 		String.raw`function emit(payload) { process.stdout.write(SENTINEL + JSON.stringify(payload) + "\n"); }`,
+		'',
+		FETCH_GUARD_BLOCK,
 		'',
 		BUNDLE_BLOCK,
 		'',
@@ -95,6 +130,149 @@ export function renderRunnerSource(spec: RenderSpec): string {
 		MAIN_BLOCK,
 	].join('\n');
 }
+
+/**
+ * Guarded network access for a mounted component (T4.3, VSX-180) — a
+ * self-contained test seam as well as a generated block: exported so a test
+ * can prove the loopback check is live without paying for esbuild, jsdom or
+ * React.
+ *
+ * **S10 — the host check lives inside the function `fetch` itself is
+ * replaced with, not in whatever calls {@link renderRunnerSource}.** The
+ * component under test is the artifact's own `# Solutions` overlay —
+ * untrusted, exactly like every other artifact-authored file this extension
+ * runs — and a check on *this module's* good behaviour says nothing about a
+ * `fetch()` the rendered component decides to make on its own. `installFetch`
+ * therefore replaces `global.fetch` with a function that resolves whatever
+ * URL it is given (relative or absolute) against `127.0.0.1:<port>` through
+ * the platform's own WHATWG `URL` parser and refuses anything that resolves
+ * to a different `host` string — an allowlist compare, so a request naming
+ * `localhost:<port>` (the *same* server, a different spelling) is refused
+ * exactly as one naming a real external host would be; nothing here decides
+ * "is this loopback", only "does this equal the one host string this run
+ * assigned".
+ *
+ * This mirrors `http-case.helpers.ts`'s `buildLoopbackUrl` (S1) rather than
+ * importing it: this whole file's output is a *string*, executed by a
+ * separate `node <runner>.js` process that only ever `require`s from the
+ * shared toolchain cache, never from this extension — there is no import to
+ * share across that boundary, so the rule is copied, not the module.
+ * `LEET_MAX_BODY_BYTES` is the one number both copies still share:
+ * {@link MAX_HTTP_BODY_BYTES} baked in at generation time.
+ *
+ * **The default is refusal.** Before this task nothing touched
+ * `global.fetch` inside the generated driver at all, so a component that
+ * happened to call it reached Node's own, completely unbounded `fetch` —
+ * every `# Solutions` overlay, on every `verify-exercise` sweep. `apiPort:
+ * null` (no backend assigned) now installs a `fetch` that always rejects, so
+ * a render check gains a network primitive only when a caller explicitly
+ * hands it a port — never by omission.
+ */
+export const FETCH_GUARD_BLOCK = `
+var LEET_MAX_BODY_BYTES = ${JSON.stringify(MAX_HTTP_BODY_BYTES)};
+var LEET_FETCH_TIMEOUT_MS = ${JSON.stringify(FETCH_TIMEOUT_MS)};
+var LEET_REAL_FETCH = global.fetch;
+var LEET_REAL_RESPONSE = global.Response;
+
+/** Resolve \`input\` (a string, a \`URL\`, or a \`Request\`-like object) against the one assigned loopback host, refusing anything that resolves off it. */
+function leetResolveUrl(input, expectedHost) {
+	var raw = typeof input === 'string' ? input
+		: (input && typeof input.href === 'string') ? input.href
+		: (input && typeof input.url === 'string') ? input.url
+		: String(input);
+	var url;
+	try {
+		url = new URL(raw, 'http://' + expectedHost);
+	} catch (e) {
+		throw new Error('LEET_FETCH_REFUSED: ' + JSON.stringify(raw) + ' is not a valid URL');
+	}
+	if (url.host !== expectedHost) {
+		throw new Error(
+			'LEET_FETCH_REFUSED: ' + JSON.stringify(raw) + ' does not resolve to the assigned loopback '
+			+ 'backend (' + expectedHost + ') — a rendered component may only reach the port this run '
+			+ 'booted, never an artifact-chosen host');
+	}
+	return url;
+}
+
+/** Read a response body under \`LEET_MAX_BODY_BYTES\`, failing loudly rather than truncating (mirrors \`http-case.helpers.ts\`'s S11 bound). */
+async function leetReadBoundedBody(response) {
+	var reader = response.body ? response.body.getReader() : null;
+	if (!reader) { return ''; }
+	var chunks = [];
+	var total = 0;
+	for (;;) {
+		var step = await reader.read();
+		if (step.done) { break; }
+		total += step.value.byteLength;
+		if (total > LEET_MAX_BODY_BYTES) {
+			await reader.cancel().catch(function () { /* already failing */ });
+			throw new Error('LEET_FETCH_REFUSED: response exceeded ' + LEET_MAX_BODY_BYTES + ' bytes');
+		}
+		chunks.push(step.value);
+	}
+	return Buffer.concat(chunks).toString('utf8');
+}
+
+/** The real request, bounded by a timeout and never following a redirect off this run's own backend (S1's second half — see \`http-case.helpers.ts\`'s \`runHttpCase\`). */
+async function leetBoundedFetch(url, init) {
+	var response;
+	try {
+		response = await LEET_REAL_FETCH(url, Object.assign({}, init, {
+			redirect: 'manual',
+			signal: AbortSignal.timeout(LEET_FETCH_TIMEOUT_MS),
+		}));
+	} catch (e) {
+		if (e && (e.name === 'TimeoutError' || e.name === 'AbortError')) {
+			throw new Error('LEET_FETCH_REFUSED: request timed out after ' + LEET_FETCH_TIMEOUT_MS + 'ms');
+		}
+		throw e;
+	}
+	var text = await leetReadBoundedBody(response);
+	return new LEET_REAL_RESPONSE(text, { status: response.status, statusText: response.statusText, headers: response.headers });
+}
+
+/** Replace \`global.fetch\` with the guarded version and return the pending-request set the driver settles before every step. \`port === null\` refuses everything — the closed default. */
+function installFetch(port) {
+	var pending = new Set();
+	if (port === null) {
+		global.fetch = function () {
+			return Promise.reject(new Error('LEET_FETCH_REFUSED: no live backend is configured for this render check'));
+		};
+		return pending;
+	}
+	var expectedHost = '127.0.0.1:' + port;
+	global.fetch = function leetGuardedFetch(input, init) {
+		var url;
+		try {
+			url = leetResolveUrl(input, expectedHost);
+		} catch (e) {
+			return Promise.reject(e);
+		}
+		var promise = leetBoundedFetch(url, init);
+		pending.add(promise);
+		// \`.then(forget, forget)\` deliberately, not \`.finally()\`: a \`.finally()\`
+		// callback's derived promise rejects right along with \`promise\` when the
+		// request fails, and nothing here ever consumes that derived promise —
+		// an unhandled rejection that crashes the whole driver process on the
+		// very first refused or failed fetch. Passing the same handler as both
+		// arguments to \`.then()\` always resolves the derived promise, so the
+		// *only* rejection anyone still has to handle is the \`promise\` returned
+		// below, which the component's own \`.catch()\` (or \`settlePending\`'s
+		// \`Promise.allSettled\`) already does.
+		var forget = function () { pending.delete(promise); };
+		promise.then(forget, forget);
+		return promise;
+	};
+	return pending;
+}
+
+/** Drain every fetch the component has in flight — settled *before* a step acts or reads, so a case never observes a request mid-flight. */
+async function settlePending(pending) {
+	while (pending.size > 0) {
+		await Promise.allSettled(Array.from(pending));
+	}
+}`.trim();
 
 /**
  * Bundle the entry with esbuild: JSX and TS in one pass, bare imports resolved
@@ -204,9 +382,18 @@ function perform(root, step, win, act) {
 	}
 }`.trim();
 
-/** Mount fresh per case, run its steps, report the last read value. */
+/**
+ * Mount fresh per case, run its steps, report the last read value.
+ *
+ * `main` is `async` (T4.3): a step may need to wait on a component's own
+ * in-flight `fetch` before it is safe to act on or read the DOM, and
+ * `settlePending` is itself async. The top-level call is a `.catch`, not a
+ * `try`/`await` — this file is CommonJS, and top-level `await` is an ESM-only
+ * feature.
+ */
 const MAIN_BLOCK = `
-function main() {
+async function main() {
+	const pending = installFetch(API_PORT);
 	const win = installDom();
 	const code = bundle();
 	const React = req('react');
@@ -232,6 +419,10 @@ function main() {
 
 			let observed = null;
 			for (const step of testCase.steps) {
+				// Settle every in-flight fetch before acting or reading — a step
+				// that reads before the component's own fetch resolves is a false
+				// pass, the whole failure mode a live backend invites (T4.3).
+				await act(async () => { await settlePending(pending); });
 				const value = perform(container, step, win, act);
 				if (value !== undefined) { observed = value; }
 			}
@@ -246,12 +437,11 @@ function main() {
 	}
 }
 
-try {
-	main();
-} catch (e) {
-	// A failure before any case could run — bundling, or a missing toolchain —
-	// is reported against every case rather than as a silent empty suite.
+main().catch((e) => {
+	// A failure before any case could run — bundling, installing the fetch
+	// guard, or a missing toolchain — is reported against every case rather
+	// than as a silent empty suite.
 	for (const testCase of CASES) {
 		emit({ index: testCase.index, error: (e && e.message) || String(e), ms: 0 });
 	}
-}`.trim();
+});`.trim();

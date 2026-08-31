@@ -125,6 +125,13 @@ suite('exercise-verify — rules registry (leetcode-type axis)', () => {
         // `test.type` spelling, *and* one with duplicate check names, failing
         // checks and no overlay reported ok — the function rules never look at
         // a file tree.
+        //
+        // T4.4 gives `stack` its own rule set (`stack.rules.ts`), whose first
+        // gate is the shape check this suite pins separately
+        // (`exercise-verify-stack.test.ts`); two `packages:` entries here
+        // clear that gate so this fixture still exercises the *next* one down
+        // — the reused package rules' `## Files` requirement — exactly as it
+        // did before T4.4.
         const md = [
             '---',
             'artifactType: leetcode',
@@ -134,6 +141,18 @@ suite('exercise-verify — rules registry (leetcode-type axis)', () => {
             '---',
             '',
             'Problem description.',
+            '',
+            '```yaml leetcode',
+            'packages:',
+            '  - name: api',
+            '    dir: pkg-api',
+            '    install: ["noop"]',
+            '    start: ["noop"]',
+            '  - name: web',
+            '    dir: pkg-web',
+            '    install: ["noop"]',
+            '    start: ["noop"]',
+            '```',
             '',
             '## Examples',
             '```example',

@@ -241,13 +241,18 @@ export function renderLibsFor(artifactLibs: readonly string[] = []): string[] {
  * @param cacheDir     - Already-installed cache dir (§B.1: one install per grading run,
  *                       done once in `gradeProjectDir`). Omitted only by direct/E2E callers,
  *                       which still install their own.
+ * @param apiPort      - The loopback port a live backend was booted on for this run
+ *                       (T4.3 round 2, VSX-180) — `gradeProjectDir`'s
+ *                       `apiPortForRenderCheck` decides this; omitted means no
+ *                       backend, and the mounted component's `fetch` refuses
+ *                       every request by default.
  * @returns The check's verdict.
  *
  * @example
  * await runRenderCheck(domCheck, '/tmp/run', ['react@^19.0.0']);
  */
 export async function runRenderCheck(
-	check: RenderCheck, runDir: string, artifactLibs: readonly string[] = [], cacheDir?: string,
+	check: RenderCheck, runDir: string, artifactLibs: readonly string[] = [], cacheDir?: string, apiPort?: number,
 ): Promise<ProjectCheckOutcome> {
 	// Containment first, always: an escaping path is the security answer, and it
 	// must not be pre-empted by a cosmetic complaint about the file's language.
@@ -270,7 +275,7 @@ export async function runRenderCheck(
 	try {
 		await fs.writeFile(
 			path.join(runDir, RENDER_RUNNER),
-			renderRunnerSource({ entry: check.file, cacheDir: dir, cases: renderCasesFor(check) }),
+			renderRunnerSource({ entry: check.file, cacheDir: dir, cases: renderCasesFor(check), apiPort }),
 			'utf-8',
 		);
 		const { stdout } = await execFileAsync(process.execPath, [RENDER_RUNNER], {

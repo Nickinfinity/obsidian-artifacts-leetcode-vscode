@@ -2,6 +2,7 @@ import type { LeetcodeTypeId } from '../../types/leetcode-type.js';
 import type { ParsedLeetCode } from '../../types/leetcode.types.js';
 import { verifyFunctionExercise } from './function.rules.js';
 import { verifyPackageExercise } from './package.rules.js';
+import { verifyStackExercise } from './stack.rules.js';
 
 /**
  * What the *caller's process* tells a rule about itself — never about the
@@ -45,22 +46,29 @@ export type VerifyRule = (
  * `if (parsed.test.type === 'project') { … }` chain — which is exactly the
  * shape this table replaces.
  *
- * `stack` reuses `verifyPackageExercise`, and that routing is the model
- * rather than a convenience: a stack is *several wired-together packages*, so
- * it is graded by declared checks and never by one candidate buffer. An
- * intermediate cut of T1.7 pointed it at `verifyFunctionExercise` to keep two
- * `test.type: 'service'` fixtures green; that bought a `stack` which could not
- * verify in any `test.type` spelling **and** one with duplicate check names,
- * failing checks and no overlay reporting `ok` — the function rules never look
- * at a file tree. Pinned by `exercise-verify-rules.test.ts`'s *held to the
- * package rules* case (`stack: no ## Files declared`).
+ * `stack` now points at `verifyStackExercise` (T4.4 / VSX-181), its own rule
+ * set rather than a routing convenience: a stack is *several wired-together
+ * packages*, so its shape must hold (more than one `packages:` entry) and its
+ * cross-package wiring must resolve (an `http` check's `package:` must name
+ * one) before it is graded at all. `verifyStackExercise` still *delegates* to
+ * `verifyPackageExercise` once those stack-only gates pass — a stack that
+ * clears its own shape is graded by the exact same file-tree / `checks:` rule
+ * set a `package` is, never a second copy of it.
  *
- * Consequence, deliberate and currently biting: the package rules demand a
- * file tree **and** cases bound to every check, which is why the four vault
+ * Before this, `stack` pointed at `verifyPackageExercise` directly. That
+ * routing was itself the fix for an earlier, worse cut of T1.7 that pointed it
+ * at `verifyFunctionExercise` to keep two `test.type: 'service'` fixtures
+ * green; that bought a `stack` which could not verify in any `test.type`
+ * spelling **and** one with duplicate check names, failing checks and no
+ * overlay reporting `ok` — the function rules never look at a file tree.
+ *
+ * Consequence, deliberate and still biting: the package rules demand a file
+ * tree **and** cases bound to every check, which is why the four vault
  * `stack` artifacts fail `check '…' has no cases` under `LEET_STACK_E2E=1`
- * (ledger [[C30]]). That is the rule doing its job over artifacts that predate
- * it. T4.4 gives `stack` its own rule set by changing this one entry — it does
- * not touch this table's shape, `package.rules.ts`, or `function.rules.ts`.
+ * (ledger [[C30]]) — that is the rule doing its job over artifacts that
+ * predate it, and `verifyStackExercise` inherits it unchanged; [[C30]] is a
+ * later task's fix, not this one's. T4.4 changed **only** this one entry — it
+ * did not touch this table's shape, `package.rules.ts`, or `function.rules.ts`.
  *
  * @example
  * VERIFY_RULES.package(parsed, 'package'); // → null, or the first broken rule's reason
@@ -68,5 +76,5 @@ export type VerifyRule = (
 export const VERIFY_RULES: Record<LeetcodeTypeId, VerifyRule> = {
 	function: verifyFunctionExercise,
 	package: verifyPackageExercise,
-	stack: verifyPackageExercise,
+	stack: verifyStackExercise,
 };

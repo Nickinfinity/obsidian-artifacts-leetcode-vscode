@@ -927,8 +927,11 @@ explicitly from the CLI, not part of the extension.
 > A `stack` **parses, opens and boots**: it is a file tree, so *Solve It* materialises
 > `## Files` and opens the tabs, and `bootStack` (VSX-178) now installs every package, boots
 > them in `dependsOn` order, and computes each `exposeAs` value from the **already-assigned**
-> ports of the packages it depends on (§9.3). What a `stack` still lacks is its own **verify
-> rules** — it borrows the `package` rules today — and any worked artifact of its own.
+> ports of the packages it depends on (§9.3). It also has its own **verify rules**
+> (`stack.rules.ts`, VSX-181): more than one package, every `http` check naming a package the
+> artifact actually declares, and a `call` check only where top-level `params:` give its cases a
+> shape — everything else delegating to the `package` rules rather than restating them. What a
+> `stack` still lacks is any worked artifact of its own.
 > A `stack` is therefore still **skipped** by the default vault sweep
 > unless `LEET_STACK_E2E=1` (§6.1) — not because `http` is unimplemented any more, but because
 > exercising several booted ecosystems at once is comparatively slow and network-bound. With
@@ -939,8 +942,10 @@ explicitly from the CLI, not part of the extension.
 
 - **`package`** — one buildable unit in one language, opened as several editor tabs and
   graded by declared **checks** rather than one return value. **One file or many.**
-- **`stack`** — several packages, each with its own language and ecosystem, whose checks run
-  against servers the extension boots on ports it assigns.
+- **`stack`** — several packages, each with its own language and ecosystem, wired together at
+  boot. A package's checks may be any declared `kind:` — `call`, `build`, `dom-assert`,
+  `css-assert` — exactly as inside a standalone `package`; `http` is simply the one kind that
+  talks to a server the extension boots on an assigned port.
 
 ### 9.1 `## Files`
 
@@ -1145,8 +1150,9 @@ packages:
 > frontend builds, then frontends — computes each package's `exposeAs` values
 > from the **already-assigned** ports of its dependencies, and tears the whole
 > set down in one `finally`, registering every group so a session-level cleanup
-> finds them. What a `stack` still lacks is its own **verify rules** and any
-> worked artifact, so it remains skipped by the default vault sweep (§6.1) and
+> finds them. It has its own **verify rules** as of VSX-181 (`stack.rules.ts`), so a malformed
+> stack now fails by name rather than borrowing a `package`'s message. What a `stack` still
+> lacks is any worked artifact, so it remains skipped by the default vault sweep (§6.1) and
 > is graded only under `LEET_STACK_E2E=1`.
 >
 > **Libraries do not reach a booted process yet.** A node package resolves its
