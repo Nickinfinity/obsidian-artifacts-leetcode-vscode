@@ -1,6 +1,8 @@
 import { spawn as spawnProcess, type ChildProcess } from 'node:child_process';
 import * as net from 'node:net';
 import type { PackageSpec } from '../../../types/leetcode.types.js';
+import type { LibEcosystem } from '../../libs/lib-ecosystem.js';
+import { libExecEnv } from '../../libs/lib-env.helpers.js';
 import { isSafeExposeName } from '../../packages-parser.helpers.js';
 import { resolveContained } from '../project/files.writer.js';
 
@@ -380,6 +382,59 @@ function tryConnect(port: number, timeoutMs: number): Promise<boolean> {
 }
 
 /**
+ * Cap on how much of a crashed child's own stdout+stderr rides along in a
+ * boot-failure reason. Exported so `stack.runner.ts`'s `installFailureText`
+ * shares this exact bound rather than hand-copying the number a second time —
+ * two call sites drifting to two different limits is the same class of bug
+ * this whole task exists to close.
+ */
+export const MAX_LOG_IN_REASON = 500;
+
+/**
+ * The fixed sentence for a child that exited before becoming ready, with as
+ * much of its own stdout+stderr as fits (C39, VSX-227).
+ *
+ * `classifyStarterFailure` (`exercise-verify/starter-red.helpers.ts`) already
+ * recognises a genuine toolchain failure by shape — `spawn \S+ ENOENT` for a
+ * missing interpreter, `Cannot find module '…'`/`MODULE_NOT_FOUND` for an
+ * unresolved import — but it can only match text it is actually handed. The
+ * bare sentence this reason used to be matched none of those patterns, so a
+ * `--starter-red` run against a broken toolchain (a missing `mvn`, an
+ * unthreaded `libs:`) certified the starter genuinely RED instead of
+ * INCONCLUSIVE, with nothing having actually run. Carrying the child's own
+ * text here is the fix; the patterns themselves already existed and need no
+ * change.
+ *
+ * **Truncated from the tail, not the head — deliberately the opposite of
+ * `installFailureText`'s bound.** `log` accumulates everything the child
+ * wrote across the *whole* boot window, and the crash diagnostic
+ * (`ModuleNotFoundError`, `Cannot find module '…'`) is the **last** thing it
+ * writes — a dev-server `start` (`npm start` → vite/next) routinely prints
+ * hundreds of characters of banner before it ever gets to the line that
+ * matters. Slicing from the head keeps the banner and drops the diagnostic,
+ * which is exactly the false-RED case C39 exists to remove: `classifyStarter
+ * Failure` sees only noise, returns `candidate`, and a broken toolchain
+ * certifies as a genuinely-red starter. `installFailureText`
+ * (`stack.runner.ts`) is the opposite case on purpose, not an inconsistency
+ * to unify away: an installer's own error message *leads* its output, so the
+ * head is where its diagnostic lives.
+ *
+ * @param log - Everything the crashed child printed (stdout, stderr, and any
+ *   `spawn` error message) since it was spawned.
+ * @returns The reason string `waitReady` reports for the exited branch.
+ *
+ * @example
+ * exitedReason("ModuleNotFoundError: No module named 'flask'\n");
+ * // → "the spawned process exited before the server became ready: ModuleNotFoundError: No module named 'flask'"
+ */
+function exitedReason(log: string): string {
+	const output = log.trim();
+	if (output === '') { return 'the spawned process exited before the server became ready'; }
+	const truncated = output.length > MAX_LOG_IN_REASON ? `…${output.slice(-MAX_LOG_IN_REASON)}` : output;
+	return `the spawned process exited before the server became ready: ${truncated}`;
+}
+
+/**
  * Poll for readiness until it is confirmed, the process exits, or `deadline`
  * passes.
  *
@@ -411,7 +466,7 @@ async function waitReady(
 ): Promise<ReadyOutcome> {
 	for (;;) {
 		if (state.exited) {
-			return { ok: false, reason: 'the spawned process exited before the server became ready', childExited: true };
+			return { ok: false, reason: exitedReason(log.text), childExited: true };
 		}
 		if (Date.now() >= deadline) {
 			return { ok: false, reason: 'server never became ready', childExited: false };
@@ -487,6 +542,18 @@ export interface BootOptions {
 	 * loader variable (`NODE_OPTIONS`, `LD_PRELOAD`, …) for the spawned child.
 	 */
 	readonly env?: Readonly<Record<string, string>>;
+	/**
+	 * Resolved library cache per ecosystem for this run (T4.7, VSX-227) — the
+	 * same `dirs` map `gradeProjectDir` already computes before booting
+	 * anything. Consumed through {@link libExecEnv}, the one authority a
+	 * `build` check's own `PATH`/env composition already used: `VIRTUAL_ENV`,
+	 * `CLASSPATH`, `CARGO_TARGET_DIR`, `NODE_PATH` land in the child's
+	 * environment and each ecosystem's own `bin` (a venv's, say) joins `PATH`
+	 * ahead of `runDir`'s `node_modules/.bin` ahead of whatever the parent had.
+	 * Omitted (or empty) for a run that declares no `libs:` — the child still
+	 * gets `runDir`'s own `node_modules/.bin` on `PATH`, never nothing.
+	 */
+	readonly libDirs?: ReadonlyMap<LibEcosystem, string>;
 }
 
 /** One boot attempt's result — `retryable` is the S13 signal `bootServer`'s loop reads. */
@@ -498,25 +565,42 @@ interface AttemptResult {
 }
 
 /**
- * Compose a booted child's environment (C31, item 5): spread the *inherited*
- * `process.env`, inject `PORT` (this module's own literal, never
- * artifact-supplied text), then assign `extra`'s entries **individually**,
- * each filtered through {@link isSafeExposeName} — never a wholesale
+ * Compose a booted child's environment (C31, item 5; libs T4.7/VSX-227):
+ * start from {@link libExecEnv} (this run's `VIRTUAL_ENV`/`CLASSPATH`/
+ * `CARGO_TARGET_DIR`/`NODE_PATH` and `PATH`, layered over the *inherited*
+ * `process.env` — the extension's own trusted composition, never
+ * artifact-influenced), then assign `extra`'s entries **individually**, each
+ * filtered through {@link isSafeExposeName}, then inject `PORT` last (this
+ * module's own literal, never artifact-supplied text) — never a wholesale
  * `{ ...process.env, ...extra }` spread, which would let one artifact-
  * influenced key shadow `PATH` or a loader variable outright.
  *
- * @param port  - The port this attempt just minted — every framework a stack
- *   example uses (Express, uvicorn, Spring Boot) reads `PORT` directly (C31).
- * @param extra - A dependency's already-resolved `exposeAs` values, when this
- *   package has one; `undefined` for a package with none.
+ * `extra` can never legitimately name a library-seam variable:
+ * `isSafeExposeName` denies `VIRTUAL_ENV`/`CLASSPATH`/`CARGO_TARGET_DIR`/
+ * `NODE_PATH` via `LIB_SEAM_VARS` (`packages-parser.helpers.ts`), derived from
+ * this same `libEnvVars` — so the trusted half set by `libExecEnv` can never
+ * be shadowed by the untrusted half, by construction, independent of
+ * assignment order.
+ *
+ * @param port    - The port this attempt just minted — every framework a
+ *   stack example uses (Express, uvicorn, Spring Boot) reads `PORT` directly (C31).
+ * @param extra   - A dependency's already-resolved `exposeAs` values, when
+ *   this package has one; `undefined` for a package with none.
+ * @param libDirs - Resolved library cache per ecosystem for this run; empty
+ *   for a run that declares no `libs:`.
+ * @param runDir  - Absolute run directory, so `libExecEnv` can put its
+ *   `node_modules/.bin` on `PATH` (C36).
  * @returns The full environment to spawn the child with.
  *
  * @example
- * composeChildEnv(54321, { VITE_API_URL: 'http://127.0.0.1:54000' });
- * // → { ...process.env, PORT: '54321', VITE_API_URL: 'http://127.0.0.1:54000' }
+ * composeChildEnv(54321, { VITE_API_URL: 'http://127.0.0.1:54000' }, new Map([['pip', '/cache/pip-1']]), '/tmp/run');
+ * // → { ...process.env, VIRTUAL_ENV: '/cache/pip-1', PATH: '/cache/pip-1/bin:/tmp/run/node_modules/.bin:…', VITE_API_URL: '…', PORT: '54321' }
  */
-function composeChildEnv(port: number, extra: Readonly<Record<string, string>> | undefined): NodeJS.ProcessEnv {
-	const env: NodeJS.ProcessEnv = { ...process.env };
+function composeChildEnv(
+	port: number, extra: Readonly<Record<string, string>> | undefined,
+	libDirs: ReadonlyMap<LibEcosystem, string> | undefined, runDir: string,
+): NodeJS.ProcessEnv {
+	const env: NodeJS.ProcessEnv = libExecEnv(libDirs, runDir);
 	for (const [key, value] of Object.entries(extra ?? {})) {
 		if (isSafeExposeName(key)) { env[key] = value; }
 	}
@@ -539,6 +623,10 @@ interface AttemptOptions {
 	readonly mint: () => Promise<number>;
 	/** A dependency's already-resolved `exposeAs` values (T4.1) — `undefined` for a package with none. */
 	readonly extraEnv: Readonly<Record<string, string>> | undefined;
+	/** Resolved library cache per ecosystem (T4.7) — `undefined`/empty for a run that declares no `libs:`. */
+	readonly libDirs: ReadonlyMap<LibEcosystem, string> | undefined;
+	/** Top-level run directory — `composeChildEnv` reads its `node_modules/.bin`, never `cwd`'s (C36). */
+	readonly runDir: string;
 }
 
 /**
@@ -550,7 +638,7 @@ interface AttemptOptions {
 async function attemptBoot(
 	pkg: PackageSpec, cwd: string, command: string, rawArgs: readonly string[], opts: AttemptOptions,
 ): Promise<AttemptResult> {
-	const { bootTimeoutMs, registry, mint, extraEnv } = opts;
+	const { bootTimeoutMs, registry, mint, extraEnv, libDirs, runDir } = opts;
 	let port: number;
 	try {
 		port = await mint();
@@ -561,14 +649,21 @@ async function attemptBoot(
 
 	const resolvedCommand = substitutePort(command, port);
 	const args = rawArgs.map(el => substitutePort(el, port));
-	const env = composeChildEnv(port, extraEnv);
+	const env = composeChildEnv(port, extraEnv, libDirs, runDir);
 	const child = spawnProcess(resolvedCommand, args, { cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
 
 	const state = { exited: false };
-	child.on('error', () => { state.exited = true; });
+	const log = { text: '' };
+	// C39: a `spawn` failure (a missing interpreter/binary — `spawn mvn ENOENT`)
+	// carries its own diagnostic **only** on the `error` event; `exit` fires
+	// with no message at all. Folding it into the same `log.text` buffer the
+	// stdio listeners already fill means `waitReady`'s failure reason can
+	// surface it, which is what lets `classifyStarterFailure`
+	// (`exercise-verify/starter-red.helpers.ts`) recognise a broken toolchain
+	// instead of misreading it as the starter's own incomplete code.
+	child.on('error', (err: Error) => { state.exited = true; log.text += err.message; });
 	child.on('exit', () => { state.exited = true; });
 
-	const log = { text: '' };
 	child.stdout?.on('data', (chunk: Buffer) => { log.text += chunk.toString('utf8'); });
 	child.stderr?.on('data', (chunk: Buffer) => { log.text += chunk.toString('utf8'); });
 
@@ -647,7 +742,9 @@ export async function bootServer(pkg: PackageSpec, runDir: string, opts: BootOpt
 		return { ok: false, reason: `packages: '${pkg.name}' start is an empty argv` };
 	}
 
-	const attemptOpts: AttemptOptions = { bootTimeoutMs, registry: opts.registry, mint, extraEnv: opts.env };
+	const attemptOpts: AttemptOptions = {
+		bootTimeoutMs, registry: opts.registry, mint, extraEnv: opts.env, libDirs: opts.libDirs, runDir,
+	};
 	let lastReason = 'server never became ready';
 	for (let attempt = 0; attempt < BOOT_ATTEMPTS; attempt++) {
 		const result = await attemptBoot(pkg, cwd, command, rawArgs, attemptOpts);

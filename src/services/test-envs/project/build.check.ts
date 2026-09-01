@@ -1,9 +1,8 @@
 import { execFile } from 'node:child_process';
-import * as path from 'node:path';
 import { promisify } from 'node:util';
 import type { BuildCheck, ProjectCheckOutcome } from '../../../types/leetcode.types.js';
 import type { LibEcosystem } from '../../libs/lib-ecosystem.js';
-import { mergeLibEnvVars } from '../../libs/lib-env.helpers.js';
+import { libExecEnv } from '../../libs/lib-env.helpers.js';
 import { resolveContained } from './files.writer.js';
 
 const execFileAsync = promisify(execFile);
@@ -63,24 +62,16 @@ export async function runBuildCheck(
 	// ponytail: POSIX-only. libuv resolves PATH from the child's own environ
 	// before execvp, so prepending here reaches `execFile`'s lookup. On Windows,
 	// `process.env` is case-insensitive for property access but the object
-	// spread below produces a plain case-sensitive object, so the child would
-	// receive both the original `Path` and this prepended `PATH` as two distinct
-	// keys — which spelling wins is unspecified there. `.bin` entries are also
-	// `.cmd` shims `execFile` cannot run without a shell, so Windows coverage is
-	// unproven either way. No `shell: true` to compensate; that would hand
-	// artifact-authored argv to a command interpreter.
+	// spread inside `libExecEnv` produces a plain case-sensitive object, so the
+	// child would receive both the original `Path` and this prepended `PATH` as
+	// two distinct keys — which spelling wins is unspecified there. `.bin`
+	// entries are also `.cmd` shims `execFile` cannot run without a shell, so
+	// Windows coverage is unproven either way. No `shell: true` to compensate;
+	// that would hand artifact-authored argv to a command interpreter.
 	// A declared toolchain first (`<venv>/bin`), then the run's own linked
 	// `.bin`, then whatever the parent had — so `['pytest', '-q']` and
 	// `['tsc']` both resolve the version this exercise declared.
-	const libs = mergeLibEnvVars(libDirs);
-	const binDir = path.join(runDir, 'node_modules', '.bin');
-	const prefix = libs.pathPrepend === undefined
-		? binDir
-		: `${libs.pathPrepend}${path.delimiter}${binDir}`;
-	const env = {
-		...process.env, ...libs.env,
-		PATH: `${prefix}${path.delimiter}${process.env.PATH ?? ''}`,
-	};
+	const env = libExecEnv(libDirs, runDir);
 
 	try {
 		const { stdout } = await execFileAsync(command, args, { cwd, env, timeout: BUILD_TIMEOUT_MS });

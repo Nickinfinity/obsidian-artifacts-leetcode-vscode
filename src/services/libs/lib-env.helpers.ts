@@ -94,3 +94,49 @@ export function mergeLibEnvVars(dirs: ReadonlyMap<LibEcosystem, string>): LibEnv
 		? { env }
 		: { env, pathPrepend: prefixes.join(path.delimiter) };
 }
+
+/**
+ * Compose the full exec environment for a subprocess run inside `runDir`
+ * (T4.7, VSX-227): `process.env` layered with every declared ecosystem's
+ * variables, then `PATH` rebuilt as declared-toolchain bin(s) → `runDir`'s
+ * own `node_modules/.bin` → whatever the parent process already had.
+ *
+ * **The one composition, three consumers.** `build.check.ts`'s `runBuildCheck`
+ * worked this ordering out first (a `build` check's own toolchain must resolve
+ * a declared `tsc`/`pytest` before anything the parent's `PATH` happens to
+ * have); `stack.runner.ts`'s `runInstall` and `server.lifecycle.ts`'s
+ * `composeChildEnv` need the identical shape — a booted package's `pip install
+ * flask` step and its later `start` both have to see the same venv, and a
+ * `start: ["vite", …]` has to resolve the run's own linked `node_modules/.bin`
+ * exactly as a `build` check's `argv: ['vite', 'build']` already does. A
+ * second hand-written copy of this ordering is exactly the drift DRY exists to
+ * prevent — extracted here, `libEnvVars`'s own module, rather than a fourth.
+ *
+ * `libDirs` defaults to empty, so a caller with none can drop the `?? new
+ * Map()` it would otherwise need at every call site. `node_modules/.bin` is
+ * always prepended, even when `libDirs` is empty and even when that
+ * directory does not exist on disk — an absent `PATH` entry is harmless, and
+ * a `package`/`stack` with no `libs:` still gets the run's own linked npm
+ * tree (from `## Files`, if any) resolved the same way a real project
+ * checkout would.
+ *
+ * @param libDirs - Resolved library cache per ecosystem; empty when the run
+ *   declares none.
+ * @param runDir  - Absolute run directory whose `node_modules/.bin` joins `PATH`.
+ * @returns The composed environment, ready to hand to `execFile`/`spawn`.
+ *
+ * @example
+ * libExecEnv(new Map([['pip', '/cache/pip-1']]), '/tmp/run');
+ * // → { ...process.env, VIRTUAL_ENV: '/cache/pip-1', PATH: '/cache/pip-1/bin:/tmp/run/node_modules/.bin:…' }
+ */
+export function libExecEnv(
+	libDirs: ReadonlyMap<LibEcosystem, string> = new Map(), runDir: string,
+): NodeJS.ProcessEnv {
+	const libs = mergeLibEnvVars(libDirs);
+	const binDir = path.join(runDir, 'node_modules', '.bin');
+	const prefix = libs.pathPrepend === undefined ? binDir : `${libs.pathPrepend}${path.delimiter}${binDir}`;
+	return {
+		...process.env, ...libs.env,
+		PATH: `${prefix}${path.delimiter}${process.env.PATH ?? ''}`,
+	};
+}

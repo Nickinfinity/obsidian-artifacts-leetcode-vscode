@@ -3,6 +3,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import type { PackageSpec } from '../src/types/leetcode.types.js';
+import type { LibEcosystem } from '../src/services/libs/lib-ecosystem.js';
 import { bootStack } from '../src/services/test-envs/stack/stack.runner.js';
 import { createGroupRegistry } from '../src/services/test-envs/http/server.lifecycle.js';
 
@@ -87,6 +88,25 @@ suite('stack-runner', () => {
 		'const outFile = process.argv[2];',
 		'fs.writeFileSync(outFile, process.env[varName] || "");',
 		"net.createServer(s => s.end()).listen(port, '127.0.0.1');",
+	].join('\n');
+
+	/** Records `VIRTUAL_ENV` and `PATH` as JSON (`argv[1]` output file), then binds and hangs. C29/T4.7. */
+	const RECORD_LIB_ENV_AND_LISTEN = [
+		"const fs = require('fs');",
+		"const net = require('net');",
+		'const port = Number(process.env.PORT);',
+		'const outFile = process.argv[1];',
+		'fs.writeFileSync(outFile, JSON.stringify({',
+		'  virtualEnv: process.env.VIRTUAL_ENV || null,',
+		'  path: process.env.PATH || "",',
+		'}));',
+		"net.createServer(s => s.end()).listen(port, '127.0.0.1');",
+	].join('\n');
+
+	/** Records `VIRTUAL_ENV` seen during the **install** step (`argv[1]` output file), then exits 0. C29 install-half. */
+	const RECORD_VENV_DURING_INSTALL = [
+		"const fs = require('fs');",
+		'fs.writeFileSync(process.argv[1], process.env.VIRTUAL_ENV || "");',
 	].join('\n');
 
 	// ── the Test First: failure propagates with the dependency's own reason ────
@@ -290,6 +310,68 @@ suite('stack-runner', () => {
 			// A harmless no-op afterwards — `stop()` is idempotent and both pids
 			// are already gone.
 			await stack.teardownAll();
+		});
+	});
+
+	// ── C29/C36 (T4.7, VSX-227): a booted package gets its libs: environment ──
+
+	suite('bootStack — C29/C36, libDirs reach the booted child', () => {
+		test('a pip libDirs entry sets VIRTUAL_ENV and puts <dir>/bin ahead of the inherited PATH', async function () {
+			this.timeout(10_000);
+			const pipDir = path.join(runDir, 'fake-venv');
+			fs.mkdirSync(path.join(pipDir, 'bin'), { recursive: true });
+			const envFile = path.join(runDir, 'api-env.txt');
+			const inheritedPath = process.env.PATH ?? '';
+			const packages: PackageSpec[] = [{
+				name: 'api', dir: 'server', install: okInstall(),
+				start: [process.execPath, '-e', RECORD_LIB_ENV_AND_LISTEN, envFile],
+			}];
+			const libDirs: ReadonlyMap<LibEcosystem, string> = new Map([['pip', pipDir]]);
+
+			const stack = await bootStack(packages, runDir, { libDirs });
+			try {
+				const api = stack.outcomes.get('api');
+				assert.strictEqual(api?.ok, true, `api must have booted: ${api?.ok === false ? api.reason : ''}`);
+
+				const report = JSON.parse(fs.readFileSync(envFile, 'utf8')) as { virtualEnv: string | null; path: string };
+				assert.strictEqual(report.virtualEnv, pipDir, 'VIRTUAL_ENV must name the resolved pip cache directory');
+
+				const expectedBinDir = path.join(pipDir, 'bin');
+				assert.ok(
+					report.path.startsWith(`${expectedBinDir}${path.delimiter}`),
+					`<dir>/bin must lead PATH; got "${report.path}"`,
+				);
+				assert.ok(report.path.includes(inheritedPath), 'the inherited PATH must still be present, never dropped');
+			} finally {
+				await stack.teardownAll();
+			}
+		});
+
+		test('a pip libDirs entry sets VIRTUAL_ENV during the INSTALL step too, not just start', async function () {
+			this.timeout(10_000);
+			const pipDir = path.join(runDir, 'fake-venv-install');
+			fs.mkdirSync(path.join(pipDir, 'bin'), { recursive: true });
+			const installEnvFile = path.join(runDir, 'api-install-env.txt');
+			const packages: PackageSpec[] = [{
+				name: 'api', dir: 'server',
+				install: [process.execPath, '-e', RECORD_VENV_DURING_INSTALL, installEnvFile],
+				start: [process.execPath, '-e', LISTEN_ON_PORT_ENV],
+			}];
+			const libDirs: ReadonlyMap<LibEcosystem, string> = new Map([['pip', pipDir]]);
+
+			const stack = await bootStack(packages, runDir, { libDirs });
+			try {
+				const api = stack.outcomes.get('api');
+				assert.strictEqual(api?.ok, true, `api must have booted: ${api?.ok === false ? api.reason : ''}`);
+
+				const recorded = fs.readFileSync(installEnvFile, 'utf8');
+				assert.strictEqual(
+					recorded, pipDir,
+					'the install step must see VIRTUAL_ENV from libDirs, not just the later start step',
+				);
+			} finally {
+				await stack.teardownAll();
+			}
 		});
 	});
 });

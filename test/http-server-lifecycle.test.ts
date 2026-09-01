@@ -5,6 +5,8 @@ import * as net from 'node:net';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import type { PackageSpec } from '../src/types/leetcode.types.js';
+import type { LibEcosystem } from '../src/services/libs/lib-ecosystem.js';
+import { classifyStarterFailure } from '../src/services/exercise-verify/starter-red.helpers.js';
 import {
 	assertMintedPortSafe,
 	bootServer,
@@ -564,7 +566,15 @@ suite('http-server-lifecycle', () => {
 
 			const report = JSON.parse(fs.readFileSync(outFile, 'utf8')) as
 				{ path: string; safeVar: string; port: string };
-			assert.strictEqual(report.path, inheritedPath, 'PATH must never be shadowed by an opts.env entry');
+			// C36 (T4.7): PATH is now `runDir`'s own `node_modules/.bin` ahead of
+			// whatever was inherited — never a bare pass-through — so the
+			// assertion is "still ends in the untouched inherited PATH", not
+			// strict equality to it.
+			const expectedBinDir = path.join(runDir, 'node_modules', '.bin');
+			assert.strictEqual(
+				report.path, `${expectedBinDir}${path.delimiter}${inheritedPath}`,
+				'PATH must be runDir\'s node_modules/.bin ahead of the untouched inherited PATH, never shadowed by an opts.env entry',
+			);
 			assert.strictEqual(report.safeVar, 'http://127.0.0.1:9', 'an allowlisted name must still reach the child');
 			assert.strictEqual(
 				report.port, String(result.server.port),
@@ -667,6 +677,125 @@ suite('http-server-lifecycle', () => {
 			uninstall();
 			assert.strictEqual(process.listenerCount('SIGINT'), beforeInt, 'uninstall must remove its SIGINT listener');
 			assert.strictEqual(process.listenerCount('SIGTERM'), beforeTerm, 'uninstall must remove its SIGTERM listener');
+		});
+	});
+
+	// ── C29 (T4.7, VSX-227): a booted package gets the env its libs: bought ──
+
+	suite('bootServer — C29, libDirs reach the booted child directly', () => {
+		test('a pip libDirs entry sets VIRTUAL_ENV on the spawned child', async function () {
+			this.timeout(10_000);
+			const pipDir = path.join(runDir, 'fake-venv');
+			fs.mkdirSync(path.join(pipDir, 'bin'), { recursive: true });
+			const outFile = path.join(runDir, 'venv-report.json');
+			const REPORT_VENV = [
+				"const net = require('net');",
+				"const fs = require('fs');",
+				'const port = Number(process.env.PORT);',
+				`fs.writeFileSync(${JSON.stringify(outFile)}, JSON.stringify({ virtualEnv: process.env.VIRTUAL_ENV || null }));`,
+				"net.createServer(s => s.end()).listen(port, '127.0.0.1');",
+			].join('\n');
+			const libDirs: ReadonlyMap<LibEcosystem, string> = new Map([['pip', pipDir]]);
+
+			const result = await bootServer(pkg({ start: [process.execPath, '-e', REPORT_VENV] }), runDir, { libDirs });
+			assert.strictEqual(result.ok, true, result.ok ? '' : result.reason);
+			if (!result.ok) { return; }
+			await result.server.stop();
+
+			const report = JSON.parse(fs.readFileSync(outFile, 'utf8')) as { virtualEnv: string | null };
+			assert.strictEqual(report.virtualEnv, pipDir, 'VIRTUAL_ENV must reach the child from libDirs');
+		});
+	});
+
+	// ── C36 (T4.7, VSX-227): runDir's node_modules/.bin joins PATH ──────────
+
+	suite('bootServer — C36, runDir/node_modules/.bin is ahead of PATH', () => {
+		test('a start command resolvable only via node_modules/.bin actually resolves and boots', async function () {
+			this.timeout(10_000);
+			const binDir = path.join(runDir, 'node_modules', '.bin');
+			fs.mkdirSync(binDir, { recursive: true });
+			const toolPath = path.join(binDir, 'leet-fake-tool');
+			fs.writeFileSync(
+				toolPath,
+				['#!/bin/sh', `exec ${JSON.stringify(process.execPath)} -e "$1"`, ''].join('\n'),
+				'utf8',
+			);
+			fs.chmodSync(toolPath, 0o755);
+
+			const LISTEN_FROM_PORT_ENV =
+				"require('net').createServer(s => s.end()).listen(Number(process.env.PORT), '127.0.0.1');";
+
+			// `leet-fake-tool` names no path — it is reachable at all only through
+			// PATH, and nothing but this run's own linked `.bin` could ever hold a
+			// command by this name. If this boots, `runDir/node_modules/.bin`
+			// reached the child's PATH.
+			const result = await bootServer(pkg({ start: ['leet-fake-tool', LISTEN_FROM_PORT_ENV] }), runDir);
+			assert.strictEqual(result.ok, true, result.ok ? '' : result.reason);
+			if (!result.ok) { return; }
+			await result.server.stop();
+		});
+	});
+
+	// ── C39 (T4.7, VSX-227): a boot failure carries the child's own text ────
+
+	suite('bootServer — C39, the failure reason carries the child\'s own diagnostic', () => {
+		test('a missing executable (spawn ENOENT) classifies as infrastructure, not candidate', async function () {
+			this.timeout(10_000);
+			const result = await bootServer(pkg({
+				start: ['definitely-not-a-real-leet-command-xyz'],
+			}), runDir, { bootTimeoutMs: 2000 });
+
+			assert.strictEqual(result.ok, false, 'a nonexistent command must never report a boot success');
+			if (result.ok) { return; }
+			assert.match(result.reason, /ENOENT/, `reason must carry the spawn error text; got "${result.reason}"`);
+			assert.strictEqual(
+				classifyStarterFailure(result.reason), 'infrastructure',
+				'a missing interpreter must classify as infrastructure so --starter-red reports INCONCLUSIVE, not RED',
+			);
+		});
+
+		test('a candidate crash with no infra-shaped text stays classified candidate', async function () {
+			this.timeout(10_000);
+			const CRASH_WITH_OWN_MESSAGE = "console.error('totally ordinary bug in the solver code'); process.exit(1);";
+			const result = await bootServer(pkg({
+				start: [process.execPath, '-e', CRASH_WITH_OWN_MESSAGE],
+			}), runDir, { bootTimeoutMs: 2000 });
+
+			assert.strictEqual(result.ok, false);
+			if (result.ok) { return; }
+			assert.match(result.reason, /totally ordinary bug in the solver code/);
+			assert.strictEqual(
+				classifyStarterFailure(result.reason), 'candidate',
+				'an ordinary candidate crash must not be misclassified as a broken toolchain',
+			);
+		});
+
+		test('the crash diagnostic survives 500+ chars of banner noise ahead of it — truncation is from the TAIL', async function () {
+			this.timeout(10_000);
+			// A dev-server `start` (`npm start` → vite/next) routinely prints
+			// hundreds of characters of banner before the line that actually
+			// matters — this reproduces that shape directly rather than shelling
+			// out to a real bundler. 600 > MAX_LOG_IN_REASON (500), so a
+			// head-truncating reason drops the diagnostic entirely.
+			const NOISY_THEN_CRASH = [
+				"process.stdout.write('X'.repeat(600) + '\\n');",
+				"console.error(\"Cannot find module 'totally-not-installed-xyz'\");",
+				'process.exit(1);',
+			].join('\n');
+			const result = await bootServer(pkg({
+				start: [process.execPath, '-e', NOISY_THEN_CRASH],
+			}), runDir, { bootTimeoutMs: 2000 });
+
+			assert.strictEqual(result.ok, false);
+			if (result.ok) { return; }
+			assert.match(
+				result.reason, /Cannot find module 'totally-not-installed-xyz'/,
+				`the tail diagnostic must survive truncation; got "${result.reason}"`,
+			);
+			assert.strictEqual(
+				classifyStarterFailure(result.reason), 'infrastructure',
+				'with the diagnostic intact this must classify as infrastructure, not read as banner-only noise',
+			);
 		});
 	});
 });

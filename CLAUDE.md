@@ -320,9 +320,14 @@ Its grammar — [packages-parser.helpers.ts](src/services/packages-parser.helper
 `project-parser.helpers.ts`, **not** from `parseLeetCode` itself, so `packages:` is parsed for a
 multi-file type and silently ignored on a `function` artifact that declares it. A parsed tree carries
 `packages`, and
-an `http` check resolves its `package:` name against that list before booting. Booting several
-packages in `dependsOn` order, running each one's `install`, and computing `exposeAs` are still
-the `stack` runner's, unbuilt. See `ARTIFACT_LEETCODE_FILE_FORMAT.md` §9.3.)
+an `http` check resolves its `package:` name against that list before booting. **Booting several
+packages in `dependsOn` order, running each one's `install`, and computing `exposeAs` is built** —
+`bootStack` ([test-envs/stack/stack.runner.ts](src/services/test-envs/stack/stack.runner.ts),
+VSX-178): concurrent installs, `dependsOn`-ordered boot waves, each package's `exposeAs` computed
+from the **already-assigned** ports of its dependencies, and one `finally`-guarded teardown for the
+group with every process group also session-registered. A dependency that never boots fails every
+dependent **carrying the dependency's own reason**, never a symptom-only "web never booted".
+See `ARTIFACT_LEETCODE_FILE_FORMAT.md` §9.3.)
 Placement is convention — the parser is order-independent — but the marker is not: `yaml`
 first (so Obsidian still highlights it), then a **bare** `leetcode` token, because a
 `## Files` entry always carries `path=` and must never be mistaken for config. Fence content
@@ -408,10 +413,21 @@ Behaviour the spec does **not** cover:
   arrived with T3.5 for a concrete reason: `http` became dispatchable, so the four stack
   artifacts stopped being refused and started installing ecosystems and booting servers inside
   a sweep that is otherwise offline and seconds long. A `package` declaring an `http` check
-  boots one server and stays in the sweep. Measured with the flag on, `fastapi-react.md` fails
-  before booting anything: its `## Tests` fences carry no `check=` attribute and the artifact
-  has two checks, so its cases bind to neither and the http check has none. That is an
-  artifact defect the stack wave owns, not a toolchain one.
+  boots one server and stays in the sweep. Measured with the flag on, **all four** stack
+  artifacts fail before booting anything — not just `fastapi-react.md` — each exiting `1`: their
+  `## Tests` fences carry no `check=` attribute and each artifact has two checks, so the cases
+  bind to neither and the `http` check has none. That is an artifact defect the stack wave owns,
+  not a toolchain one.
+  **The `check=` attribute alone does not fix them, and assuming it did cost a round.** All four
+  write their cases in the `call`/`program` shape — `{ input: { path }, expected }` — while an
+  `http` case is `{ request: {...}, expect: {...} }` (`parseHttpCase`, `http-case.helpers.ts`).
+  Binding a fence only moves the failure from *"check 'x' has no cases"* to
+  **`case 0: request must be an object`**. The case lists have to be **rewritten**, not annotated.
+- **Read a harness exit status without a pipe.** `node scripts/verify-exercise.mjs … | tail`
+  reports the status of `tail`, so a `FAIL` line reads as `exit 0`. Measured the hard way: the
+  first flagged-sweep run of this wave was recorded as passing when it had failed. The sweep loop
+  in this file is already correct — it tests the command directly — but every ad-hoc check of one
+  artifact must be too.
 
 ### Language registry — the one authority
 

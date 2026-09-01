@@ -1,8 +1,12 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { PackageSpec } from '../../../types/leetcode.types.js';
+import type { LibEcosystem } from '../../libs/lib-ecosystem.js';
+import { libExecEnv } from '../../libs/lib-env.helpers.js';
 import { resolveContained } from '../project/files.writer.js';
-import { bootServer, substitutePort, type BootedGroupRegistry } from '../http/server.lifecycle.js';
+import {
+	bootServer, MAX_LOG_IN_REASON, substitutePort, type BootedGroupRegistry,
+} from '../http/server.lifecycle.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -90,6 +94,16 @@ export interface StackBootOptions {
 	readonly registry?: BootedGroupRegistry;
 	/** Overrides `bootServer`'s own boot-timeout default — a test-only escape hatch. */
 	readonly bootTimeoutMs?: number;
+	/**
+	 * Resolved library cache per ecosystem for this run (T4.7, VSX-227) — the
+	 * same `dirs` map `gradeProjectDir` already computes before booting.
+	 * Consumed by every package's `install` step **and** its `start` boot,
+	 * through {@link libExecEnv}: without this, a stack declaring
+	 * `libs: python: [flask]` boots a child that can `import flask` at
+	 * neither step and fails naming the missing module, exactly as measured
+	 * (C29). Omitted (or empty) for a run that declares no `libs:`.
+	 */
+	readonly libDirs?: ReadonlyMap<LibEcosystem, string>;
 }
 
 /** A resolved boot outcome plus the {@link BootedServer.stop} needed to tear it down — internal only; {@link PackageBootOutcome} (the public shape) never carries a live handle. */
@@ -122,7 +136,7 @@ export async function bootStack(
 	const resolved = new Map<string, Resolved>();
 
 	try {
-		const installOutcomes = await installAll(packages, runDir, INSTALL_TIMEOUT_MS);
+		const installOutcomes = await installAll(packages, runDir, INSTALL_TIMEOUT_MS, opts.libDirs);
 		await bootWaves(packages, byName, installOutcomes, resolved, runDir, opts);
 	} catch (e) {
 		// A boot that fails halfway through a set must still tear down whatever
@@ -150,16 +164,27 @@ type InstallOutcome = { ok: true } | { ok: false; reason: string };
 /** Run every package's `install` argv concurrently, independent of `dependsOn` — a dependency's own install needs nothing else running. */
 async function installAll(
 	packages: readonly PackageSpec[], runDir: string, timeoutMs: number,
+	libDirs: ReadonlyMap<LibEcosystem, string> | undefined,
 ): Promise<ReadonlyMap<string, InstallOutcome>> {
 	const outcomes = new Map<string, InstallOutcome>();
 	await Promise.all(packages.map(async pkg => {
-		outcomes.set(pkg.name, await runInstall(pkg, runDir, timeoutMs));
+		outcomes.set(pkg.name, await runInstall(pkg, runDir, timeoutMs, libDirs));
 	}));
 	return outcomes;
 }
 
-/** Run one package's `install` argv — never a shell, `execFile` on the declared array as-is. */
-async function runInstall(pkg: PackageSpec, runDir: string, timeoutMs: number): Promise<InstallOutcome> {
+/**
+ * Run one package's `install` argv — never a shell, `execFile` on the
+ * declared array as-is.
+ *
+ * The child's environment is {@link libExecEnv} (C29, T4.7): a package's own
+ * `install` step (`pip install -r requirements.txt`, say) needs the exact
+ * same `VIRTUAL_ENV`/`PATH` its later `start` gets, or the install itself
+ * resolves the wrong interpreter — or none.
+ */
+async function runInstall(
+	pkg: PackageSpec, runDir: string, timeoutMs: number, libDirs: ReadonlyMap<LibEcosystem, string> | undefined,
+): Promise<InstallOutcome> {
 	const [command, ...args] = pkg.install;
 	if (command === undefined) { return { ok: false, reason: `packages: '${pkg.name}' install is an empty argv` }; }
 
@@ -170,8 +195,9 @@ async function runInstall(pkg: PackageSpec, runDir: string, timeoutMs: number): 
 		return { ok: false, reason: e instanceof Error ? e.message : String(e) };
 	}
 
+	const env = libExecEnv(libDirs, runDir);
 	try {
-		await execFileAsync(command, args, { cwd, timeout: timeoutMs });
+		await execFileAsync(command, args, { cwd, env, timeout: timeoutMs });
 		return { ok: true };
 	} catch (e) {
 		return { ok: false, reason: installFailureText(e) };
@@ -183,7 +209,9 @@ function installFailureText(error: unknown): string {
 	if (typeof error === 'object' && error !== null) {
 		const { stderr, stdout } = error as { stderr?: string; stdout?: string };
 		const output = `${stderr ?? ''}${stdout ?? ''}`.trim();
-		if (output !== '') { return output.length > 500 ? `${output.slice(0, 500)}…` : output; }
+		if (output !== '') {
+			return output.length > MAX_LOG_IN_REASON ? `${output.slice(0, MAX_LOG_IN_REASON)}…` : output;
+		}
 	}
 	if (error instanceof Error) { return error.message; }
 	try {
@@ -251,7 +279,7 @@ async function bootOnePackage(
 
 	const env = envFromDependencies(pkg, byName, resolved);
 	const result = await bootServer(pkg, runDir, {
-		registry: opts.registry, bootTimeoutMs: opts.bootTimeoutMs, env,
+		registry: opts.registry, bootTimeoutMs: opts.bootTimeoutMs, env, libDirs: opts.libDirs,
 	});
 	resolved.set(pkg.name, result.ok
 		? { outcome: { ok: true, port: result.server.port, pid: result.server.pid }, stop: result.server.stop }

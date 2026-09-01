@@ -172,7 +172,7 @@ export async function gradeProjectDir(
 	// `packages.length > 0` alone, so a `package` artifact's existing,
 	// already-working single-boot-per-check path is completely untouched.
 	const stackBoot = parsed.leetcodeType === 'stack' && (parsed.packages?.length ?? 0) > 0
-		? await bootStack(parsed.packages ?? [], runDir, { registry: options.registry })
+		? await bootStack(parsed.packages ?? [], runDir, { registry: options.registry, libDirs: dirs })
 		: undefined;
 
 	try {

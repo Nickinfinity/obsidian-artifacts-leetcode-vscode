@@ -66,7 +66,7 @@ export async function runOneCheck(
 		case 'http':
 			return stackBoot
 				? runStackHttpCheck(check, stackBoot, parsed.test.timeoutMs)
-				: runPackageHttpCheck(check, parsed, runDir, registry);
+				: runPackageHttpCheck(check, parsed, runDir, dirs, registry);
 		case 'call':
 			// Nothing is threaded in: a call check runs through `runSuite`,
 			// which resolves its own library environment from `parsed.libs`.
@@ -139,31 +139,27 @@ function isBootedOutcome(outcome: { ok: boolean }): outcome is { ok: true; port:
  * inside `runHttpCheck` — `parseTimeoutMs` already bounds it at parse time,
  * and the second clamp is that module's contract with direct callers.
  *
- * **Libraries are not threaded into the boot, and that is a stated ceiling —
- * still true after T4.1.** A node package resolves its imports through the
- * `node_modules` `linkModules` already put in the run directory, so an
- * Express server boots; a package whose ecosystem is reached by environment
- * variable instead (a venv, a classpath) does not see them yet, and fails
- * loudly naming the missing import rather than grading green without them.
- * T4.1 (`bootStack`, `stack.runner.ts`) landed `dependsOn` ordering,
- * `exposeAs` wiring and group teardown for a `stack`'s boot — a different
- * environment seam (cross-package URLs, not `libs:` cache directories) — and
- * did not close this one. Closing it means resolving `parsed.libs` through
- * `ensureLibEnv` at this call site (or inside `bootStack`) and consuming it
- * the same way `runProgramSuite` already does (`CLASSPATH` / `VIRTUAL_ENV`),
- * which is its own task.
+ * **Libraries reach the boot (T4.7, VSX-227) through the same `dirs` map
+ * `gradeProjectDir` already resolved before any check ran** — forwarded here
+ * as `bootOpts.libDirs`, which `bootServer` consumes through `libExecEnv`
+ * exactly as a `build` check's own `PATH`/env composition already did. A
+ * single-package `package` with an `http` check and `libs: python: [flask]`
+ * used to fail naming the missing import; it no longer does. The npm case
+ * (`node_modules` via `linkModules`) and this one now share one seam.
  *
  * @param check    - The `http` check.
  * @param parsed   - The artifact, for `packages:` and the per-case budget.
  * @param runDir   - Run directory holding the materialised tree.
+ * @param dirs     - Resolved library cache per ecosystem for this run.
  * @param registry - The session's booted-group registry, when there is a session.
  * @returns The check's verdict.
  *
  * @example
- * await runPackageHttpCheck(check, parsed, '/tmp/run', session.bootedGroups);
+ * await runPackageHttpCheck(check, parsed, '/tmp/run', dirs, session.bootedGroups);
  */
 async function runPackageHttpCheck(
-	check: HttpCheck, parsed: ParsedLeetCode, runDir: string, registry?: BootedGroupRegistry,
+	check: HttpCheck, parsed: ParsedLeetCode, runDir: string,
+	dirs: ReadonlyMap<LibEcosystem, string>, registry?: BootedGroupRegistry,
 ): Promise<ProjectCheckOutcome> {
 	const pkg = (parsed.packages ?? []).find(p => p.name === check.package);
 	if (!pkg) {
@@ -173,7 +169,7 @@ async function runPackageHttpCheck(
 		};
 	}
 	return runHttpCheck(
-		{ name: check.name, cases: check.cases }, pkg, runDir, parsed.test.timeoutMs, { registry },
+		{ name: check.name, cases: check.cases }, pkg, runDir, parsed.test.timeoutMs, { registry, libDirs: dirs },
 	);
 }
 

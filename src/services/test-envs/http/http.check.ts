@@ -11,12 +11,13 @@ import { bootServer, type BootOptions } from './server.lifecycle.js';
  * into the same {@link ProjectCheckOutcome} shape every other check kind
  * produces.
  *
- * **`leetcode.types.ts` has no `HttpCheck` yet.** The parser still drops
- * `kind: http` as unimplemented (`RESERVED_KINDS`, `project-parser.helpers
- * .ts`), so nothing constructs one today. {@link HttpCheckInput} is this
- * module's own input shape — the orchestrator or T3.5 lands the real
- * `HttpCheck extends ProjectCheckBase` and wires dispatch; see the worker
- * report for the exact hunks this task is not allowed to make itself.
+ * **`kind: http` is parsed and dispatched (VSX-175).** `leetcode.types.ts`
+ * declares `HttpCheck`, the parser builds one (refusing a check that names no
+ * `package:`), and `runOneCheck` dispatches it. {@link HttpCheckInput} remains
+ * this module's own **structural** input shape rather than an alias of
+ * `HttpCheck`: it is what this module needs to run a check — a name, a booted
+ * target and cases — so a caller that has already booted a server (the stack
+ * runner) can use it without owning a parsed artifact.
  *
  * **One boot, not one per case.** {@link bootServer} is called exactly once
  * per {@link runHttpCheck} call; every case in `check.cases` runs against
@@ -68,8 +69,8 @@ import { bootServer, type BootOptions } from './server.lifecycle.js';
  */
 
 /**
- * This module's own input shape for one `http` check — see the module doc
- * for why `leetcode.types.ts` has no `HttpCheck` yet.
+ * This module's own structural input shape for one `http` check — deliberately
+ * not an alias of `leetcode.types.ts`'s parsed `HttpCheck`; see the module doc.
  */
 export interface HttpCheckInput {
 	/** Unique within the artifact — echoed onto the outcome, same as every other check kind. */

@@ -354,15 +354,26 @@ one multi-package artifact grade each check differently.
 
 | id | delivers a case by | status **in the tree today** |
 |---|---|---|
-| `function` | positional args to a named callable via a generated driver | **implemented** — registered for java · javascript · python · rust · typescript |
+| `call` | positional args to a named callable via a generated driver | **implemented** — registered for java · javascript · python · rust · typescript, for `leetcodeType: function`. Also the one kind a check inside a tree may declare against a single file. |
+| `program` | argv, named flags or stdin; compares what the program writes to `$LEET_OUT` | **implemented** for `leetcodeType: package` — registered for the same five languages. One **process per case**, so it is the one test type whose suite budget is not `cases × timeoutMs` (§2.5.5). |
+| `http` | a real request to a booted server on an assigned loopback port | **implemented** as a check `kind:` — dispatched per check, never resolved through the registry |
 | `build` | — | **implemented** as a check `kind:` — a declared argv exits `0` |
 | `dom-assert` | a declarative `RenderStep[]` against a jsdom mount | **implemented** as a check `kind:` |
-| `css-assert` | as above | **implemented** as a check `kind:` — a **declared** style property or class presence |
-| `call` | as `function` | **reserved** — the name `function` becomes, once the environments re-register under it. Declaring it today leaves the artifact with no environment. |
-| `program` | argv, named flags or stdin; compares what the program writes to `$LEET_OUT` | **implemented** for `leetcodeType: package` — registered for java · javascript · python · rust · typescript. One **process per case**, so it is the one test type whose suite budget is not `cases × timeoutMs` (§2.5.5). |
-| `http` | a real request to a booted server on an assigned loopback port | reserved |
-| `class` · `in-place` · `stdin-stdout` | — | reserved |
-| `project` · `service` | — | **legacy shape ids, not test types.** Accepted only as derivation inputs (§2.3). `project` is still the registry key the directory-grading path resolves through; neither is a `kind:` a check may declare. |
+| `css-assert` | as above | **implemented** as a check `kind:` — a **declared** style property or class presence, never layout geometry |
+| `class` · `in-place` | — | **reserved** |
+
+**`function`, `stdin-stdout`, `project` and `service` are not ids at all any more.** `function` was the
+legacy spelling of `call` and `stdin-stdout` of `program`; both are accepted as *derivation inputs*
+(§2.3) and normalise to the current id. `project` and `service` were artifact **shapes** wearing a test
+type's clothing — they are `leetcodeType` values (§2.1), never a `kind:` a check may declare, and
+`project` is no longer a registry key either: the five stub envs behind it were deleted, so a tree
+registers nothing and is graded by dispatching its checks.
+
+**Only two rows go through the registry**, and that is the point of the table rather than an accident:
+`call × {the five languages}` for a buffer, and `program × {the five}` for a package. Every other
+implemented id is a check `kind:` dispatched by `runOneCheck` against an already-written directory, so
+`languagesForType('build', 'package')` is `[]` and always will be — an empty cell there means *"not
+resolved this way"*, not *"unimplemented"*.
 
 A **reserved** id parses and validates, but nothing is registered, so
 `languagesForType()` resolves it to `[]`, the language selector renders empty and
@@ -629,6 +640,57 @@ JSON can express.
   are shown (`2 public · 1 final`) but inputs/expected are never rendered. An
   exercise with no `## Final Tests` falls back to grading the public list at
   Submit time (resolved in `submitSuite`, never doubled in the parser).
+
+#### An `http` case is a different shape — `request` / `expect`, not `input` / `expected`
+
+`{ input, expected }` above is the shape for `call` and `program`. A case bound to a
+**`kind: http`** check declares a request and the subset of the response to assert
+([`http-case.helpers.ts`](src/services/test-envs/http/http-case.helpers.ts)). Writing an `http`
+case in the `input`/`expected` shape fails with **`case 0: request must be an object`** — measured
+on all four of the vault's pre-existing `stack` artifacts, which were authored before this kind was
+dispatchable.
+
+~~~md
+## Tests
+
+```yaml check="api filters by price"
+- request:
+    method: GET
+    path: "/items?maxPrice=20"
+  expect:
+    status: 200
+    body: {items: [{name: cable, price: 5}]}
+```
+~~~
+
+| Field | Required | Rule |
+|---|---|---|
+| `request.method` | **yes** | One of `GET` `POST` `PUT` `PATCH` `DELETE` `HEAD` `OPTIONS`, case-insensitive. There is **no default** — an absent method is refused. |
+| `request.path` | **yes** | A non-empty **path**, never a URL. See the loopback rule below. |
+| `request.headers` | no | An object of **string** values; a non-string value is refused by name. |
+| `request.body` | no | Any JSON value. **Refused with `GET` or `HEAD`** — the Fetch API rejects a body there, so it is refused here with a named reason instead of failing obscurely. |
+| `expect.status` | no | An **integer**. A *quoted* status is a string and is refused — the type rule is deliberate. |
+| `expect.headers` | no | Object of string values; each named header is compared individually. |
+| `expect.body` | no | Compared as **JSON**: the response text is parsed, and a response that is not valid JSON fails by name. |
+
+**Only what `expect` declares is asserted.** An undeclared field is never checked, so a case may
+assert a status alone, a single header alone, or a body alone. Comparison runs through the same
+`canonicalJson` every other test environment uses, so key order and whitespace never decide a case.
+
+**The host is never artifact-supplied (S1).** A case names a *path*; the request is always built
+against `127.0.0.1:<the port this run assigned>`. An absolute URL, a protocol-relative `//host/path`,
+or anything else resolving off that host is **refused at validation, by name** — including an
+absolute URL that merely *names* the loopback host. The rule is enforced twice, at validation and
+again when the request is built, so it holds for a case that somehow skipped the validator.
+Redirects are **not followed** (`redirect: 'manual'`): a `3xx` is returned as an ordinary observable
+response, because the server answering is the artifact's own overlay and a `Location:` header would
+otherwise carry the request off the loopback host.
+
+**Every request is bounded** — a per-case timeout and a 64 KiB response-body cap, both of which
+**fail** the case rather than silently truncating it into a comparison that could read green.
+
+Cases bind to their check with a `check=<name>` fence attribute (§9). A bare fence binds only when
+the artifact declares exactly one check.
 
 ### 3.4 `# Setup`
 
@@ -910,9 +972,15 @@ explicitly from the CLI, not part of the extension.
 
 > **These are `leetcodeType` values, not test types** (§2.1). The ids `project` and
 > `service` that used to sit here were an artifact *shape* wearing a test type's clothing;
-> they survive only as derivation inputs (§2.3) and — for `project` — as the registry key
-> the directory-grading path still resolves through. `project/` remains a directory name
+> they survive **only** as derivation inputs (§2.3). `project/` remains a directory name
 > under `src/services/test-envs/`, never an id an author writes.
+>
+> **`project` is not a registry key either, and this line used to say it was.** T3.5 deleted
+> the five `projectEnvFor` stubs: each refused every candidate it was handed, so what they
+> registered was a claim that a tree could be graded *through the suite runner*, which it never
+> can. A tree registers **nothing** — `languagesForType('build', 'package')` is `[]` and always
+> will be — and is graded by dispatching its checks instead. An empty cell there means *"not
+> resolved this way"*, never *"unimplemented"*.
 
 > **Status, precisely.** A `package` is **parsed and graded**: `## Files`, `libs:`, `checks:`
 > and the `check=<name>` case binding all land on the parsed artifact, and all **five** check
