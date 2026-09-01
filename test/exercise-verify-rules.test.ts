@@ -112,6 +112,59 @@ suite('exercise-verify — rules registry (leetcode-type axis)', () => {
         );
     });
 
+    // ── C37: a `call` check needs the artifact's own top-level `params:` ──
+    //
+    // T4.4 gave `stack.rules.ts` this exact rule (its rule 3) but
+    // `package.rules.ts` never checked it — so a `package` declaring a `call`
+    // check with no top-level `params:` graded its cases against nothing
+    // instead of failing by name. `runFunctionCheck` builds each case's
+    // arguments from the artifact's own `params:`, never anything the check
+    // itself declares, so this is a genuine case-shape mismatch. The rule now
+    // lives once, in the shared structural path both `package.rules.ts` and
+    // `stack.rules.ts` delegate through (`checkPackageStructure`) — this
+    // fixture is the `package` half of the pin; `exercise-verify-stack.test.ts`
+    // still pins the `stack` half, now reached the same way.
+
+    test('a package with a call check and no top-level params fails on the case-shape mismatch', async () => {
+        const md = [
+            '---',
+            'artifactType: leetcode',
+            'leetcodeType: package',
+            'title: Widget',
+            'difficulty: medium',
+            '---',
+            '',
+            'A multi-file exercise.',
+            '',
+            '```yaml leetcode',
+            'checks:',
+            '  - name: pricing',
+            '    kind: call',
+            '    file: index.js',
+            '    function: computePrice',
+            '```',
+            '',
+            '## Files',
+            '',
+            '```javascript path=index.js role=editable',
+            'module.exports = { computePrice: () => 0 };',
+            '```',
+            '',
+            '## Tests',
+            '```json check=pricing',
+            '[{"input": {"price": 10}, "expected": 10}]',
+            '```',
+        ].join('\n');
+
+        const result = await verifyExercise(md);
+        assert.strictEqual(result.ok, false, JSON.stringify(result));
+        assert.strictEqual(
+            !result.ok ? result.reason : '',
+            "package: check 'pricing' is kind 'call' but the artifact declares no params "
+                + "— a call check runs against the artifact's own top-level function shape",
+        );
+    });
+
     test('an explicit leetcodeType: stack is held to the package rules, not the function floors', async () => {
         // A `stack` is *several packages* — the most tree-shaped artifact in
         // the model — so it is graded by declared checks, never by one

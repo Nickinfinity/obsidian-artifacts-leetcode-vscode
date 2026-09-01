@@ -268,10 +268,28 @@ function parseNode(cur: Cursor, minIndent: number): unknown {
 	return parseMap(cur, line.indent);
 }
 
-/** A scalar or a flow collection, as written after a `key:` or a `- `. */
+/**
+ * A scalar or a flow collection, as written after a `key:` or a `- `.
+ *
+ * `readFlow` is entered only when the value actually opens a flow node — a
+ * collection (`[`/`{`) or a quoted string (`"`/`'`), each of which needs
+ * dedicated parsing. Every other value is a **plain scalar** and is typed
+ * whole by `typePlainScalar` — never run through `readFlow`'s bare-scalar
+ * branch, which stops at `,`/`]`/`}` for flow-collection *items* and would
+ * otherwise silently truncate a plain `1,2,3,4,5` or `hello, world` at its
+ * first comma (C34).
+ */
 function scalarOrFlow(text: string): unknown {
-	const flow = readFlow(text, 0);
-	return flow ? flow.value : typePlainScalar(text);
+	const trimmed = text.trimStart();
+	const first = trimmed[0];
+	if (first === '[' || first === '{') {
+		const flow = readFlow(text, 0);
+		if (flow) { return flow.value; }
+	} else if (first === '"' || first === "'") {
+		const quoted = readQuoted(text, text.length - trimmed.length);
+		if (quoted) { return quoted.value; }
+	}
+	return typePlainScalar(text.trim());
 }
 
 /**

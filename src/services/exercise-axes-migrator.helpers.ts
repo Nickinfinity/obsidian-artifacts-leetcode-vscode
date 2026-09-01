@@ -1,4 +1,4 @@
-import { CANONICAL_FRONTMATTER_ORDER, extractConfigBlocks, splitFrontmatter } from './leetcode-config-blocks.helpers.js';
+import { CANONICAL_FRONTMATTER_ORDER, TOP_LEVEL_KEY_RE, extractConfigBlocks, splitFrontmatter } from './leetcode-config-blocks.helpers.js';
 import { resolveLeetcodeType } from './leetcode-type.helpers.js';
 
 /**
@@ -57,7 +57,7 @@ function splitKeepingEols(text: string): string[] {
 }
 
 /** Matches a column-0 `key:` line — the same anchored, single-quantifier shape used elsewhere. */
-const TOP_LEVEL_KEY_RE = /^(\w+):/;
+
 
 /**
  * Groups frontmatter lines under their owning top-level key.

@@ -1,4 +1,4 @@
-import { CANONICAL_FRONTMATTER_ORDER } from './leetcode-config-blocks.helpers.js';
+import { CANONICAL_FRONTMATTER_ORDER, TOP_LEVEL_KEY_RE } from './leetcode-config-blocks.helpers.js';
 
 /**
  * The pure check that enforces the canonical frontmatter key order (defined
@@ -22,14 +22,6 @@ import { CANONICAL_FRONTMATTER_ORDER } from './leetcode-config-blocks.helpers.js
 const CANONICAL_INDEX: ReadonlyMap<string, number> = new Map(
 	CANONICAL_FRONTMATTER_ORDER.map((key, index) => [key, index]),
 );
-
-/**
- * A column-0 `key:` line. Anchored (`^`) so an indented continuation line —
- * a `tags:` block's `- foo`, a `params:` sub-key — never matches, and a
- * single `\w+` quantifier keeps a pathologically long key linear rather than
- * a backtracking hang.
- */
-const TOP_LEVEL_KEY_RE = /^(\w+):/;
 
 /**
  * Reports the first out-of-order pair of *known* frontmatter keys in `fmRaw`,

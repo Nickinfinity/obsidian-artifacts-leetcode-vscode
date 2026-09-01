@@ -118,7 +118,41 @@ function checkPackageStructure(parsed: ParsedLeetCode, leetcodeType: LeetcodeTyp
 		return `${leetcodeType}: check '${unbound[0].name}' has no cases — bind them with a \`check=\` fence attribute`;
 	}
 
+	const callShapeReason = checkCallChecksHaveParams(parsed, leetcodeType);
+	if (callShapeReason) { return callShapeReason; }
+
 	return checkTestTypeMirror(parsed, leetcodeType);
+}
+
+/**
+ * A `call` check needs the artifact's own top-level `params:` to give its
+ * cases a shape (condition C37, formerly `stack.rules.ts`'s own rule 3).
+ * `runFunctionCheck` serialises a case's `input` into positional arguments
+ * using the artifact's own top-level `params:` — never anything the check
+ * itself declares — so a `call` check with no top-level `params:` has a
+ * genuine case-shape mismatch: its cases carry an `input` the generated
+ * driver has no declared arguments to bind it to. Without this rule the
+ * driver calls the candidate with zero arguments and grades whatever it
+ * happens to return, instead of failing by name.
+ *
+ * Lives here — the structural path `verifyPackageExercise` and
+ * `verifyStackExercise` both delegate through — so a `package` and a `stack`
+ * share one authority instead of `stack.rules.ts` carrying a second copy.
+ *
+ * @param parsed       - Parsed artifact, already known to declare `checks:`.
+ * @param leetcodeType - The resolved type, for the message prefix only.
+ * @returns A reason naming the offending check, or `null` when every `call`
+ *   check has a top-level function shape to run against.
+ *
+ * @example
+ * checkCallChecksHaveParams({ ...parsed, params: [], checks: [callCheck] }, 'package'); // → a reason
+ */
+function checkCallChecksHaveParams(parsed: ParsedLeetCode, leetcodeType: LeetcodeTypeId): string | null {
+	if (parsed.params.length > 0) { return null; }
+	const callCheck = parsed.checks?.find(c => c.kind === 'call');
+	if (!callCheck) { return null; }
+	return `${leetcodeType}: check '${callCheck.name}' is kind 'call' but the artifact declares no params `
+		+ "— a call check runs against the artifact's own top-level function shape";
 }
 
 /**

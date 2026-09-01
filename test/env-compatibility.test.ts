@@ -1,5 +1,6 @@
 import * as assert from 'node:assert';
 import { refusalFor } from '../src/services/test-envs/compatibility.helpers.js';
+import { testEnvFor } from '../src/services/test-envs/env.registry.js';
 
 /**
  * Unit tests for `refusalFor` — the one function that answers "is this
@@ -48,10 +49,39 @@ suite('env compatibility', () => {
 		}
 	});
 
-	test('an unregistered or hostile language string never throws, and is refused', () => {
+	test('an unregistered or hostile language string never throws', () => {
+		// The one thing this loop actually pins: `refusalFor` must not throw for
+		// any of these inputs. `assert.ok(refusal, …)` reads as a pollution
+		// check but is not one — none of these ids will ever equal a registered
+		// `"<type>::<language>"` key, so a refusal comes back whether or not the
+		// lookup underneath resists a hostile key. The real discriminator is the
+		// next test, against the registry lookup itself.
 		for (const language of ['__proto__', 'constructor', '', 'kotlin']) {
 			const refusal = refusalFor('function', 'call', language);
 			assert.ok(refusal, `expected a refusal for language ${JSON.stringify(language)}`);
+		}
+	});
+
+	test('SEC: the registry lookup resolves __proto__/constructor to undefined, never to an inherited object', () => {
+		// `__proto__: 'some string'` is a silent no-op (the setter ignores
+		// non-object values), so an assertion built on *assigning* a hostile
+		// proto — or on `Object.getPrototypeOf(result) === Object.prototype`
+		// afterwards — cannot fail no matter what the lookup does; both forms
+		// were tried here before and both shipped vacuous (C7).
+		//
+		// What actually discriminates is the registry lookup's own return
+		// value, checked by strict identity rather than truthiness: a
+		// `registry[type][language]` refactor (plain nested objects instead of
+		// the `"<type>::<language>"`-keyed `Map`) would resolve
+		// `bucket['__proto__']` through the prototype chain to the *truthy*
+		// `Object.prototype` object instead of `undefined` — a spurious match
+		// that `refusalFor` would read as "implemented" and silently fail to
+		// refuse. `Object.keys` on that spurious match is the tell: a real env
+		// carries `type`/`language`/`leetcodeTypes`/`emit`/`parse`;
+		// `Object.prototype` carries none of them.
+		for (const language of ['__proto__', 'constructor', 'prototype']) {
+			const env = testEnvFor('call', language, 'function');
+			assert.strictEqual(env, undefined, language);
 		}
 	});
 });

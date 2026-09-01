@@ -1,5 +1,5 @@
 import { safeJsonParse } from '../utils/safe-json.js';
-import { BODY_SET_KEYS, splitFrontmatter } from './leetcode-config-blocks.helpers.js';
+import { BODY_SET_KEYS, TOP_LEVEL_KEY_RE, splitFrontmatter } from './leetcode-config-blocks.helpers.js';
 import { boundaryOutsideFence, sectionBounds } from './leetcode-section-bounds.helpers.js';
 import { emitYamlCases } from './yaml-cases.helpers.js';
 
@@ -27,7 +27,7 @@ import { emitYamlCases } from './yaml-cases.helpers.js';
  */
 const SIGNATURE_KEYS: ReadonlySet<string> = new Set(['function', 'functions', 'params', 'returns']);
 
-const TOP_LEVEL_KEY_RE = /^(\w+):/;
+
 const FIRST_HEADING_RE = /^#+ /m;
 
 /**

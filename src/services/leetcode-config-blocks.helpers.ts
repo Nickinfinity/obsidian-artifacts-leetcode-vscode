@@ -42,9 +42,6 @@ const CONFIG_MARKER_RE = /^yaml\s+leetcode\s*$/;
 /** A closing fence: backticks, then only whitespace — trailing spaces/tabs are not "unterminated". */
 const CLOSING_FENCE_RE = /^```\s*$/;
 
-/** A column-0 top-level key inside a fence body (or a frontmatter line). */
-const TOP_LEVEL_KEY_RE = /^(\w+):/;
-
 /**
  * D6's asymmetric duplicate-key precedence, restated as a lookup: which
  * occurrence wins when the same top-level key is declared in two fences.
@@ -128,6 +125,34 @@ export const CANONICAL_FRONTMATTER_ORDER = [
 
 /** `CANONICAL_FRONTMATTER_ORDER`, as the membership set most callers need. */
 export const RETAINED_FM_KEYS: ReadonlySet<string> = new Set(CANONICAL_FRONTMATTER_ORDER);
+
+/**
+ * A frontmatter line that opens a **top-level** key, capturing the key name.
+ *
+ * **Anchored (`^`)** so an indented continuation line — a `tags:` block's
+ * `- foo`, a `params:` sub-key — never matches, and a **single `\w+`
+ * quantifier over a single class** keeps a pathologically long key linear
+ * rather than a backtracking hang (`S8786`).
+ *
+ * Lives beside {@link CANONICAL_FRONTMATTER_ORDER} because the two are always
+ * used together — you match a line to learn its key, then ask where that key
+ * belongs — and because it was previously declared byte-identically in both
+ * `frontmatter-order.helpers.ts` (which checks the order) and
+ * `frontmatter-patcher.service.ts` (which writes it). Two copies of the rule
+ * deciding *what counts as a key* is how the two sides of one invariant drift
+ * apart: the checker would accept a line the writer never recognised.
+ *
+ * **Deliberately unflagged.** A `g` flag would carry `lastIndex` between calls
+ * and make a shared module-scope regex skip every other line (`S6351`), which
+ * is exactly the footgun a shared constant would otherwise spread to both
+ * consumers at once.
+ *
+ * @example
+ * TOP_LEVEL_KEY_RE.exec('status: solved')?.[1]; // → 'status'
+ * @example
+ * TOP_LEVEL_KEY_RE.exec('  nested: value');     // → null (indented, not top level)
+ */
+export const TOP_LEVEL_KEY_RE = /^(\w+):/;
 
 /** Drop a trailing `\r` so CRLF input parses identically to LF. */
 function stripCr(line: string): string {

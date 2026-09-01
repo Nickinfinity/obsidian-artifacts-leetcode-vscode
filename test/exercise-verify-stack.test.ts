@@ -6,10 +6,13 @@ import { verifyExercise } from '../src/services/exercise-verify.helpers.js';
  * set instead of borrowing `verifyPackageExercise` wholesale (see
  * `rules.registry.ts`'s JSDoc for the routing history).
  *
- * Three rules are new (shape, http wiring, call-check shape); everything else
- * a `stack` is held to is the reused `package` rule set, already pinned by
+ * Two rules are new here (shape, http wiring); everything else a `stack` is
+ * held to is the reused `package` rule set, already pinned by
  * `exercise-verify-rules.test.ts` and `exercise-verify.test.ts` — this suite
- * does not re-pin that, only that a `stack` genuinely reaches it.
+ * does not re-pin that, only that a `stack` genuinely reaches it. The
+ * call-check-shape rule (condition C37) is one of those reused rules now —
+ * it lives once in `package.rules.ts` — so the fixture below pins that a
+ * `stack` still reaches it through the delegation, not a second copy.
  *
  * Every fixture here fails **before** `runProjectChecks` — a `stack` with two
  * or more `packages:` entries unconditionally boots all of them
@@ -179,13 +182,15 @@ suite('exercise-verify — stack.rules.ts', () => {
         assert.strictEqual(reasonOf(result), 'stack: no checks declared — solved means every check green');
     });
 
-    // ── Rule 3: a call check needs the artifact's own top-level params ───────
+    // ── C37 (reused, not re-implemented): a call check needs top-level params ──
 
     test('a call check with no top-level params fails on the case-shape mismatch', async () => {
         // `runFunctionCheck` serialises a case's `input` into positional
         // arguments using the artifact's own top-level `params:` — never
         // anything the check itself declares. No `params:` here means the
-        // driver has nothing to bind this check's cases to.
+        // driver has nothing to bind this check's cases to. This rule now
+        // lives in `package.rules.ts`; this fixture pins that a `stack`
+        // still reaches it through the delegation to `verifyPackageExercise`.
         const md = stackMd([
             '```yaml leetcode',
             TWO_PACKAGES,

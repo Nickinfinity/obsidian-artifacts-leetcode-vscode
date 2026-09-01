@@ -94,6 +94,22 @@ suite('yaml-cases — JSON types, YAML syntax', () => {
 		});
 	});
 
+	suite('an unquoted comma is not a flow separator at top level', () => {
+		// C34: scalarOrFlow called readFlow unconditionally, and readFlow's
+		// bare-scalar branch stops at `,` — flow-collection logic firing on a
+		// plain top-level scalar. Everything past the first comma silently
+		// vanished with no warning.
+		test('a comma-bearing number-like value stays whole, not truncated at the first comma', () => {
+			const parsed = parseYamlCases('- input:\n    line: 1,2,3,4,5\n  expected: 15');
+			assert.deepStrictEqual(parsed, [{ input: { line: '1,2,3,4,5' }, expected: 15 }]);
+		});
+
+		test('prose with a comma is not truncated mid-sentence', () => {
+			const parsed = parseYamlCases('- input:\n    s: hello, world\n  expected: 12');
+			assert.deepStrictEqual(parsed, [{ input: { s: 'hello, world' }, expected: 12 }]);
+		});
+	});
+
 	suite('malformed input degrades, never throws', () => {
 		for (const bad of ['- input: [1, 2', '- {unclosed: ', ': no key', '\t- tabbed']) {
 			test(`${JSON.stringify(bad)} yields null or a value, without throwing`, () => {

@@ -1,13 +1,7 @@
-import { CANONICAL_FRONTMATTER_ORDER } from './leetcode-config-blocks.helpers.js';
+import { CANONICAL_FRONTMATTER_ORDER, TOP_LEVEL_KEY_RE } from './leetcode-config-blocks.helpers.js';
 import { escapeRe } from '../utils/regex.helpers.js';
 
 // ── patchFrontmatterField ─────────────────────────────────────────────────────
-
-/**
- * A column-0 `key:` line — the same grammar `leetcode-config-blocks.helpers.ts`
- * and `frontmatter-order.helpers.ts` scan raw frontmatter text with.
- */
-const TOP_LEVEL_KEY_RE = /^(\w+):/;
 
 /**
  * Wraps a YAML scalar value in quotes when the bare form would be ambiguous.

@@ -17,13 +17,14 @@ const MIN_STACK_PACKAGES = 2;
  * `checks:` exactly like a `package`, once the shape that makes it a `stack`
  * at all actually holds.
  *
- * Three rules are new here; everything else — the file tree, `checks:`
- * being non-empty and uniquely named, every non-`build` check having cases
- * bound, the `checks:` / `test.type` mirror, and (for a live run) every
- * check actually going green against the `# Solutions` overlay — is the
- * *same* rule set a `package` is held to (`verifyPackageExercise`), reused
- * rather than re-implemented: a `stack` that clears its own shape gate is
- * graded exactly as a `package` would be.
+ * Two rules are new here; everything else — the file tree, `checks:` being
+ * non-empty and uniquely named, every non-`build` check having cases bound,
+ * a `call` check having the artifact's own top-level `params:` to give its
+ * cases a shape (condition C37), the `checks:` / `test.type` mirror, and
+ * (for a live run) every check actually going green against the
+ * `# Solutions` overlay — is the *same* rule set a `package` is held to
+ * (`verifyPackageExercise`), reused rather than re-implemented: a `stack`
+ * that clears its own shape gate is graded exactly as a `package` would be.
  *
  * 1. **Shape** — `packages:` must declare more than one entry. One package
  *    is not "several wired-together packages"; it is a `package` that
@@ -34,19 +35,13 @@ const MIN_STACK_PACKAGES = 2;
  *    `bootStack` has already installed and booted every **other** package
  *    the artifact declares — an expensive way to discover a typo. Checked
  *    here instead, before anything is installed or booted.
- * 3. **A `call` check needs a top-level function shape.** `runFunctionCheck`
- *    serialises a case's `input` into positional arguments using the
- *    artifact's own top-level `params:` — never anything the check itself
- *    declares. A `call` check with no top-level `params:` therefore has a
- *    genuine case-shape mismatch: its cases carry an `input` the generated
- *    driver has no declared arguments to bind it to.
  *
- * **[[C18]]:** this widens the plan's §C.4 matrix rather than narrowing the
- * code to match it. Both the shipped format spec and `buildCheck`
- * (`project-parser.helpers.ts`) already permit a `call` check inside a
- * `stack` — a `stack` is a set of packages, and a package may perfectly
- * well have a `call` check against one of its own files. Rule 3 makes that
- * combination *sound* rather than refusing it outright.
+ * **[[C18]]:** the shipped format spec and `buildCheck`
+ * (`project-parser.helpers.ts`) permit a `call` check inside a `stack` — a
+ * `stack` is a set of packages, and a package may perfectly well have a
+ * `call` check against one of its own files. `checkCallChecksHaveParams` in
+ * `package.rules.ts` (condition C37's shared home) makes that combination
+ * *sound* rather than refusing it outright — reused here, not duplicated.
  *
  * @param parsed       - Parsed artifact, already known to be `leetcodeType: stack`.
  * @param leetcodeType - Always `'stack'` through the registry; forwarded to
@@ -66,9 +61,9 @@ export async function verifyStackExercise(
 	const wiringReason = checkHttpPackagesResolve(parsed);
 	if (wiringReason) { return wiringReason; }
 
-	const callShapeReason = checkCallChecksHaveParams(parsed);
-	if (callShapeReason) { return callShapeReason; }
-
+	// Rule 3 (a `call` check needs the artifact's own `params:`) is no longer
+	// re-implemented here — it lives once, in `package.rules.ts`'s
+	// `checkPackageStructure`, which this delegation reaches next.
 	return verifyPackageExercise(parsed, leetcodeType, options);
 }
 
@@ -87,13 +82,4 @@ function checkHttpPackagesResolve(parsed: ParsedLeetCode): string | null {
 		}
 	}
 	return null;
-}
-
-/** Rule 3 — a `call` check needs the artifact's own `params:` to give its cases a shape. */
-function checkCallChecksHaveParams(parsed: ParsedLeetCode): string | null {
-	if (parsed.params.length > 0) { return null; }
-	const callCheck = (parsed.checks ?? []).find(c => c.kind === 'call');
-	if (!callCheck) { return null; }
-	return `stack: check '${callCheck.name}' is kind 'call' but the artifact declares no params `
-		+ "— a call check runs against the artifact's own top-level function shape";
 }
