@@ -61,7 +61,7 @@ invites a test to guard the copy instead of the real thing.
   done < <(find "$VAULT" -name '*.md' \
              -not -path '*/.obsidian/*' -not -path '*/.git/*' -not -path '*/.trash/*')
   echo "verified $total · failures $fail"
-  [ "$total" -ge "${EXPECTED_ARTIFACTS:-83}" ] || { echo "SWEEP DID NOT SEE THE VAULT: $total"; exit 1; }
+  [ "$total" -ge "${EXPECTED_ARTIFACTS:-84}" ] || { echo "SWEEP DID NOT SEE THE VAULT: $total"; exit 1; }
   ```
   Three things the loop does that a one-line `find -exec` cannot, all of which have bitten:
   **it filters on the `artifactType: leetcode` discriminator** (a vault holds ordinary notes —
@@ -73,18 +73,21 @@ invites a test to guard the copy instead of the real thing.
   candidates reads the very key the format rename rewrote, so a filter left on the old
   `^type: leetcode` spelling now matches **nothing**: the loop prints `verified 0 · failures 0`
   and every gate downstream reads it as green. A pass by vacancy. Measured on this vault:
-  **83** of 84 `.md` files are artifacts (the odd one out is `CoderByte/Tests/README.md`,
-  correctly excluded) — 65 `function`, 14 `package`, 4 `stack`. **Raise the default in the same
+  **84** of 85 `.md` files are artifacts (the odd one out is `CoderByte/Tests/README.md`,
+  correctly excluded) — 65 `function`, 14 `package`, 5 `stack`. **Raise the default in the same
   change that adds an artifact.** A floor below the true total is worse than no floor: it still
   passes a sweep that silently missed a dozen files, which is the exact failure it exists to
   catch. There is also a second sweep — `node scripts/coverage-sweep.mjs "$VAULT"` — which asks
   the other question, whether every *implemented* cell of the capability matrix has an artifact
   behind it at all.
 
-  **Four of the 83 are `stack` artifacts and print `SKIP … — stack, LEET_STACK_E2E not set`,
+  **Five of the 84 are `stack` artifacts and print `SKIP … — stack, LEET_STACK_E2E not set`,
   exiting `0`.** They still count toward `total` — the floor is unchanged — but nothing about
   them was examined beyond the parse. Set `LEET_STACK_E2E=1` to include them, and expect
-  minutes plus a network: a stack installs several ecosystems and boots several servers.
+  minutes plus a network: four of the five install real ecosystems and boot real servers.
+  The fifth, `CoderByte/Tests/stack/hello-stack.md`, is deliberately **offline and seconds long**
+  — two `node:http` packages, no `libs:` — so there is one `stack` that can be run at any time
+  without a network. Start there when something in the stack path looks broken.
 
   `verifyExercise` already enforces everything a parse-only guard could (missing title,
   missing `function:`, the case floors, `params`/`returns`) and more.
@@ -788,19 +791,44 @@ and it is **enforced, not remembered**:
   typescript, and a missing *compiler* is caught instead by the `spawn <cmd> ENOENT` shape.
   And **`Cannot find module` is only infrastructure for a bare package name** — a candidate's
   own bad `require('./helper.js')` reaches the classifier as verbatim child stderr.
-  **The residual gap:** `build.check.ts` returns raw child stdout/stderr and never uses the
-  `compilation error:` prefix, so a missing `tsc` and a real `error TS2554` are textually
-  identical there. Closing it means a structured failure reason out of that check, not a longer
-  pattern list.
+  **The classifier speaks four runtimes, and every pattern was measured, not guessed** (VSX-230):
+  Python's `ModuleNotFoundError: No module named`, Java's `NoClassDefFoundError` and
+  `Could not find or load main class`, and cargo's `no matching package named`. TypeScript was
+  measured and deliberately given **no** pattern — a missing `tsc` arrives as
+  `spawn tsc ENOENT`, already covered — and a test pins that rather than leaving it a claim.
+  **Python's rule is deliberately not narrowed the way Node's is.** Excluding dotted names
+  (the apparent analogue of `[^'./]`) would reclassify a swept *transitive* dependency
+  (`No module named 'flask.json'`) as the candidate's fault, because Python spells "my own
+  submodule" and "a third-party submodule" identically with a bare `.` — Node separates them
+  with `./` versus `/`. The trade is stated in that file at length: it leaves a candidate's own
+  `from .models import …` classifying as infrastructure, which is **fail-closed** (it buys an
+  author exit `3`, a refusal to certify, never a false green).
+  **The residual gaps, both real:** `build.check.ts` returns raw child stdout/stderr and never
+  uses the `compilation error:` prefix, so a missing `tsc` and a real `error TS2554` are
+  textually identical there; and a boot-failure reason is truncated to its **last** 500 chars
+  before the classifier reads it, so the classifier's input depends on a display budget. Neither
+  is closed by a longer pattern list — the first needs a structured failure reason out of that
+  check, the second a classification computed before truncation. Head-plus-tail truncation was
+  measured and rejected: it buys nothing, because Node carries a matcher at each end of its
+  error and an ESM miss says `Cannot find package`, not `Cannot find module`.
 - **A fence without `path=` is not an overlay.** It parses into `solutionFiles` as nothing at
   all — the failure mode is silent, and it has now bitten three artifacts (the Next.js spike,
   and both `stack` spikes, where the fences are deliberately fragments and say so).
 
-`<vault>/CoderByte/Tests/project/react-counter.md` is the smoke artifact: the smallest
+`<vault>/CoderByte/Tests/project/react-counter.md` is the `package` smoke artifact: the smallest
 `leetcodeType: package` that grades green through `verify-exercise.mjs`, and the file to open
 for an F5 pass. (The folder keeps its pre-axes name; the artifact inside declares the axis.)
 It ships **unsolved** like every other exercise — a stub in `## Files`, the working component
 in a `path=`-carrying `# Solutions` fence.
+
+`<vault>/CoderByte/Tests/stack/hello-stack.md` is its `stack` counterpart, and the same idea one
+axis over: the smallest `leetcodeType: stack` that grades, two `node:http` packages with **no
+`libs:` at all**, so it boots in seconds offline while the four real stacks need minutes and a
+network. `web` `dependsOn: [api]` and receives the api's URL through `exposeAs`, and its `http`
+check asserts **the api's data arriving through `web`** — which is what proves the two ports were
+actually wired, rather than the api merely being up. Under `--starter-red` both checks fail with
+real served responses (`got {"fromApi":{"sum":0}}` — `web` did reach `api` and relayed its stub's
+wrong answer), so even the red state exercises the wiring. Open this one for a `stack` F5 pass.
 
 **Rust has no serde.** Results serialise through a local `LeetJson` trait (compact, key-sorted
 JSON — `i32`/`f64`/`bool`/`String`/`Vec<T>`/`Option<T>`/`HashMap<String, T>`), not `{:?}` Debug:
@@ -905,6 +933,30 @@ Rules that are load-bearing, not stylistic:
   transitive-sweep ceiling npm has.
 - **`runSuite` is the only resolver.** A project's `function` check reaches libraries through
   the same call, so `gradeProjectDir` hands directories to `build` and render checks only.
+- **A booted package gets the environment its `libs:` bought, for `install` *and* `start`**
+  (VSX-227). `gradeProjectDir` already resolved the per-ecosystem directories before it boots
+  anything, so `bootStack` and `runPackageHttpCheck` are handed that same map rather than
+  resolving a second time — the rule above still holds, there is still one resolver.
+  `libExecEnv` ([libs/lib-env.helpers.ts](src/services/libs/lib-env.helpers.ts)) composes it
+  once: `mergeLibEnvVars` for the ecosystem variables, then `runDir/node_modules/.bin` and any
+  `<venv>/bin` **prepended** to the inherited `PATH`. `build.check.ts`, `runInstall` and
+  `composeChildEnv` all call it, so the composition has one home instead of three copies.
+  **Ordering is the guard, and it is true by construction:** the library values are assigned
+  first, the artifact's `exposeAs` entries second (each filtered by `isSafeExposeName`), `PORT`
+  last. `LIB_SEAM_VARS` is *derived* from the same `libEnvVars` that composes the trusted half,
+  so an artifact can never name `VIRTUAL_ENV`/`NODE_PATH`/`CLASSPATH`/`CARGO_TARGET_DIR`, and a
+  fifth ecosystem is covered the day it is added rather than the day someone remembers.
+  **The widening this bought, stated:** `node_modules/.bin` now leads `PATH` for a package's
+  `install` and `start`, not only for `build` checks, so an artifact can shadow a system tool of
+  the same name in those two phases. No privilege is gained — the artifact already names
+  arbitrary argv — and `resolveContained`'s reserved-segment rule still prevents *writing* there.
+- **A boot failure carries the child's own output** (VSX-227). `attemptBoot` captures the
+  `error` event alongside stdout/stderr, so `spawn <cmd> ENOENT` — a missing `mvn` or `cargo` —
+  reaches the reason instead of producing no diagnostic at all, and `--starter-red` can finally
+  answer `INCONCLUSIVE` on a boot failure rather than certifying RED with nothing having run.
+  Truncation is from the **tail**, because a crash line is the last thing a child writes;
+  `installFailureText` truncates from the head and must stay that way, since an installer's
+  error *leads* its output. Two call sites, two different right answers — do not unify them.
 - **A `program` suite resolves *no* libraries yet, and that is a stated ceiling, not an
   oversight.** `runProgramSuite` accepts a `libDir` and consumes it exactly as the function envs
   do (`CLASSPATH` / `NODE_PATH` / `VIRTUAL_ENV` / `CARGO_TARGET_DIR`), but no caller computes one:

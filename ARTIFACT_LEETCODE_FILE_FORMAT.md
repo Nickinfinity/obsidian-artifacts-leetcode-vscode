@@ -1242,15 +1242,26 @@ packages:
 > from the **already-assigned** ports of its dependencies, and tears the whole
 > set down in one `finally`, registering every group so a session-level cleanup
 > finds them. It has its own **verify rules** as of VSX-181 (`stack.rules.ts`), so a malformed
-> stack now fails by name rather than borrowing a `package`'s message. What a `stack` still
-> lacks is any worked artifact, so it remains skipped by the default vault sweep (§6.1) and
-> is graded only under `LEET_STACK_E2E=1`.
+> stack now fails by name rather than borrowing a `package`'s message. It **is** graded end to
+> end: the vault's `stack` artifacts verify green with their overlays and red without, each red
+> a real response served by a booted server.
+> It remains skipped by the default vault sweep (§6.1) and graded only under
+> `LEET_STACK_E2E=1` — not because anything is unimplemented, but because installing several
+> ecosystems and booting several servers turns a seconds-long offline gate into a minutes-long
+> networked one, and a gate nobody runs protects nothing.
 >
-> **Libraries do not reach a booted process yet.** A node package resolves its
-> imports through the run directory's own `node_modules`, so an Express server
-> boots; a package whose ecosystem is reached by environment variable instead
-> (a venv, a classpath) does not see the installed set and fails naming the
-> missing import — loud, never a false green.
+> **Libraries reach a booted process** (VSX-227). Whatever `libs:` resolved for this run is
+> composed into every package's environment for **both** its `install` and its `start` —
+> `VIRTUAL_ENV` and a `<venv>/bin` `PATH` prefix for pip, `NODE_PATH` for pnpm, `CLASSPATH`
+> for maven, `CARGO_TARGET_DIR` for cargo (§9.4's table) — so a FastAPI or Spring Boot package
+> boots with its dependencies. The run's own `node_modules/.bin` is prepended to `PATH` too,
+> so a framework CLI named in `start:` (`vite`, `next`) resolves the version this exercise
+> declared rather than whatever the machine happens to have.
+>
+> **An artifact cannot name any of those variables in `exposeAs`.** The reserved set is
+> *derived* from the same table that composes them, so it cannot drift out of step, and the
+> composition assigns the library values first, the artifact's `exposeAs` entries second
+> (allowlist-filtered), and `PORT` last. See §9.2.
 >
 > The `services:` → `packages:` rename landed with the vault write rather than
 > with the parser so that the vault is written exactly once. A check's binding
