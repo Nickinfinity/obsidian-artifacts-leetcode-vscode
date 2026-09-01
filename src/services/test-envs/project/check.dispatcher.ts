@@ -77,38 +77,50 @@ export async function runOneCheck(
 
 /**
  * Resolve the one loopback port a `dom-assert`/`css-assert` component may
- * fetch from (T4.3 round 2, VSX-180), or refuse the check when that is
- * ambiguous.
+ * fetch from (T4.3 round 2, VSX-180; named bindings T4.8, VSX-228), or refuse
+ * the check when that is ambiguous.
  *
- * **No booted package** (`stackBoot` absent — a `package` artifact, or a
- * `stack` that declares none — or a `stack` that booted nothing) →
- * `{ ok: true }` with no `port`: unchanged from before this task, the render
- * driver's `installFetch` then refuses every request by default.
+ * **A `package:` binding present** (T4.8) → resolved directly against
+ * `stackBoot.outcomes` by name, exactly as an `http` check's own `package:`
+ * is resolved by `runStackHttpCheck` — booted → its port; declared but never
+ * booted → refused, carrying the boot's own reason; not a name this artifact
+ * declared at all → refused by name. Never falls back to the ambiguous-count
+ * rule below: a binding says which package, so guessing among the others
+ * would defeat the reason it was written. This is what makes a stack like
+ * Flask+React (two packages, one render check) gradable — the two-or-more
+ * refusal below is what blocked it before this task.
  *
- * **Exactly one booted package** → `{ ok: true, port }`: the S1 worked
- * example (one backend, one frontend) and the case that must work. A failed
- * package (`ok: false` in `stackBoot.outcomes`) does not count as booted —
- * there is no port to hand the component.
+ * **No binding, and no booted package** (`stackBoot` absent — a `package`
+ * artifact, or a `stack` that declares none — or a `stack` that booted
+ * nothing) → `{ ok: true }` with no `port`: unchanged from before this task,
+ * the render driver's `installFetch` then refuses every request by default.
  *
- * **More than one booted package** → refused by name. A render check has no
- * field naming which package its component talks to (`HttpCheck` has
- * `package:`; `DomAssertCheck`/`CssAssertCheck` do not), so guessing would
- * silently point a component at the wrong server and grade whatever came
- * back. Adding that field is a format change for the task that ships the
- * first multi-backend render artifact, not this one.
+ * **No binding, exactly one booted package** → `{ ok: true, port }`: the S1
+ * worked example (one backend, one frontend) and the case that must work
+ * without an author ever having to name it. A failed package (`ok: false` in
+ * `stackBoot.outcomes`) does not count as booted — there is no port to hand
+ * the component.
  *
- * @param check     - The render check being dispatched, for its name in the refusal.
+ * **No binding, more than one booted package** → refused by name: guessing
+ * would silently point a component at the wrong server and grade whatever
+ * came back. An author with more than one booted package now has the
+ * binding above as the way out.
+ *
+ * @param check     - The render check being dispatched, for its name (and
+ *   optional `package:` binding) in the resolution or refusal.
  * @param stackBoot - `gradeProjectDir`'s whole-group boot, when this run has one.
  * @returns The port to inject, or the reason the check cannot be graded.
  *
  * @example
  * apiPortForRenderCheck(check, oneBackendStack); // → { ok: true, port: 54321 }
  * apiPortForRenderCheck(check, twoBackendStack); // → { ok: false, detail: '…' }
+ * apiPortForRenderCheck({ ...check, package: 'api' }, twoBackendStack); // → { ok: true, port: 54321 }
  */
 export function apiPortForRenderCheck(
-	check: { kind: 'dom-assert' | 'css-assert'; name: string }, stackBoot: StackBoot | undefined,
+	check: { kind: 'dom-assert' | 'css-assert'; name: string; package?: string }, stackBoot: StackBoot | undefined,
 ): { ok: true; port?: number } | { ok: false; detail: string } {
 	if (!stackBoot) { return { ok: true }; }
+	if (check.package) { return resolveNamedPackage(check, check.package, stackBoot); }
 
 	const booted = [...stackBoot.outcomes.values()].filter(isBootedOutcome);
 	if (booted.length === 0) { return { ok: true }; }
@@ -117,9 +129,41 @@ export function apiPortForRenderCheck(
 	return {
 		ok: false,
 		detail: `${check.kind} '${check.name}' cannot be graded — this stack boots ${booted.length} packages `
-			+ 'and a render check has no way to name which one its component talks to; declaring that binding '
-			+ 'is its own future task',
+			+ 'and it declares no package: binding to say which one its component talks to',
 	};
+}
+
+/**
+ * Resolve a render check's explicit `package:` binding against this run's
+ * boot outcomes — the three-way an `http` check already makes in
+ * {@link runStackHttpCheck}: booted, declared-but-never-booted, or a name
+ * this artifact never declared at all. A name that does not resolve fails
+ * the check by name rather than falling back to the ambiguous-count guess,
+ * which would point the component at an arbitrary server and grade whatever
+ * it answered — the same false-green class the guess itself exists to avoid.
+ *
+ * @param check     - The render check, for its name in a refusal.
+ * @param pkgName   - The `package:` name the check declared.
+ * @param stackBoot - This run's whole-group boot.
+ * @returns The named package's port, or the reason it cannot be resolved.
+ */
+function resolveNamedPackage(
+	check: { kind: 'dom-assert' | 'css-assert'; name: string }, pkgName: string, stackBoot: StackBoot,
+): { ok: true; port?: number } | { ok: false; detail: string } {
+	const outcome = stackBoot.outcomes.get(pkgName);
+	if (!outcome) {
+		return {
+			ok: false,
+			detail: `${check.kind} '${check.name}' names package '${pkgName}', which this artifact does not declare`,
+		};
+	}
+	if (!outcome.ok) {
+		return {
+			ok: false,
+			detail: `${check.kind} '${check.name}' cannot be graded — package '${pkgName}' never started: ${outcome.reason}`,
+		};
+	}
+	return { ok: true, port: outcome.port };
 }
 
 /** Narrows a `StackBoot` outcome to the booted branch, so `.port` is available without a cast. */

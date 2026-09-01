@@ -165,6 +165,36 @@ suite('project parser', () => {
 			assert.strictEqual(checks.length, 1);
 			assert.strictEqual(({} as Record<string, unknown>).polluted, undefined);
 		});
+
+		// T4.8 (VSX-228): a render check names the booted package its
+		// component may fetch from -- the same package: field an http
+		// check already carries, now readable on the two render kinds too.
+		test('a dom-assert check may bind package: to the booted server its component talks to', () => {
+			const fm = ['test:', '  checks:', '    - name: shows the value',
+				'      kind: dom-assert', '      file: a.tsx', '      package: api'].join('\n');
+			const { checks } = parseProjectArtifact(fm, '');
+			const [check] = checks;
+			if (check.kind !== 'dom-assert') { throw new Error('narrowing failed'); }
+			assert.strictEqual(check.package, 'api');
+		});
+
+		test('a css-assert check may bind package: the same way', () => {
+			const fm = ['test:', '  checks:', '    - name: styled',
+				'      kind: css-assert', '      file: a.tsx', '      package: api'].join('\n');
+			const { checks } = parseProjectArtifact(fm, '');
+			const [check] = checks;
+			if (check.kind !== 'css-assert') { throw new Error('narrowing failed'); }
+			assert.strictEqual(check.package, 'api');
+		});
+
+		test('a dom-assert check with no package: binding leaves the field unset', () => {
+			const fm = ['test:', '  checks:', '    - name: shows the value',
+				'      kind: dom-assert', '      file: a.tsx'].join('\n');
+			const { checks } = parseProjectArtifact(fm, '');
+			const [check] = checks;
+			if (check.kind !== 'dom-assert') { throw new Error('narrowing failed'); }
+			assert.strictEqual(check.package, undefined);
+		});
 	});
 
 	// ── case → check binding ──────────────────────────────────────────────────

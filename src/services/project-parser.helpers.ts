@@ -549,7 +549,15 @@ function buildCheck(
 		warn(`checks: '${name}' has unknown kind '${kind}' — dropped`);
 		return null;
 	}
-	return { name, kind, file, cases: [], publicCount: 0 };
+	// Optional (T4.8, VSX-228): which booted `packages:` entry the mounted
+	// component's `fetch` may reach. Whether the name is one this artifact
+	// actually declares is not this parser's question — it has not parsed
+	// `packages:` yet at this point, and would still know nothing of which
+	// packages actually booted. That is `apiPortForRenderCheck`'s job, at
+	// grading time, exactly as an `http` check's own `package:` is resolved
+	// against `parsed.packages` in `runPackageHttpCheck`, not here.
+	const pkg = unquote(fields.get('package') ?? '');
+	return { name, kind, file, cases: [], publicCount: 0, ...(pkg ? { package: pkg } : {}) };
 }
 
 // ── case → check binding ──────────────────────────────────────────────────────

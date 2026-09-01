@@ -397,6 +397,15 @@ export interface DomAssertCheck extends ProjectCheckBase {
 	kind: 'dom-assert';
 	/** Component entry file within the run directory */
 	file: string;
+	/**
+	 * Name of the `packages:` entry whose booted port the component's `fetch`
+	 * may reach — the same binding an `http` check carries. Optional: with no
+	 * binding, `apiPortForRenderCheck` falls back to the ambiguous-count rule
+	 * (one booted package resolves automatically, two or more refuse the
+	 * check by name). Required once a stack boots more than one package the
+	 * component could otherwise be pointed at.
+	 */
+	package?: string;
 }
 
 /**
@@ -408,6 +417,8 @@ export interface CssAssertCheck extends ProjectCheckBase {
 	kind: 'css-assert';
 	/** Component entry file within the run directory */
 	file: string;
+	/** Same `package:` binding as {@link DomAssertCheck.package} — see there. */
+	package?: string;
 }
 
 /** One `packages:` entry — a single process this exercise's `stack` boots. */

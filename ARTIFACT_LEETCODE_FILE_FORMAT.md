@@ -1102,6 +1102,10 @@ test:
     - name: orders api
       kind: http                 # boots a `packages:` entry and grades responses
       package: api               # the entry's name — no `file:`
+    - name: order list
+      kind: dom-assert           # mounts client/src/App.jsx and asserts the DOM
+      file: client/src/App.jsx
+      package: api               # optional — which booted package its `fetch` may reach
 ```
 ````
 
@@ -1118,8 +1122,8 @@ A `kind:` draws from the one test-type vocabulary (§2.5.1), narrowed to the ids
 |---|---|---|
 | `call` | one file's export, through the five `call` environments; needs `file:` and `function:` | **dispatched** |
 | `build` | a declared argv **array** exits 0; optional `dir:` runs it in a contained subtree | **dispatched** |
-| `css-assert` | **declared** style: inline/`style` properties and class presence | **dispatched** |
-| `dom-assert` | DOM after mounting the component and firing events | **dispatched** |
+| `css-assert` | **declared** style: inline/`style` properties and class presence; needs `file:`, optional `package:` | **dispatched** |
+| `dom-assert` | DOM after mounting the component and firing events; needs `file:`, optional `package:` | **dispatched** |
 | `http` | a real request to a booted server on an assigned loopback port; needs `package:`, never `file:` | **dispatched** |
 | `program` · `class` · `in-place` | — | reserved: parses, then the whole artifact is refused for grading (§6.1) |
 | `function` · `project` · `service` | — | **not kinds at all.** `function` was renamed `call`; the other two are shape ids (§2.5.1). A check declaring one is *unknown*, not reserved, and is dropped with a typo-style warning. |
@@ -1140,6 +1144,25 @@ on: this extension's, or the artifact's.
 `css-assert` never asserts layout geometry — the render environment is jsdom, which
 computes no layout, so a width-from-box-model assertion is refused rather than silently
 passed.
+
+**`dom-assert` / `css-assert` may bind `package:` too (T4.8, VSX-228)** — which booted
+`packages:` entry the mounted component's `fetch` may reach, the same field an `http` check
+carries. It exists for a `stack` whose component talks to more than one booted package: with
+no binding, exactly one booted package resolves automatically (the S1 worked example — one
+backend, one frontend), but two or more **refuse the check by name** rather than guess which
+server the component meant, because guessing would point it at the wrong one and grade
+whatever came back. A binding resolves directly against that name — booted → its port;
+declared in `packages:` but never booted → refused, carrying the boot's own failure reason; a
+name this artifact never declared at all → refused by name, never a silent fallback to the
+ambiguous-count guess. This is what makes a two-package stack (a Flask backend plus a React
+frontend, say) gradable at all: before this field, any render check in a stack booting more
+than one package was refused outright.
+
+Unlike an `http` check's `package:`, this one is **optional** — a `dom-assert`/`css-assert`
+with no `package:` still resolves the S1 case (one booted package) exactly as before, and a
+`package`-shaped artifact (never batch-booting anything up front) reads the field, if present,
+as ignored: nothing was booted to resolve it against, so the component's `fetch` refuses every
+request exactly as it does with no binding at all.
 
 **Zero or one `function` check per project.** `params:` / `returns:` are artifact-level
 singletons, so a second function check would have nowhere to declare its own types; a

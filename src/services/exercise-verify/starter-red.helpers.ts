@@ -14,7 +14,13 @@
  * this codebase already produces (`lib-cache.service.ts`'s `reasonFor`, the
  * four installers' `missingTool` sentences, `program.runner.ts`'s
  * `compilation timed out`, `runProgramArtifact`'s `program: …` one-element
- * "never ran" reasons, and `server.lifecycle.ts`'s boot-readiness timeout).
+ * "never ran" reasons, `server.lifecycle.ts`'s boot-readiness timeout) plus —
+ * as of VSX-230 — each runtime's own missing-dependency vocabulary: Python's
+ * `ModuleNotFoundError`, Java's `NoClassDefFoundError` and "Could not find or
+ * load main class", and cargo's "no matching package named". The original set
+ * only covered Node's; a missing Python dependency at boot
+ * (`ModuleNotFoundError: No module named 'flask'`) classified `candidate` and
+ * printed a false RED with nothing having actually run.
  * A failure detail is untrusted-ish text (it can echo a subprocess's own
  * stderr), so every pattern is anchored, holds a single quantifier over a
  * single class, and is checked with a plain substring/regex test — never
@@ -97,6 +103,53 @@ const INFRASTRUCTURE_PATTERNS: readonly RegExp[] = [
 	// boot failure: a server that starts and then exits (or throws) is the
 	// starter's own incomplete code, a genuine candidate failure.
 	/server never became ready/,
+	// Python's own missing-module error (VSX-230) — `program.runner.ts`'s
+	// `spawn()` hands a crashed `python3 <entry>`'s stderr through verbatim
+	// (`outcome.message`), and `server.lifecycle.ts`'s `exitedReason` embeds the
+	// same text when a Flask/FastAPI boot dies on a missing import. Measured:
+	// `python3 -c "import nosuchmodule_xyz"` →
+	// "ModuleNotFoundError: No module named 'nosuchmodule_xyz'". Python has no
+	// `./`-style syntax distinguishing a local sibling file from a third-party
+	// package — `import helper` and `import flask` produce the identical shape
+	// — so this is the same accepted ambiguity as the bare `Cannot find module
+	// 'lodash'` case below, not a narrower rule. A candidate's own broken
+	// **relative** import (`from . import helper` with no parent package) is
+	// textually distinct — `ImportError: attempted relative import with no
+	// known parent package` — and does not match this pattern.
+	//
+	// **Do NOT "fix" this by excluding dotted names.** The obvious analogue of
+	// Node's `[^'./]` narrowing would be `'[^'.]+'`, and it is wrong: a
+	// candidate's own `from .models import Thing` inside a package reports
+	// `No module named 'app.models'` (its defect, would classify candidate),
+	// but a swept transitive dependency reports `No module named 'flask.json'`
+	// (the toolchain's, must classify infrastructure) — and Python spells both
+	// with a bare `.`, having no `./`-versus-`/` separator to tell them apart.
+	// So a dotted exclusion trades one false-`infrastructure` for one
+	// false-`candidate`, and false-`candidate` is the worse direction: it is
+	// the false RED this whole module exists to remove. Measured and rejected
+	// during the VSX-230 review; the laundering it leaves open buys an artifact
+	// author only exit 3, a refusal to certify, never a false green.
+	/ModuleNotFoundError: No module named/,
+	// Java's runtime classpath miss (VSX-230) — a library class present at
+	// `javac` time but absent from the runtime classpath (a swept jar in the
+	// shared lib cache). Measured: compile `UsesLib.java` against `lib.jar`,
+	// delete the compiled `Lib.class`, run `java -cp . UsesLib` →
+	// `Exception in thread "main" java.lang.NoClassDefFoundError: Lib`.
+	/NoClassDefFoundError/,
+	// Java's `run` step naming a class `java` cannot find at all (VSX-230). The
+	// class named here is always `runner-select.ts`'s own generated entry
+	// class, never solver-authored, so this shape is unambiguously the
+	// toolchain's fault. Measured: `java -cp . ThisClassDoesNotExist` →
+	// "Error: Could not find or load main class ThisClassDoesNotExist".
+	/Could not find or load main class/,
+	// Cargo's offline dependency resolution failing to find a crate in the
+	// local registry cache (VSX-230) — the rust `program`/`function` `compile`
+	// step is `cargo build --offline …`, so this reaches a case exactly like
+	// the existing `compilation error: spawn rustc ENOENT` shape. Measured: a
+	// `Cargo.toml` dependency absent from the offline cache, `cargo build
+	// --offline` → "error: no matching package named `totally_nonexistent_
+	// crate_xyz123` found", followed by "location searched: crates.io index".
+	/no matching package named/,
 ];
 
 /**

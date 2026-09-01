@@ -53,4 +53,45 @@ suite('apiPortForRenderCheck', () => {
 		assert.ok(!result.ok && result.detail.includes(CHECK.name), JSON.stringify(result));
 		assert.ok(!result.ok && result.detail.includes('2 packages'), JSON.stringify(result));
 	});
+
+	/**
+	 * T4.8 (VSX-228): a render check that names its package via `package:`
+	 * resolves against that one entry directly — the ambiguous-count guess
+	 * above only ever applied to a check declaring no binding at all. This is
+	 * the Flask+React case: two booted packages, no longer refused outright,
+	 * because the component's check says which one it talks to.
+	 */
+	suite('a check with a package: binding', () => {
+
+		test('resolves the named package\'s port even when two packages are booted', () => {
+			const boot = stackBootOf([
+				['api', { ok: true, port: 1111, pid: 1 }],
+				['worker', { ok: true, port: 2222, pid: 2 }],
+			]);
+			const check = { ...CHECK, package: 'worker' };
+			assert.deepStrictEqual(apiPortForRenderCheck(check, boot), { ok: true, port: 2222 });
+		});
+
+		test('a binding naming a package the artifact never declares fails the check by name', () => {
+			const boot = stackBootOf([['api', { ok: true, port: 1111, pid: 1 }]]);
+			const check = { ...CHECK, package: 'ghost' };
+			const result = apiPortForRenderCheck(check, boot);
+			assert.strictEqual(result.ok, false);
+			assert.ok(!result.ok && result.detail.includes('ghost'), JSON.stringify(result));
+			assert.ok(!result.ok && result.detail.includes(CHECK.name), JSON.stringify(result));
+		});
+
+		test('a binding naming a package that never booted fails the check by name, carrying the boot reason', () => {
+			const boot = stackBootOf([['api', { ok: false, reason: 'boom' }]]);
+			const check = { ...CHECK, package: 'api' };
+			const result = apiPortForRenderCheck(check, boot);
+			assert.strictEqual(result.ok, false);
+			assert.ok(!result.ok && result.detail.includes('boom'), JSON.stringify(result));
+		});
+
+		test('a binding is never consulted when nothing booted at all — same as no binding', () => {
+			const check = { ...CHECK, package: 'api' };
+			assert.deepStrictEqual(apiPortForRenderCheck(check, undefined), { ok: true });
+		});
+	});
 });

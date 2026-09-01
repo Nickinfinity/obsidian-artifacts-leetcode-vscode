@@ -157,4 +157,98 @@ suite('starter-red.helpers — infrastructure vs candidate classification', () =
 		);
 		assert.strictEqual(infrastructureCount(['case 0: expected 3, got 0']), 0);
 	});
+
+	// VSX-230 (T4.10) — `INFRASTRUCTURE_PATTERNS` only recognised Node's own
+	// vocabulary (`Cannot find module`, `MODULE_NOT_FOUND`). A missing Python
+	// dependency at boot classified `candidate` and reported a false RED on the
+	// one gate that certifies an exercise ships unsolved. Each pattern below is
+	// justified by real bytes, measured on this machine — see the report for the
+	// exact commands.
+	suite('per-runtime missing-dependency shapes (VSX-230)', () => {
+
+		// Observed: `python3 -c "import nosuchmodule_xyz"` →
+		// "ModuleNotFoundError: No module named 'nosuchmodule_xyz'". The same
+		// shape is what `server.lifecycle.ts`'s own `exitedReason` doc example
+		// embeds: "…exited before the server became ready: ModuleNotFoundError:
+		// No module named 'flask'".
+		test("Python's ModuleNotFoundError reads as infrastructure", () => {
+			assert.strictEqual(
+				classifyStarterFailure("ModuleNotFoundError: No module named 'flask'"),
+				'infrastructure',
+			);
+			assert.strictEqual(
+				classifyStarterFailure(
+					"server never started: packages: 'api' — the spawned process exited before the server became ready: ModuleNotFoundError: No module named 'flask'",
+				),
+				'infrastructure',
+			);
+		});
+
+		// Observed: `from . import helper` with no parent package →
+		// "ImportError: attempted relative import with no known parent package".
+		// Textually distinct from `ModuleNotFoundError: No module named …`, so a
+		// candidate's own broken relative import is not swallowed by the new
+		// pattern.
+		test("a candidate's own broken relative import reads as candidate, not infrastructure", () => {
+			assert.strictEqual(
+				classifyStarterFailure('ImportError: attempted relative import with no known parent package'),
+				'candidate',
+			);
+		});
+
+		// Observed: compiling `UsesLib.java` against `lib.jar`, then deleting the
+		// compiled `Lib.class` before `java -cp . UsesLib` (a swept jar/cache) →
+		// `Exception in thread "main" java.lang.NoClassDefFoundError: Lib`.
+		test("Java's NoClassDefFoundError (a swept jar) reads as infrastructure", () => {
+			assert.strictEqual(
+				classifyStarterFailure(
+					'Exception in thread "main" java.lang.NoClassDefFoundError: Lib\n\tat UsesLib.main(UsesLib.java:3)',
+				),
+				'infrastructure',
+			);
+		});
+
+		// Observed: `java -cp . ThisClassDoesNotExist` → "Error: Could not find or
+		// load main class ThisClassDoesNotExist". The class the program-env `run`
+		// step names is always the *generated* Runner/entry class, never
+		// solver-authored, so this shape is unambiguously the toolchain's fault.
+		test("Java's \"Could not find or load main class\" reads as infrastructure", () => {
+			assert.strictEqual(
+				classifyStarterFailure(
+					'Error: Could not find or load main class Runner\nCaused by: java.lang.ClassNotFoundException: Runner',
+				),
+				'infrastructure',
+			);
+		});
+
+		// Observed: a `Cargo.toml` dependency not in the local (offline) registry
+		// cache, `cargo build --offline` → "error: no matching package named
+		// `totally_nonexistent_crate_xyz123` found\nlocation searched: crates.io
+		// index\n…". Reaches `classifyStarterFailure` prefixed `compilation
+		// error: …` exactly like the existing `spawn rustc ENOENT` case.
+		test('a cargo crate missing from the offline cache reads as infrastructure', () => {
+			assert.strictEqual(
+				classifyStarterFailure(
+					'compilation error: error: no matching package named `totally_nonexistent_crate_xyz123` found\nlocation searched: crates.io index',
+				),
+				'infrastructure',
+			);
+		});
+
+		// Observed: `execFile('tsc_definitely_not_a_real_binary', …)` →
+		// message `spawn tsc_definitely_not_a_real_binary ENOENT`, stderr/stdout
+		// both empty — `build.check.ts`'s `failureText` falls through to that
+		// message. Already covered by the existing `spawn \S+ ENOENT` pattern —
+		// no new pattern needed for TypeScript's missing-`tsc` case.
+		test('a missing tsc binary already reads as infrastructure via spawn-ENOENT', () => {
+			assert.strictEqual(classifyStarterFailure('spawn tsc ENOENT'), 'infrastructure');
+		});
+
+		// A candidate's own bad TypeScript import keeps reading as candidate —
+		// the existing narrowing for `Cannot find module` is untouched by this
+		// change.
+		test("a candidate's own TypeScript relative-import miss stays candidate", () => {
+			assert.strictEqual(classifyStarterFailure("Cannot find module './missing.js'"), 'candidate');
+		});
+	});
 });
