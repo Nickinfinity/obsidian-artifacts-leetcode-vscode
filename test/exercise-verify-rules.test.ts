@@ -223,4 +223,201 @@ suite('exercise-verify — rules registry (leetcode-type axis)', () => {
         assert.strictEqual(result.ok, false, JSON.stringify(result));
         assert.match(result.reason ?? '', /^stack: no ## Files declared$/);
     });
+
+    // ── VSX-231 C12 follow-up: package.rules.ts's own untrusted-text sinks ───
+    //
+    // `sanitize-text.helpers.test.ts` proves the two sanitizers themselves are
+    // correct in isolation; it does NOT prove `package.rules.ts` actually calls
+    // them at each sink. These fixtures drive real artifact-authored content
+    // (a check's own declared `name:`, a real subprocess's own stderr) through
+    // `verifyPackageExercise` end to end, so a removed `sanitizeUntrustedText`/
+    // `sanitizeChildOutput` call at any of these sites fails a test here, not
+    // just in the sanitizer's own unit suite. Hostile bytes are built at
+    // runtime via `String.fromCharCode` — never typed as `\uXXXX` text — per
+    // the tool-pipeline hazard that silently decodes bare 4-hex escapes.
+
+    suite('C12: sinks are actually sanitized, not just sanitizable', () => {
+
+        const ESC = String.fromCharCode(0x1b);
+
+        test('a failing build check sanitizes both its own hostile name and multi-line hostile stderr', async () => {
+            // A real `node -e` subprocess writes hostile, multi-line stderr and
+            // exits 1 — the exact shape `build.check.ts`'s `failureText` returns
+            // as `detail` verbatim. The hostile bytes travel as one `execFile`
+            // argv element (no shell), landing in the child's own `process.argv`
+            // intact, so this is the real code path, not a simulated string.
+            const hostileStderr = ['line one', `${ESC}[31mline two${ESC}[0m`, 'line three'].join('\n');
+            const childScript = 'process.stderr.write(process.argv[1]); process.exit(1);';
+            const argv = JSON.stringify([process.execPath, '-e', childScript, hostileStderr]);
+            const hostileName = `${ESC}[31mFAKE-PASS${ESC}[0m`;
+
+            const md = [
+                '---',
+                'artifactType: leetcode',
+                'leetcodeType: package',
+                'title: Widget',
+                'difficulty: medium',
+                '---',
+                '',
+                'A multi-file exercise.',
+                '',
+                '```yaml leetcode',
+                'checks:',
+                `  - name: ${hostileName}`,
+                '    kind: build',
+                `    argv: ${argv}`,
+                '```',
+                '',
+                '## Files',
+                '',
+                '```javascript path=probe.js role=editable',
+                '// nothing to build',
+                '```',
+            ].join('\n');
+
+            const result = await verifyExercise(md);
+            assert.strictEqual(result.ok, false, JSON.stringify(result));
+            const reason = !result.ok ? result.reason : '';
+
+            // No raw ESC byte anywhere in the composed reason (name OR detail) —
+            // the sanitizer strips only the C0/C1 trigger byte, not the inert
+            // printable text that followed it (`[31m...[0m` survives literally,
+            // exactly like `sanitizeUntrustedText`'s own documented example).
+            assert.ok(!reason.includes(ESC), `ESC byte leaked into reason: ${JSON.stringify(reason)}`);
+            assert.strictEqual(
+                reason,
+                "package: check '[31mFAKE-PASS[0m' failed: line one\n[31mline two[0m\nline three",
+                JSON.stringify(reason),
+            );
+            // The multi-line stderr must keep its newlines — the whole reason
+            // `sanitizeChildOutput` exists instead of reusing `sanitizeUntrustedText`.
+            assert.ok(reason.includes('line one\n') && reason.includes('\nline three'), JSON.stringify(reason));
+        });
+
+        test('an unbound (no cases) check with a hostile name is sanitized', async () => {
+            const hostileName = `${ESC}[31mFAKE${ESC}[0m`;
+            const md = [
+                '---',
+                'artifactType: leetcode',
+                'leetcodeType: package',
+                'title: Widget',
+                'difficulty: medium',
+                '---',
+                '',
+                'A multi-file exercise.',
+                '',
+                '```yaml leetcode',
+                'checks:',
+                `  - name: ${hostileName}`,
+                '    kind: dom-assert',
+                '    file: App.jsx',
+                '```',
+                '',
+                '## Files',
+                '',
+                '```javascript path=App.jsx role=editable',
+                '// stub',
+                '```',
+            ].join('\n');
+
+            const result = await verifyExercise(md);
+            assert.strictEqual(result.ok, false, JSON.stringify(result));
+            const reason = !result.ok ? result.reason : '';
+            assert.ok(!reason.includes(ESC), `ESC byte leaked: ${JSON.stringify(reason)}`);
+            assert.strictEqual(
+                reason,
+                "package: check '[31mFAKE[0m' has no cases — bind them with a `check=` fence attribute",
+                JSON.stringify(reason),
+            );
+        });
+
+        test("a call check's hostile name is sanitized in the no-params case-shape message", async () => {
+            const hostileName = `${ESC}[31mpricing${ESC}[0m`;
+            const md = [
+                '---',
+                'artifactType: leetcode',
+                'leetcodeType: package',
+                'title: Widget',
+                'difficulty: medium',
+                '---',
+                '',
+                'A multi-file exercise.',
+                '',
+                '```yaml leetcode',
+                'checks:',
+                `  - name: ${hostileName}`,
+                '    kind: call',
+                '    file: index.js',
+                '    function: computePrice',
+                '```',
+                '',
+                '## Files',
+                '',
+                '```javascript path=index.js role=editable',
+                'module.exports = { computePrice: () => 0 };',
+                '```',
+                '',
+                '## Tests',
+                `\`\`\`json check=${hostileName}`,
+                '[{"input": {"price": 10}, "expected": 10}]',
+                '```',
+            ].join('\n');
+
+            const result = await verifyExercise(md);
+            assert.strictEqual(result.ok, false, JSON.stringify(result));
+            const reason = !result.ok ? result.reason : '';
+            assert.ok(!reason.includes(ESC), `ESC byte leaked: ${JSON.stringify(reason)}`);
+            assert.strictEqual(
+                reason,
+                "package: check '[31mpricing[0m' is kind 'call' but the artifact declares no params "
+                    + "— a call check runs against the artifact's own top-level function shape",
+                JSON.stringify(reason),
+            );
+        });
+
+        // No hostile-`declared` test: `checkTestTypeMirror`'s `declared` is
+        // `parsed.test.type`, which `parseTestType` (leetcode-parser.helpers.ts)
+        // already collapses to `DEFAULT_TEST_TYPE` for anything outside the
+        // closed `VALID_TEST_TYPES` vocabulary *before* this rule ever sees it —
+        // confirmed by hand: a hostile `type:` value parses to `'call'` (the
+        // default), never survives as authored text. `declared` therefore
+        // cannot carry attacker bytes any more than `lang` (a `LangId`) can in
+        // `function.rules.ts`; `sanitizeUntrustedText` around it is
+        // defense-in-depth against the vocabulary check ever loosening, not a
+        // reachable sink today. The existing "refused by the mirror rule" test
+        // above already pins the plain (non-hostile) case byte-for-byte.
+
+        test('an over-long hostile check name is both stripped and truncated with a visible marker', async () => {
+            const hostileName = `${ESC}[31m${'A'.repeat(300)}`;
+            const md = [
+                '---',
+                'artifactType: leetcode',
+                'leetcodeType: package',
+                'title: Widget',
+                'difficulty: medium',
+                '---',
+                '',
+                'A multi-file exercise.',
+                '',
+                '```yaml leetcode',
+                'checks:',
+                `  - name: ${hostileName}`,
+                '    kind: dom-assert',
+                '    file: App.jsx',
+                '```',
+                '',
+                '## Files',
+                '',
+                '```javascript path=App.jsx role=editable',
+                '// stub',
+                '```',
+            ].join('\n');
+
+            const result = await verifyExercise(md);
+            assert.strictEqual(result.ok, false, JSON.stringify(result));
+            const reason = !result.ok ? result.reason : '';
+            assert.ok(!reason.includes(ESC), `ESC byte leaked: ${JSON.stringify(reason)}`);
+            assert.ok(/truncated/.test(reason), reason);
+        });
+    });
 });

@@ -4,6 +4,7 @@ import {
 	classifyStarterFailure,
 	infrastructureCount,
 } from '../src/services/exercise-verify/starter-red.helpers.js';
+import { sanitizeChildOutput } from '../src/utils/sanitize-text.helpers.js';
 
 /**
  * VSX-122 T3.8 (ledger C14) — `--starter-red`'s pass condition is "some
@@ -249,6 +250,53 @@ suite('starter-red.helpers — infrastructure vs candidate classification', () =
 		// change.
 		test("a candidate's own TypeScript relative-import miss stays candidate", () => {
 			assert.strictEqual(classifyStarterFailure("Cannot find module './missing.js'"), 'candidate');
+		});
+	});
+
+	// ── VSX-231 C12 follow-up: the classifier must keep seeing RAW text ──────
+	//
+	// `verify-exercise.mjs` sanitizes a failure detail for *display* only, at
+	// the four `firstLines(...)` print sites — never on the `details`/`red`
+	// arrays it hands to `allInfrastructure`/`infrastructureCount` (built at
+	// its own lines ~232 and ~272, straight off the raw outcome objects). If a
+	// sanitizer ever landed between the raw detail and this classifier, a
+	// detail long enough to push its infrastructure marker past the display
+	// bound would silently reclassify `candidate` — a false RED that certifies
+	// an artifact as shipping-unsolved when the toolchain never actually ran.
+	// This suite proves both halves: the classifier is correct on raw text
+	// however long, and running the same text through the *display* sanitizer
+	// first is exactly the mistake that must never be wired in.
+	suite('the classifier keeps seeing raw text, not the sanitized display copy', () => {
+
+		test('an infrastructure marker beyond MAX_CHILD_OUTPUT_LEN still classifies infrastructure on raw text', () => {
+			// Padding pushes the marker past the 4000-char child-output display
+			// cap — this is the exact shape `verify-exercise.mjs` hands the
+			// classifier: the full, untruncated `detail`/`error` string.
+			const padding = 'x'.repeat(5000);
+			const detail = `${padding}\nCannot find module 'jsdom'`;
+			assert.ok(detail.length > 4000, 'fixture must actually exceed the display bound');
+			assert.strictEqual(classifyStarterFailure(detail), 'infrastructure');
+			assert.strictEqual(allInfrastructure([detail]), true);
+			assert.strictEqual(infrastructureCount([detail]), 1);
+		});
+
+		test('sanitizing-then-classifying is the false-green trap this pins against', () => {
+			// This is a negative pin, not a recommendation: it documents *why*
+			// `verify-exercise.mjs` must never insert a sanitizer before
+			// classification, by showing what breaks if it did.
+			const padding = 'x'.repeat(5000);
+			const detail = `${padding}\nCannot find module 'jsdom'`;
+			const displayCopy = sanitizeChildOutput(detail);
+
+			assert.ok(
+				!displayCopy.includes("Cannot find module 'jsdom'"),
+				'the marker must have been truncated out of the display copy for this pin to mean anything',
+			);
+			assert.strictEqual(
+				classifyStarterFailure(displayCopy),
+				'candidate',
+				'confirms the truncated copy loses the infrastructure signal -- the reason classification must run on raw text',
+			);
 		});
 	});
 });

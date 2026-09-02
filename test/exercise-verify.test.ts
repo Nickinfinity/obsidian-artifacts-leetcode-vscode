@@ -170,6 +170,36 @@ suite('exercise-verify', () => {
             assert.ok(!result.ok && result.reason.startsWith('run: javascript failed'), JSON.stringify(result));
         });
 
+        // ── VSX-231 C12 follow-up: function.rules.ts's own untrusted-text sink ──
+        //
+        // `bad.error` (child-process output — here, a thrown `Error`'s own
+        // message) must be sanitized without losing its newlines. The hostile
+        // bytes are produced by the *candidate itself*, at runtime, via
+        // `String.fromCharCode` inside the solution source — never typed as
+        // literal control bytes or `\uXXXX` text in this file — so this proves
+        // the real `runSuite` → `checkSolutionsGreen` path, not a simulated one.
+
+        test('SEC: a thrown Error with a multi-line, ANSI-laden message is sanitized but keeps its newlines', async () => {
+            const solutionCode = [
+                'function sum(a, b) {',
+                '  throw new Error(',
+                '    "line one\\n" + String.fromCharCode(27) + "[31mline two"',
+                '      + String.fromCharCode(27) + "[0m\\nline three",',
+                '  );',
+                '}',
+            ].join('\n');
+            const result = await verifyExercise(buildMd({ solutionCode }));
+            assert.strictEqual(result.ok, false);
+            const reason = !result.ok ? result.reason : '';
+            const esc = String.fromCharCode(27);
+            assert.ok(!reason.includes(esc), `ESC byte leaked into reason: ${JSON.stringify(reason)}`);
+            assert.strictEqual(
+                reason,
+                'run: javascript failed case 0: line one\n[31mline two[0m\nline three',
+                JSON.stringify(reason),
+            );
+        });
+
         test('a reference solution that spins forever fails via the suite timeout, not a hang', async () => {
             const result = await verifyExercise(
                 buildMd({ solutionCode: 'function sum(a, b) { while (true) {} }', timeoutMs: 100 }),

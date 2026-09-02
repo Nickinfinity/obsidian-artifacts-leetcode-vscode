@@ -5,6 +5,7 @@ import type { ParsedLeetCode } from '../../types/leetcode.types.js';
 import { runProgramArtifact, runProjectChecks } from '../test-envs/project/project.runner.js';
 import { isProgramSuite } from '../test-envs/program/program.runner.js';
 import { canonicalJson } from '../../utils/canonical-json.js';
+import { sanitizeChildOutput, sanitizeUntrustedText } from '../../utils/sanitize-text.helpers.js';
 
 /**
  * Verifies a `package`/`stack`-shaped artifact: a file tree graded by
@@ -49,8 +50,11 @@ export async function verifyPackageExercise(
 	});
 	const failed = outcomes.find(o => !o.passed);
 	if (failed) {
-		const detail = failed.detail ? `: ${failed.detail}` : '';
-		return `${leetcodeType}: check '${failed.name}' failed${detail}`;
+		// C12 follow-up: `name` is an artifact-authored scalar, `detail` is a
+		// check's own (possibly multi-line, e.g. a `build` check's stderr)
+		// output — the two sanitizers exist for exactly this split.
+		const detail = failed.detail ? `: ${sanitizeChildOutput(failed.detail)}` : '';
+		return `${leetcodeType}: check '${sanitizeUntrustedText(failed.name)}' failed${detail}`;
 	}
 
 	// Green with no overlay means `withSolutions` had nothing to apply, so what
@@ -93,7 +97,12 @@ async function verifyProgramSuite(
 	const results = await runProgramArtifact(parsed, { withSolutions: true });
 	const failed = results.find(r => !r.passed);
 	if (failed) {
-		const detail = failed.error ?? `expected ${canonicalJson(failed.expected)}, got ${failed.actual}`;
+		// C12 follow-up: `error`/`actual` are child-process output (`error` in
+		// particular can be a multi-line runner failure); `canonicalJson(expected)`
+		// is single-line JSON built from an artifact-authored value.
+		const detail = failed.error
+			? sanitizeChildOutput(failed.error)
+			: `expected ${sanitizeUntrustedText(canonicalJson(failed.expected))}, got ${sanitizeChildOutput(failed.actual)}`;
 		return `${leetcodeType}: case ${failed.index} failed: ${detail}`;
 	}
 
@@ -115,7 +124,8 @@ function checkPackageStructure(parsed: ParsedLeetCode, leetcodeType: LeetcodeTyp
 
 	const unbound = parsed.checks.filter(c => c.kind !== 'build' && c.cases.length === 0);
 	if (unbound.length > 0) {
-		return `${leetcodeType}: check '${unbound[0].name}' has no cases — bind them with a \`check=\` fence attribute`;
+		return `${leetcodeType}: check '${sanitizeUntrustedText(unbound[0].name)}' has no cases`
+			+ ' — bind them with a `check=` fence attribute';
 	}
 
 	const callShapeReason = checkCallChecksHaveParams(parsed, leetcodeType);
@@ -151,8 +161,8 @@ function checkCallChecksHaveParams(parsed: ParsedLeetCode, leetcodeType: Leetcod
 	if (parsed.params.length > 0) { return null; }
 	const callCheck = parsed.checks?.find(c => c.kind === 'call');
 	if (!callCheck) { return null; }
-	return `${leetcodeType}: check '${callCheck.name}' is kind 'call' but the artifact declares no params `
-		+ "— a call check runs against the artifact's own top-level function shape";
+	return `${leetcodeType}: check '${sanitizeUntrustedText(callCheck.name)}' is kind 'call' but the artifact `
+		+ "declares no params — a call check runs against the artifact's own top-level function shape";
 }
 
 /**
@@ -202,6 +212,6 @@ function checkCallChecksHaveParams(parsed: ParsedLeetCode, leetcodeType: Leetcod
 function checkTestTypeMirror(parsed: ParsedLeetCode, leetcodeType: LeetcodeTypeId): string | null {
 	const declared = parsed.test.type;
 	if (SHAPE_TEST_TYPE_IDS.has(declared) || declared === DEFAULT_TEST_TYPE) { return null; }
-	return `${leetcodeType}: checks declared but test.type is '${declared}' — `
+	return `${leetcodeType}: checks declared but test.type is '${sanitizeUntrustedText(declared)}' — `
 		+ 'a checks-graded exercise must not also declare a top-level execution strategy';
 }

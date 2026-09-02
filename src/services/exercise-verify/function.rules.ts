@@ -1,5 +1,6 @@
 import { canonicalJson } from '../../utils/canonical-json.js';
 import { safeJsonParse } from '../../utils/safe-json.js';
+import { sanitizeChildOutput, sanitizeUntrustedText } from '../../utils/sanitize-text.helpers.js';
 import type { ParsedLeetCode } from '../../types/leetcode.types.js';
 import { buildExecutable } from '../leetcode-candidate.helpers.js';
 import { runSuite } from '../leetcode-runner.service.js';
@@ -149,8 +150,14 @@ async function checkSolutionsGreen(parsed: ParsedLeetCode): Promise<string | nul
 		const results = await runSuite(candidate, suite, parsed, env);
 		const bad = results.find(r => !r.passed);
 		if (bad) {
-			const mismatch = `expected ${canonicalJson(bad.expected)}, got ${bad.actual}`;
-			return `run: ${lang} failed case ${bad.index}: ${bad.error ?? mismatch}`;
+			// C12 follow-up: `error`/`actual` are child-process output (`error`
+			// can be multi-line); `expected` is an artifact-authored value,
+			// JSON-stringified into a single line. `lang` is a `LangId` drawn
+			// from the closed `LANGUAGES` registry, never artifact text.
+			const mismatch = `expected ${sanitizeUntrustedText(canonicalJson(bad.expected))}, `
+				+ `got ${sanitizeChildOutput(bad.actual)}`;
+			const detail = bad.error ? sanitizeChildOutput(bad.error) : mismatch;
+			return `run: ${lang} failed case ${bad.index}: ${detail}`;
 		}
 	}
 	return null;

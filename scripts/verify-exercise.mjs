@@ -51,6 +51,13 @@ function die(msg, code = 1) {
  * result. A `build` check's detail is its tool's whole stderr — a misconfigured
  * `tsc` prints its entire help text, which drowned every other check's verdict.
  * The full output stays available by running the check's own argv.
+ *
+ * Bounds **line count** only — no length bound per line, no control-character
+ * stripping. Every caller wraps its result in `sanitizeChildOutput` before
+ * printing (VSX-231 C12 follow-up); this function stays raw on purpose so the
+ * `--starter-red` classifier (`allInfrastructure`/`infrastructureCount`) can
+ * keep reading the underlying `details`/`red` arrays unsanitized — see the
+ * import comment above.
  */
 function firstLines(detail, max = 3) {
 	const lines = String(detail).split('\n');
@@ -86,6 +93,14 @@ const { unimplementedCheckKindsFromContent } = await import(
 // condition could not previously tell apart from each other.
 const { allInfrastructure, infrastructureCount } = await import(
 	pathToFileURL(join(dist, 'exercise-verify', 'starter-red.helpers.js')).href);
+// VSX-231 C12 follow-up: `sanitizeChildOutput` for multi-line child output
+// (case/check `detail`), `sanitizeUntrustedText` for a single-line
+// artifact-authored scalar (a check `name`) — display-only, applied at print
+// time. Never between a raw detail and `allInfrastructure`/`infrastructureCount`
+// above, which must keep reading the unsanitized text (see the header comment
+// on `firstLines` below).
+const { sanitizeChildOutput, sanitizeUntrustedText } = await import(
+	pathToFileURL(join(here, '..', 'dist', 'src', 'utils', 'sanitize-text.helpers.js')).href);
 
 /** `--starter-red`'s distinct exit status for an all-infrastructure result — see the header comment. */
 const INCONCLUSIVE_EXIT = 3;
@@ -237,7 +252,7 @@ if (starterRed) {
 			// the starter, so it must not read as RED.
 			if (allInfrastructure(details)) {
 				console.log(`INCONCLUSIVE ${mdPath} — every case failure is a broken toolchain, not the starter:`);
-				for (const d of details) { console.log(`  ${firstLines(d)}`); }
+				for (const d of details) { console.log(`  ${sanitizeChildOutput(firstLines(d))}`); }
 				process.exit(INCONCLUSIVE_EXIT);
 			}
 			const infra = infrastructureCount(details);
@@ -245,7 +260,7 @@ if (starterRed) {
 			console.log(`RED  ${mdPath} — starter fails ${failed.length}/${results.length} case(s), as it must${infraNote}`);
 			for (const r of failed) {
 				const detail = r.error ?? `got ${r.actual}`;
-				console.log(`  case ${r.index}: ${firstLines(detail)}`);
+				console.log(`  case ${r.index}: ${sanitizeChildOutput(firstLines(detail))}`);
 			}
 			process.exit(0);
 		}
@@ -276,13 +291,17 @@ if (starterRed) {
 		// is unsolved — say so distinctly rather than printing RED.
 		if (allInfrastructure(details)) {
 			console.log(`INCONCLUSIVE ${mdPath} — every failing check is a broken toolchain, not the starter [${kinds}]:`);
-			for (const o of red) { console.log(`  ${o.name}: ${firstLines(o.detail ?? '(no detail)')}`); }
+			for (const o of red) {
+				console.log(`  ${sanitizeUntrustedText(o.name)}: ${sanitizeChildOutput(firstLines(o.detail ?? '(no detail)'))}`);
+			}
 			process.exit(INCONCLUSIVE_EXIT);
 		}
 		const infra = infrastructureCount(details);
 		const infraNote = infra > 0 ? ` (${infra} of them toolchain, not starter — see the check detail)` : '';
 		console.log(`RED  ${mdPath} — starter fails ${red.length}/${outcomes.length} check(s) [${kinds}], as it must${infraNote}`);
-		for (const o of red) { console.log(`  ${o.name}: ${firstLines(o.detail ?? '(no detail)')}`); }
+		for (const o of red) {
+			console.log(`  ${sanitizeUntrustedText(o.name)}: ${sanitizeChildOutput(firstLines(o.detail ?? '(no detail)'))}`);
+		}
 		process.exit(0);
 	}
 	die(`PRE-SOLVED ${mdPath}: every check passes against the starter [${kinds}] — a solver `
