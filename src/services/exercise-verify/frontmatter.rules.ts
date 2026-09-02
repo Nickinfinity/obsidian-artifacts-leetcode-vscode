@@ -1,5 +1,6 @@
 import { orderViolation } from '../frontmatter-order.helpers.js';
 import { legacyFrontmatterKeys, splitFrontmatter } from '../leetcode-config-blocks.helpers.js';
+import { sanitizeUntrustedText } from '../../utils/sanitize-text.helpers.js';
 
 /**
  * The four pre-dispatch frontmatter rules `verifyExercise` runs, in order,
@@ -130,6 +131,15 @@ function checkFrontmatterOrder(md: string): string | null {
  * Last occurrence wins on a duplicate key, matching `applyScalar`'s own
  * last-wins semantics for scalar frontmatter keys.
  *
+ * **The declared value is echoed into the reason, so it goes through
+ * `sanitizeUntrustedText` first (VSX-122 C12).** This is the one rule in
+ * this file that interpolates an unbounded, artifact-controlled string —
+ * Rule 0 (`checkLegacyFrontmatter`) only ever echoes key *names* drawn from
+ * the closed `BODY_SET_KEYS` vocabulary, and Rule 2 forwards `orderViolation`,
+ * which only ever echoes key names drawn from `CANONICAL_FRONTMATTER_ORDER`;
+ * neither can carry attacker-chosen bytes. `value` here is the raw scalar
+ * text after `artifactType:`, unbounded and unfiltered until this call.
+ *
  * @param md - Full `.md` artifact content (untrusted).
  * @returns A message naming what is missing or wrong, or `null` when
  *   `artifactType: leetcode` is declared.
@@ -152,7 +162,7 @@ function checkArtifactType(md: string): string | null {
 		return "discriminator: 'artifactType: leetcode' is required — none declared";
 	}
 	if (value !== 'leetcode') {
-		return `discriminator: 'artifactType' is '${value}', expected 'leetcode'`;
+		return `discriminator: 'artifactType' is '${sanitizeUntrustedText(value)}', expected 'leetcode'`;
 	}
 	return null;
 }

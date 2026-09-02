@@ -318,4 +318,55 @@ suite('exercise-verify — legacy frontmatter config', () => {
         }
     });
 
+    // ── SEC: Rule 3 echoes the raw artifactType value — it must be sanitized ──
+    //
+    // `checkArtifactType` interpolates the frontmatter scalar straight into
+    // its reason string. That reason reaches CLI stdout today and is the
+    // documented precedent for a future webview sink, so an artifact must
+    // not be able to smuggle ANSI/control bytes or an unbounded length into
+    // it (VSX-122 condition C12). Hostile bytes are built with
+    // `String.fromCharCode` rather than typed as literal control characters,
+    // so the offending byte is explicit and reviewable in the diff.
+
+    const ESC = String.fromCharCode(0x1b);
+    const BEL = String.fromCharCode(0x07);
+    const BACKSPACE = String.fromCharCode(0x08);
+
+    test('SEC: an ANSI escape sequence in artifactType is stripped from the reason', async () => {
+        const hostile = `${ESC}[31mFAKE PASS${ESC}[0m`;
+        const md = buildCleanV2Md().replace('artifactType: leetcode', `artifactType: ${hostile}`);
+        const result = await verifyExercise(md);
+        assert.strictEqual(result.ok, false, JSON.stringify(result));
+        if (!result.ok) {
+            assert.ok(!result.reason.includes(ESC), JSON.stringify(result.reason));
+            assert.ok(result.reason.startsWith('discriminator:'), result.reason);
+        }
+    });
+
+    test('SEC: a C0 control byte in artifactType is stripped from the reason', async () => {
+        const hostile = `evil${BEL}bell${BACKSPACE}backspace`;
+        const md = buildCleanV2Md().replace('artifactType: leetcode', `artifactType: ${hostile}`);
+        const result = await verifyExercise(md);
+        assert.strictEqual(result.ok, false, JSON.stringify(result));
+        if (!result.ok) {
+            assert.ok(!result.reason.includes(BEL), JSON.stringify(result.reason));
+            assert.ok(!result.reason.includes(BACKSPACE), JSON.stringify(result.reason));
+            assert.ok(result.reason.includes('evilbellbackspace'), result.reason);
+        }
+    });
+
+    test('SEC: an over-long artifactType value is truncated in the reason, visibly', async () => {
+        const hostile = 'x'.repeat(2000);
+        const md = buildCleanV2Md().replace('artifactType: leetcode', `artifactType: ${hostile}`);
+        const start = Date.now();
+        const result = await verifyExercise(md);
+        assert.ok(Date.now() - start < 1000, 'must not hang sanitizing a long value');
+        assert.strictEqual(result.ok, false, JSON.stringify(result));
+        if (!result.ok) {
+            assert.ok(!result.reason.includes(hostile), 'full 2000-char value must not reach the reason');
+            assert.ok(result.reason.length < 500, `reason must be bounded, was ${result.reason.length} chars`);
+            assert.ok(/truncat/i.test(result.reason), `truncation must be visible: ${result.reason}`);
+        }
+    });
+
 });
