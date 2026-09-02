@@ -166,8 +166,16 @@ const md = readFileSync(mdPath, 'utf-8');
 // `kind`, a rejected lib, a near-miss key. They were invisible here, which let a
 // partially-parsed artifact read as fully verified: the `service` spikes declare
 // `http` checks that are DROPPED, so "OK" covered only the checks that survived.
+//
+// SEC-2 (independent-review follow-up on 16453e7): `warning` is built from raw
+// artifact text (a check name, a kind, a lib spec, an `exposeAs` key or value)
+// across ~22 builders in `project-parser.helpers.ts`/`packages-parser.helpers.ts`
+// — sanitized once, here, at the print site, rather than at each builder: this
+// is the CLI's only sink for these warnings (they never reach the webview), and
+// one authority at the boundary is what covers every builder without touching
+// two dozen call sites individually.
 for (const warning of parseLeetCode(md).warnings ?? []) {
-	console.error(`WARN ${mdPath}: ${warning}`);
+	console.error(`WARN ${mdPath}: ${sanitizeChildOutput(warning)}`);
 }
 
 // ── P6: a `stack` is not swept by default ────────────────────────────────────
@@ -208,7 +216,14 @@ if (expectedsPath) {
 	}
 	console.error(`MISMATCH ${mdPath}: ${mismatches.length} case(s) disagree`);
 	for (const m of mismatches) {
-		console.error(`  [${m.index}] input=${JSON.stringify(m.input)} artifact=${JSON.stringify(m.artifact)} recomputed=${JSON.stringify(m.recomputed)}`);
+		// SEC-3 (independent-review follow-up on 16453e7): `JSON.stringify`
+		// escapes the ASCII control range but passes a bidi-control code point
+		// (e.g. RLO) straight through — the same reasoning that already wraps
+		// `canonicalJson(...)` elsewhere in this file, applied to the one site
+		// that was missed. `input`/`artifact`/`recomputed` are all
+		// artifact-authored case data.
+		const line = `  [${m.index}] input=${JSON.stringify(m.input)} artifact=${JSON.stringify(m.artifact)} recomputed=${JSON.stringify(m.recomputed)}`;
+		console.error(sanitizeUntrustedText(line));
 	}
 	process.exit(1);
 }
@@ -324,4 +339,14 @@ if (result.ok) {
 	console.log(`OK   ${mdPath}${structureOnlyNote(md, reparsed, parsedType)}`);
 	process.exit(0);
 }
-die(`FAIL ${result.reason}`, 1);
+// Residual (independent-review follow-up on 16453e7): `result.reason` is
+// already control/bidi-stripped by `package.rules.ts`/`function.rules.ts`'s
+// own `sanitizeChildOutput` calls, but that sanitizer deliberately preserves
+// `\n` — a `build` check's stderr is multi-line by nature — and, unlike every
+// `--starter-red` print site above, this line never applied `firstLines`'
+// line-count bound on top. Up to `MAX_CHILD_OUTPUT_LEN` newline-separated
+// characters from a check's own stderr could otherwise print arbitrary-looking
+// lines into a sweep's terminal log, including lines shaped exactly like this
+// CLI's own `OK   <path>` verdict. Same 3-line convention as every other
+// print site in this file.
+die(`FAIL ${firstLines(result.reason)}`, 1);

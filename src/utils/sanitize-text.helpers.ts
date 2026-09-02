@@ -15,7 +15,7 @@ export const MAX_UNTRUSTED_TEXT_LEN = 200;
 const CONTROL_CHARS_RE = /[\x00-\x1F\x7F-\x9F]/g;
 
 /**
- * Bidirectional-control code points -- LRM/RLM, the LRE/RLE/PDF/LRO/RLO
+ * Bidirectional-control code points -- ALM, LRM/RLM, the LRE/RLE/PDF/LRO/RLO
  * embeddings and overrides, and the LRI/RLI/FSI/PDI isolates -- that can
  * reorder how text *renders* without a single C0/C1 byte involved (the
  * "Trojan Source" mechanism, CVE-2021-42574): an unterminated RLO reorders
@@ -25,11 +25,17 @@ const CONTROL_CHARS_RE = /[\x00-\x1F\x7F-\x9F]/g;
  * single authority for "what a terminal/webview/log viewer must not be
  * handed" on the bidi axis.
  *
+ * This is the complete set of code points with the Unicode `Bidi_Control=Yes`
+ * property (12 total) -- U+061C ARABIC LETTER MARK included alongside LRM/RLM,
+ * not just the two (independent-review follow-up on 16453e7): a set that
+ * documents itself as "the single authority" on this axis but omits a third
+ * of its own class is worse than no claim of completeness at all.
+ *
  * Written as `\u{XXXX}` escapes, never the literal characters, so this
  * source file carries no invisible bidi text of its own to review or diff.
  * One flat character class, ranges only, no nested quantifier (S8786).
  */
-const BIDI_CONTROL_CHARS_RE = /[\u{200E}\u{200F}\u{202A}-\u{202E}\u{2066}-\u{2069}]/gu;
+const BIDI_CONTROL_CHARS_RE = /[\u{061C}\u{200E}\u{200F}\u{202A}-\u{202E}\u{2066}-\u{2069}]/gu;
 
 /**
  * Bounds and neutralises an untrusted string before it is interpolated into

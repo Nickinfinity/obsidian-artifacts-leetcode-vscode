@@ -420,4 +420,79 @@ suite('exercise-verify — rules registry (leetcode-type axis)', () => {
             assert.ok(/truncated/.test(reason), reason);
         });
     });
+
+    // ── Finding 6 (independent-review follow-up on 16453e7): P3/P4/P5 ────────
+    //
+    // `verifyProgramSuite`'s own mismatch branch (`package.rules.ts:104-105`)
+    // is a *separate* code path from `checkPackageStructure`'s check-graded
+    // sinks above — reached only when an artifact declares `program:` and no
+    // `checks:` (`isProgramSuite`) — and it was entirely unpinned: the C12
+    // suite above never builds a `program`-suite artifact. `bad.actual` is
+    // already `canonicalJson`-encoded by `out-channel.ts`'s `readOutChannel`
+    // by the time it reaches `sanitizeChildOutput`, so — same reasoning as the
+    // F1/F2 fixture in `exercise-verify.test.ts` — an ESC byte inside it would
+    // already have been neutralized into safe escaped text upstream; RLO is
+    // the one hostile byte that survives raw through `canonicalJson` and
+    // actually exercises the sanitizer at this call site.
+
+    suite('Finding 6: package.rules.ts verifyProgramSuite sinks (P3/P4/P5)', () => {
+
+        test('a mismatched program-suite case sanitizes both the artifact expected and the program actual', async () => {
+            const rlo = String.fromCharCode(0x202e);
+            const hostileExpected = `EXPECTED-${rlo}hostile`;
+            const hostileActual = `ACTUAL-${rlo}raw`;
+
+            const md = [
+                '---',
+                'artifactType: leetcode',
+                'leetcodeType: package',
+                'title: Widget',
+                'difficulty: medium',
+                '---',
+                '',
+                'A program-suite exercise.',
+                '',
+                '```yaml leetcode',
+                'program:',
+                '  channel: argv',
+                'params:',
+                '  - name: a',
+                '    type: string',
+                '```',
+                '',
+                '## Files',
+                '',
+                '```javascript path=main.js role=editable',
+                '// starter stub, overlaid by # Solutions below',
+                '```',
+                '',
+                '## Tests',
+                '```json',
+                JSON.stringify([{ input: { a: 'x' }, expected: hostileExpected }]),
+                '```',
+                '',
+                '# Solutions',
+                '',
+                '```javascript path=main.js',
+                'require("node:fs").writeFileSync(',
+                `  process.env.LEET_OUT, JSON.stringify("ACTUAL-" + String.fromCharCode(0x202e) + "raw"),`,
+                ');',
+                '```',
+            ].join('\n');
+
+            const result = await verifyExercise(md);
+            assert.strictEqual(result.ok, false, JSON.stringify(result));
+            const reason = !result.ok ? result.reason : '';
+            assert.ok(!reason.includes(rlo), `RLO code point leaked: ${JSON.stringify(reason)}`);
+            assert.strictEqual(
+                reason,
+                'package: case 0 failed: expected "EXPECTED-hostile", got "ACTUAL-raw"',
+                JSON.stringify(reason),
+            );
+            // Sanity: the hostile fixture values themselves actually carried
+            // the byte under test, so a vacuous fixture (nothing hostile to
+            // strip) cannot masquerade as a passing pin.
+            assert.ok(hostileExpected.includes(rlo) && hostileActual.includes(rlo));
+        });
+    });
 });

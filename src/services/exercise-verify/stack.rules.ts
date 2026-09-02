@@ -2,6 +2,7 @@ import type { LeetcodeTypeId } from '../../types/leetcode-type.js';
 import type { ParsedLeetCode } from '../../types/leetcode.types.js';
 import type { VerifyRunOptions } from './rules.registry.js';
 import { verifyPackageExercise } from './package.rules.js';
+import { sanitizeUntrustedText } from '../../utils/sanitize-text.helpers.js';
 
 /**
  * A `stack`'s defining property (VSX-181 / T4.4): *several* wired-together
@@ -73,12 +74,23 @@ function checkStackShape(parsed: ParsedLeetCode): string | null {
 	return count < MIN_STACK_PACKAGES ? 'stack: needs more than one package' : null;
 }
 
-/** Rule 2 — every `http` check's `package:` must name a declared `packages:` entry. */
+/**
+ * Rule 2 — every `http` check's `package:` must name a declared `packages:`
+ * entry.
+ *
+ * Both `check.name` and `check.package` are raw artifact text (SEC-1,
+ * independent-review follow-up on 16453e7) — `names.has(check.package)` is
+ * checked against the *unsanitized* value (matching a declared package name
+ * must stay exact), but the message that echoes both back is built through
+ * `sanitizeUntrustedText`, the same as every other check-name sink in
+ * `package.rules.ts`.
+ */
 function checkHttpPackagesResolve(parsed: ParsedLeetCode): string | null {
 	const names = new Set((parsed.packages ?? []).map(p => p.name));
 	for (const check of parsed.checks ?? []) {
 		if (check.kind === 'http' && !names.has(check.package)) {
-			return `stack: check '${check.name}' names unknown package '${check.package}'`;
+			return `stack: check '${sanitizeUntrustedText(check.name)}' names unknown package `
+				+ `'${sanitizeUntrustedText(check.package)}'`;
 		}
 	}
 	return null;

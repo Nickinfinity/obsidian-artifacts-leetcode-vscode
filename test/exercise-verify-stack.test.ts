@@ -245,4 +245,46 @@ suite('exercise-verify — stack.rules.ts', () => {
         assert.strictEqual(result.ok, false);
         assert.strictEqual(reasonOf(result), "stack: check 'orders api' names unknown package 'missing'");
     });
+
+    // ── SEC-1 (independent-review follow-up on 16453e7): both interpolated ───
+    // fields are raw artifact text — a hostile check `name` AND a hostile
+    // `package:` value both reach this message unsanitized before the fix.
+    // Bytes built at runtime via `String.fromCharCode`, never typed as
+    // `\uXXXX` text, per the tool-pipeline hazard that silently decodes bare
+    // 4-hex escapes into real control bytes.
+
+    test('SEC-1: an unknown-package check with a hostile name AND hostile package value is sanitized', async () => {
+        const esc = String.fromCharCode(0x1b);
+        const rlo = String.fromCharCode(0x202e);
+        const hostileName = `${esc}[31morders api${esc}[0m`;
+        const hostilePackage = `${rlo}gnissim`;
+
+        const md = stackMd([
+            '```yaml leetcode',
+            TWO_PACKAGES,
+            'checks:',
+            `  - name: ${hostileName}`,
+            '    kind: http',
+            `    package: ${hostilePackage}`,
+            '```',
+            '',
+            '## Files',
+            '',
+            '```javascript path=index.js role=editable',
+            'module.exports = {};',
+            '```',
+        ].join('\n'));
+
+        const result = await verifyExercise(md);
+        assert.strictEqual(result.ok, false, JSON.stringify(result));
+        const reason = reasonOf(result);
+
+        assert.ok(!reason.includes(esc), `ESC byte leaked into reason: ${JSON.stringify(reason)}`);
+        assert.ok(!reason.includes(rlo), `RLO code point leaked into reason: ${JSON.stringify(reason)}`);
+        assert.strictEqual(
+            reason,
+            "stack: check '[31morders api[0m' names unknown package 'gnissim'",
+            JSON.stringify(reason),
+        );
+    });
 });

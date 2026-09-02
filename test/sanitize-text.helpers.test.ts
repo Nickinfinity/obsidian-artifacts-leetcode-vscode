@@ -123,6 +123,18 @@ suite('sanitize-text.helpers', () => {
         test('a Unicode string with no bidi-control code points is left unchanged', () => {
             assert.strictEqual(sanitizeUntrustedText('café — naïve résumé 中文'), 'café — naïve résumé 中文');
         });
+
+        // SEC-4 (independent-review follow-up on 16453e7): U+061C ARABIC LETTER
+        // MARK carries Bidi_Control=Yes exactly like LRM/RLM, but the original
+        // class only listed the two — measured: `('a' + ALM + 'b').replace(re, '')`
+        // left the ALM in place.
+        test('SEC: strips U+061C (ALM), the third Bidi_Control mark alongside LRM/RLM', () => {
+            const alm = '\u{061C}';
+            const hostile = `a${alm}b`;
+            const clean = sanitizeUntrustedText(hostile);
+            assert.ok(!clean.includes(alm), clean);
+            assert.strictEqual(clean, 'ab');
+        });
     });
 
     suite('sanitizeChildOutput', () => {
@@ -168,6 +180,16 @@ suite('sanitize-text.helpers', () => {
             const clean = sanitizeChildOutput(hostile);
             assert.ok(!clean.includes(rlo), clean);
             assert.strictEqual(clean, 'line one\ndeltroffed\nline three');
+        });
+
+        // SEC-4: same shared regex as sanitizeUntrustedText — one fixture here
+        // proves the sibling sanitizer inherits the fix, not a second copy of it.
+        test('SEC: strips U+061C (ALM), the third Bidi_Control mark alongside LRM/RLM', () => {
+            const alm = '\u{061C}';
+            const hostile = `line one\n${alm}line two`;
+            const clean = sanitizeChildOutput(hostile);
+            assert.ok(!clean.includes(alm), clean);
+            assert.strictEqual(clean, 'line one\nline two');
         });
 
         // ── the whole point of this sibling: multi-line stderr survives ──

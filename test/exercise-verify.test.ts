@@ -200,6 +200,72 @@ suite('exercise-verify', () => {
             );
         });
 
+        // ── Finding 6 (independent-review follow-up on 16453e7): F1/F2 ──────
+        //
+        // The thrown-Error test above only proves `bad.error`'s sanitizer
+        // (the branch `checkSolutionsGreen` takes when the candidate throws).
+        // F1/F2 name the *other* branch — `bad.error` falsy, the candidate
+        // returns cleanly but the value disagrees with `## Tests`' own
+        // `expected` — which stayed unpinned: `sanitizeUntrustedText` around
+        // `canonicalJson(bad.expected)` (an artifact-authored value, F1) and
+        // `sanitizeChildOutput` around `bad.actual` (the candidate's own
+        // return value, F2). Hostile bytes are produced by the candidate
+        // itself at runtime via `String.fromCharCode`, never typed as literal
+        // control bytes or `\uXXXX` text in this file — same discipline as
+        // the thrown-Error fixture above.
+
+        test('SEC (F1/F2): a mismatched (non-throwing) result sanitizes both the artifact expected and the candidate actual', async () => {
+            // Both hostile values carry a bidi-control mark (RLO), not an ESC
+            // byte: bad.actual is already a canonicalJson-encoded string by
+            // the time it reaches this sink (the js driver's own sentinel
+            // protocol), and JSON encoding neutralizes a raw ESC byte into
+            // safe backslash-escaped text on its own -- measured directly,
+            // this is the same asymmetry SEC-3 hit in verify-exercise.mjs.
+            // RLO survives canonicalJson unescaped, so it is the one hostile
+            // byte that actually reaches sanitizeChildOutput/sanitizeUntrustedText
+            // raw at this call site, making it the fixture that actually
+            // exercises the sanitizer rather than one that trivially passes
+            // either way.
+            const rlo = String.fromCharCode(0x202e);
+            // Every case's candidate output is this fixed hostile string —
+            // giving every case bar one the *same* value as its own `expected`
+            // keeps the suite green everywhere except the one case under test,
+            // so `bad` is unambiguously case 0.
+            const hostileActual = 'ACTUAL-' + rlo + 'raw';
+            const hostileExpected = 'EXPECTED-' + rlo + 'hostile';
+
+            const solutionCode = [
+                'function identity(a) {',
+                '  return "ACTUAL-" + String.fromCharCode(0x202e) + "raw";',
+                '}',
+            ].join('\n');
+
+            const passingCase = { input: { a: 'x' }, expected: hostileActual };
+            const tests = [
+                { input: { a: 'x' }, expected: hostileExpected },
+                passingCase, passingCase, passingCase, passingCase, passingCase,
+            ];
+            const finalTests = [passingCase, passingCase, passingCase];
+
+            const result = await verifyExercise(buildMd({
+                functionName: 'identity',
+                params: [{ name: 'a', type: 'string' }],
+                returns: 'string',
+                tests,
+                finalTests,
+                solutionCode,
+            }));
+
+            assert.strictEqual(result.ok, false, JSON.stringify(result));
+            const reason = !result.ok ? result.reason : '';
+            assert.ok(!reason.includes(rlo), `RLO code point leaked into reason: ${JSON.stringify(reason)}`);
+            assert.strictEqual(
+                reason,
+                'run: javascript failed case 0: expected "EXPECTED-hostile", got "ACTUAL-raw"',
+                JSON.stringify(reason),
+            );
+        });
+
         test('a reference solution that spins forever fails via the suite timeout, not a hang', async () => {
             const result = await verifyExercise(
                 buildMd({ solutionCode: 'function sum(a, b) { while (true) {} }', timeoutMs: 100 }),
