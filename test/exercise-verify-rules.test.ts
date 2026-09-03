@@ -97,6 +97,22 @@ suite('exercise-verify — rules registry (leetcode-type axis)', () => {
         assert.strictEqual(result.ok, true, JSON.stringify(result));
     });
 
+    // C10: the residual gap the mirror rule was written to catch but could
+    // not see — `type: call` names exactly the default, so before the parser
+    // recorded the raw scalar this was indistinguishable from no `type:` at
+    // all and slipped through green. It must refuse exactly like `in-place`
+    // does below, not because `call` is a worse strategy but because it was
+    // *declared*, and `checks:` + a declared strategy are mutually exclusive.
+    test('a package explicitly naming test.type: call (the default) is refused by the mirror rule', async () => {
+        const result = await verifyExercise(buildPackageMd({ testBlock: 'test:\n  type: call' }));
+        assert.strictEqual(result.ok, false, JSON.stringify(result));
+        assert.strictEqual(
+            !result.ok ? result.reason : '',
+            "package: checks declared but test.type is 'call' — "
+                + 'a checks-graded exercise must not also declare a top-level execution strategy',
+        );
+    });
+
     test('a package that also names a real execution strategy is refused by the mirror rule', async () => {
         // The direction that stays a violation: `checks:` and a deliberately
         // named single-suite strategy are mutually exclusive. Everything else

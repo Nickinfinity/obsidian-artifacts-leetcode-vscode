@@ -63,10 +63,8 @@ const BIDI_CONTROL_CHARS_RE = /[\u{061C}\u{200E}\u{200F}\u{202A}-\u{202E}\u{2066
  * above, not "every way text can lie about itself."
  *
  * @param value - Untrusted text to bound and clean.
- * @param maxLen - Cap on the returned string's length, in characters.
- *   Defaults to `MAX_UNTRUSTED_TEXT_LEN`.
  * @returns `value` with every C0/C1 control character and bidi-control code
- *   point removed, then truncated to `maxLen` with a visible
+ *   point removed, then truncated to `MAX_UNTRUSTED_TEXT_LEN` with a visible
  *   `...[truncated]` marker appended when it no longer fits whole -- a
  *   silently truncated value would misrepresent what the artifact actually
  *   declared.
@@ -76,9 +74,11 @@ const BIDI_CONTROL_CHARS_RE = /[\u{061C}\u{200E}\u{200F}\u{202A}-\u{202E}\u{2066
  * @example
  * sanitizeUntrustedText('a'.repeat(500)).endsWith('...[truncated]'); // -> true
  */
-export function sanitizeUntrustedText(value: string, maxLen: number = MAX_UNTRUSTED_TEXT_LEN): string {
+export function sanitizeUntrustedText(value: string): string {
 	const clean = value.replace(CONTROL_CHARS_RE, '').replace(BIDI_CONTROL_CHARS_RE, '');
-	return clean.length > maxLen ? `${clean.slice(0, maxLen)}...[truncated]` : clean;
+	return clean.length > MAX_UNTRUSTED_TEXT_LEN
+		? `${clean.slice(0, MAX_UNTRUSTED_TEXT_LEN)}...[truncated]`
+		: clean;
 }
 
 /**
@@ -134,12 +134,10 @@ const CHILD_OUTPUT_CONTROL_CHARS_RE = /[\x00-\x08\x0B-\x1F\x7F-\x9F]/g;
  * printed or embedded in a message, strictly after classification has run.
  *
  * @param value - Untrusted, potentially multi-line child output.
- * @param maxLen - Cap on the returned string's length, in characters.
- *   Defaults to `MAX_CHILD_OUTPUT_LEN`.
  * @returns `value` with ESC/C1/CR, the rest of the C0 range, and every
  *   bidi-control code point removed (newlines and tabs preserved), then
- *   truncated to `maxLen` with a visible `...[truncated]` marker when it no
- *   longer fits whole.
+ *   truncated to `MAX_CHILD_OUTPUT_LEN` with a visible `...[truncated]`
+ *   marker when it no longer fits whole.
  *
  * @example
  * sanitizeChildOutput('line one\n\x1B[31mline two\x1B[0m\nline three');
@@ -147,7 +145,9 @@ const CHILD_OUTPUT_CONTROL_CHARS_RE = /[\x00-\x08\x0B-\x1F\x7F-\x9F]/g;
  * @example
  * sanitizeChildOutput('a'.repeat(10_000)).endsWith('...[truncated]'); // -> true
  */
-export function sanitizeChildOutput(value: string, maxLen: number = MAX_CHILD_OUTPUT_LEN): string {
+export function sanitizeChildOutput(value: string): string {
 	const clean = value.replace(CHILD_OUTPUT_CONTROL_CHARS_RE, '').replace(BIDI_CONTROL_CHARS_RE, '');
-	return clean.length > maxLen ? `${clean.slice(0, maxLen)}...[truncated]` : clean;
+	return clean.length > MAX_CHILD_OUTPUT_LEN
+		? `${clean.slice(0, MAX_CHILD_OUTPUT_LEN)}...[truncated]`
+		: clean;
 }

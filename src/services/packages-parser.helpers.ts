@@ -3,6 +3,7 @@ import { safeJsonParse } from '../utils/safe-json.js';
 import { libEnvVars } from './libs/lib-env.helpers.js';
 import { LIB_ECOSYSTEMS } from './libs/lib-ecosystem.js';
 import type { PackageSpec } from '../types/leetcode.types.js';
+import { blockLines, indentOf, KV_RE, unquote } from './leetcode-config-blocks.helpers.js';
 
 /**
  * `packages:` config-block grammar (T3.1) — a `leetcodeType: stack`'s boot
@@ -141,9 +142,6 @@ const EXPOSE_DENYLIST: ReadonlySet<string> = new Set([
 	'JAVA_TOOL_OPTIONS', 'JDK_JAVA_OPTIONS',
 	'RUSTFLAGS',
 ]);
-
-/** A `key: value` line, key restricted to plain identifiers. */
-const KV_RE = /^(\w+):\s*(.*)$/;
 
 /** A `${…}` placeholder, captured so its content can be checked against `PORT`. */
 const PLACEHOLDER_RE = /\$\{([^}]*)\}/g;
@@ -480,30 +478,8 @@ function parseEntryLines(
 	return { fields, exposeAs };
 }
 
-// ── shared line helpers (own copy — see report: not exported by project-parser.helpers.ts) ──
-
-/** Lines indented deeper than the block header at `start`, up to the first that is not. */
-function blockLines(lines: string[], start: number): string[] {
-	const base = indentOf(lines[start]);
-	const out: string[] = [];
-	for (let i = start + 1; i < lines.length; i++) {
-		if (lines[i].trim() === '') { continue; }
-		if (indentOf(lines[i]) <= base) { break; }
-		out.push(lines[i]);
-	}
-	return out;
-}
-
-/** Count of leading whitespace characters. */
-function indentOf(line: string): number {
-	return /^\s*/.exec(line)?.[0].length ?? 0;
-}
-
-/** Strip one layer of matching quotes, if present. */
-function unquote(value: string): string {
-	const m = /^"(.*)"$|^'(.*)'$/.exec(value.trim());
-	return m ? m[1] ?? m[2] : value.trim();
-}
+// `blockLines` / `indentOf` / `unquote` moved to `leetcode-config-blocks
+// .helpers.ts` (condition C26) — imported above, not redeclared here.
 
 /** Narrow an unknown parse result to `string[]`. */
 function isStringArray(value: unknown): value is string[] {

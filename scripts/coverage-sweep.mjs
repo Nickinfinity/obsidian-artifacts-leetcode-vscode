@@ -129,11 +129,10 @@ const DISPATCHABLE = dispatchableKinds();
  * cellImplemented('function', 'build'); // → false — a buffer has no checks
  */
 function cellImplemented(leetcodeType, testType) {
-	// The legacy shape ids left `TEST_TYPES` with T3.5's narrowing, so the
-	// guard that used to exclude them here has nothing left to match: this
-	// function is only ever called across the ids that table declares. What
-	// still reads a raw declared scalar — the verifier's mirror rule — keeps
-	// `SHAPE_TEST_TYPE_IDS` for itself.
+	// The legacy shape ids ('project'/'service') left `TEST_TYPES` with T3.5's
+	// narrowing, so the guard that used to exclude them here has nothing left
+	// to match: this function is only ever called across the ids that table
+	// declares, and neither legacy id is one any more.
 	if (languagesForType(testType, leetcodeType).length > 0) { return true; }
 	return isMultiFile(leetcodeType) && DISPATCHABLE.has(testType);
 }

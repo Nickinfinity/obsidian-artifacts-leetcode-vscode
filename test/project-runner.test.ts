@@ -6,7 +6,9 @@ import { parseLeetCode } from '../src/services/leetcode-parser.service.js';
 import { renderLibsFor } from '../src/services/test-envs/project/checks.js';
 import { libEnvDir } from '../src/services/libs/lib-cache.service.js';
 import { linkModules } from '../src/services/test-envs/project/modules.linker.js';
-import { gradeProjectDir, runProjectChecks } from '../src/services/test-envs/project/project.runner.js';
+import {
+	gradeProjectDir, resolveProgramLibDir, runProgramArtifact, runProjectChecks,
+} from '../src/services/test-envs/project/project.runner.js';
 
 /**
  * Grading a project directory (the in-editor solve flow's half that is not
@@ -594,6 +596,147 @@ suite('project runner', () => {
 			const outcomes = await gradeProjectDir(parseLeetCode(stackArtifact()), runDir);
 			assert.strictEqual(outcomes.length, 1);
 			assert.strictEqual(outcomes[0].passed, true, JSON.stringify(outcomes));
+		});
+	});
+
+	// ── C24: a `program` suite resolves its own language's libraries ────────
+	//
+	// Before this, `runProgramSuite` accepted and consumed a `libDir` exactly
+	// as the `call` envs do, but nothing computed one — a `package` declaring
+	// `libs:` and graded by `program` built without them and failed naming the
+	// missing import. `resolveProgramLibDir` closes it by reusing the same
+	// `installSetsFor` / `ensureLibEnv` resolution `gradeProjectDir` already
+	// runs for a check-graded tree.
+	suite('resolveProgramLibDir — the program suite\'s missing lib resolver (C24)', () => {
+
+		let cacheRoot: string;
+		const previousCache = process.env.OBSIDIAN_LEETCODE_LIBCACHE;
+
+		setup(() => {
+			cacheRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'proglibs-'));
+			process.env.OBSIDIAN_LEETCODE_LIBCACHE = cacheRoot;
+		});
+
+		teardown(() => {
+			if (previousCache === undefined) { delete process.env.OBSIDIAN_LEETCODE_LIBCACHE; }
+			else { process.env.OBSIDIAN_LEETCODE_LIBCACHE = previousCache; }
+			fs.rmSync(cacheRoot, { recursive: true, force: true });
+		});
+
+		/** Fakes `pnpm add --dir <cwd> <specs>` — creates one `node_modules/<pkg>` per spec, never touches the network. */
+		async function fakePnpmInstall(_file: string, args: string[], cwd: string): Promise<void> {
+			fs.mkdirSync(path.join(cwd, 'node_modules'), { recursive: true });
+			for (const spec of args.filter(a => !a.startsWith('-') && a !== 'add' && a !== cwd)) {
+				const name = spec.split('@').filter(Boolean)[0];
+				fs.mkdirSync(path.join(cwd, 'node_modules', name), { recursive: true });
+			}
+		}
+
+		/** A `program`-suite `package` artifact; `main.js` echoes its own `NODE_PATH` back through `$LEET_OUT`. */
+		function probeArtifact(libsBlock: string): string {
+			return [
+				'---', 'artifactType: leetcode', 'leetcodeType: package', 'title: Probe', 'difficulty: easy', '---',
+				'', 'Probe.', '',
+				'```yaml leetcode',
+				'program:',
+				'  channel: argv',
+				'params:',
+				'  - name: a',
+				'    type: int',
+				...(libsBlock === '' ? [] : [libsBlock]),
+				'```',
+				'',
+				'## Tests',
+				'```json',
+				'[{ "input": { "a": 1 }, "expected": "irrelevant — actual is asserted directly" }]',
+				'```',
+				'',
+				'## Files',
+				'',
+				'```javascript path=main.js role=editable',
+				"require('node:fs').writeFileSync(process.env.LEET_OUT, JSON.stringify(process.env.NODE_PATH || null));",
+				'```',
+				'',
+			].join('\n');
+		}
+
+		const LIBS_BLOCK = ['libs:', '  javascript: ["left-pad@^1.3.0"]'].join('\n');
+
+		/** Two ecosystems, one runnable language — the shape that exposed the over-install. */
+		const MULTI_LIBS_BLOCK = [
+			'libs:', '  javascript: ["left-pad@^1.3.0"]', '  python: ["requests>=2,<3"]',
+		].join('\n');
+
+		test('an artifact declaring no libs resolves no directory', async () => {
+			const resolved = await resolveProgramLibDir(parseLeetCode(probeArtifact('')), 'javascript');
+			assert.deepStrictEqual(resolved, { ok: true });
+		});
+
+		test('an artifact declaring libs resolves the cache directory for its own language', async () => {
+			const parsed = parseLeetCode(probeArtifact(LIBS_BLOCK));
+			const resolved = await resolveProgramLibDir(parsed, 'javascript', fakePnpmInstall);
+
+			assert.ok(resolved.ok, JSON.stringify(resolved));
+			assert.strictEqual(resolved.libDir, libEnvDir('pnpm', ['left-pad@^1.3.0']));
+		});
+
+		/**
+		 * The regression the wave-review caught. The first cut looped every
+		 * ecosystem `installSetsFor` returned and then discarded all but one,
+		 * mirroring `gradeProjectDir`'s union — correct for a check-graded tree,
+		 * which may genuinely run several languages, and wrong here, because a
+		 * `program` suite builds and runs exactly one entry point in one
+		 * language. Two consequences, and the second is what this pins: it
+		 * cold-installed toolchains the suite could never use, and an install
+		 * failure in one of *those* aborted a run that never needed it.
+		 *
+		 * The stub throws on any invocation that is not a pnpm `add`, so the
+		 * python half failing is the assertion: with the union restored this
+		 * resolves `ok: false` and the test dies.
+		 */
+		test('only the program\'s own ecosystem is installed — an unrelated one is never attempted', async () => {
+			const parsed = parseLeetCode(probeArtifact(MULTI_LIBS_BLOCK));
+			const seen: string[] = [];
+			const refusingNonPnpm = async (file: string, args: string[], cwd: string): Promise<void> => {
+				seen.push(file);
+				if (!args.includes('add')) { throw new Error(`installed an ecosystem the program cannot run: ${file}`); }
+				await fakePnpmInstall(file, args, cwd);
+			};
+
+			const resolved = await resolveProgramLibDir(parsed, 'javascript', refusingNonPnpm);
+
+			assert.ok(resolved.ok, `an unconsumed ecosystem was installed — ${JSON.stringify(resolved)}`);
+			if (resolved.ok) { assert.strictEqual(resolved.libDir, libEnvDir('pnpm', ['left-pad@^1.3.0'])); }
+			assert.ok(
+				!seen.some(file => /python|pip/.test(file)),
+				`the python ecosystem must never be reached, saw: ${seen.join(', ')}`,
+			);
+		});
+
+		test('an install failure is reported by name, not silently dropped', async () => {
+			const parsed = parseLeetCode(probeArtifact(LIBS_BLOCK));
+			const failing = async (): Promise<void> => { throw new Error('registry unreachable'); };
+			const resolved = await resolveProgramLibDir(parsed, 'javascript', failing);
+
+			assert.strictEqual(resolved.ok, false);
+			if (!resolved.ok) { assert.match(resolved.reason, /registry unreachable/); }
+		});
+
+		/**
+		 * The wiring test. `resolveProgramLibDir` computing the right answer in
+		 * isolation is not the same claim as `runProgramArtifact` actually
+		 * threading it into the child's environment — this fails if either half
+		 * of the two-call-site fix (project.runner.ts:281's own call, or the
+		 * `libDir` forwarded on into `runProgramSuite`) is reverted, even though
+		 * `resolveProgramLibDir` itself would still pass every test above.
+		 */
+		test('runProgramArtifact wires the resolved libDir into the child\'s environment', async () => {
+			const parsed = parseLeetCode(probeArtifact(LIBS_BLOCK));
+			const results = await runProgramArtifact(parsed, { withSolutions: false, installRun: fakePnpmInstall });
+
+			assert.strictEqual(results.length, 1, JSON.stringify(results));
+			const expectedNodePath = path.join(libEnvDir('pnpm', ['left-pad@^1.3.0']), 'node_modules');
+			assert.strictEqual(results[0].actual, JSON.stringify(expectedNodePath), JSON.stringify(results[0]));
 		});
 	});
 });

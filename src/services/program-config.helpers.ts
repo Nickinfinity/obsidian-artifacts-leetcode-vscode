@@ -1,5 +1,6 @@
 import * as path from 'node:path';
 import type { ProgramChannel, ProgramConfig } from '../types/leetcode.types.js';
+import { blockLines, indentOf, KV_RE } from './leetcode-config-blocks.helpers.js';
 
 /**
  * `program:` config-block grammar (T2.1).
@@ -38,7 +39,6 @@ import type { ProgramChannel, ProgramConfig } from '../types/leetcode.types.js';
 // that parses it.
 export type { ProgramChannel, ProgramConfig } from '../types/leetcode.types.js';
 
-const KV_RE = /^(\w+):\s*(.*)$/;
 const VALID_CHANNELS: ReadonlySet<string> = new Set(['argv', 'flags', 'stdin']);
 const DEFAULT_CHANNEL: ProgramChannel = 'argv';
 
@@ -154,19 +154,5 @@ function parseInlineFlags(val: string): string[] {
 		.filter(part => part !== '');
 }
 
-/** Lines indented deeper than the block header at `start`, up to the first that is not. */
-function blockLines(lines: string[], start: number): string[] {
-	const base = indentOf(lines[start]);
-	const out: string[] = [];
-	for (let i = start + 1; i < lines.length; i++) {
-		if (lines[i].trim() === '') { continue; }
-		if (indentOf(lines[i]) <= base) { break; }
-		out.push(lines[i]);
-	}
-	return out;
-}
-
-/** Count of leading whitespace characters. */
-function indentOf(line: string): number {
-	return /^\s*/.exec(line)?.[0].length ?? 0;
-}
+// `blockLines` / `indentOf` moved to `leetcode-config-blocks.helpers.ts`
+// (condition C26) — imported above, not redeclared here.

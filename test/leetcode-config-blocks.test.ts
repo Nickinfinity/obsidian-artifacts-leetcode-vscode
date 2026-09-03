@@ -1,8 +1,11 @@
 import * as assert from 'node:assert';
 import {
+	blockLines,
 	extractConfigBlocks,
+	indentOf,
 	legacyFrontmatterKeys,
 	splitFrontmatter,
+	unquote,
 	withoutBodySetKeys,
 } from '../src/services/leetcode-config-blocks.helpers.js';
 
@@ -303,6 +306,67 @@ suite('extractConfigBlocks — retained keys in a fence', () => {
 	test('a fence declaring only body-set keys warns nothing', () => {
 		const { warnings } = extractConfigBlocks('```yaml leetcode\nfunction: f\nreturns: int\n```');
 		assert.deepStrictEqual(warnings, []);
+	});
+
+});
+
+/**
+ * `blockLines` / `indentOf` / `unquote` — the sub-parser line grammar shared
+ * by `project-parser.helpers.ts`, `program-config.helpers.ts` and
+ * `packages-parser.helpers.ts` (condition C26). Was three byte-identical
+ * private copies; this is the one authority now.
+ */
+suite('shared block-line grammar', () => {
+
+	suite('blockLines', () => {
+
+		test('collects lines indented deeper than the header, stopping at the first that is not', () => {
+			const lines = ['params:', '  - name: a', '  - name: b', 'returns: int'];
+			assert.deepStrictEqual(blockLines(lines, 0), ['  - name: a', '  - name: b']);
+		});
+
+		test('skips blank lines inside the block without ending it', () => {
+			const lines = ['params:', '  - name: a', '', '  - name: b', 'returns: int'];
+			assert.deepStrictEqual(blockLines(lines, 0), ['  - name: a', '  - name: b']);
+		});
+
+		test('a header with nothing deeper-indented after it yields an empty block', () => {
+			const lines = ['params:', 'returns: int'];
+			assert.deepStrictEqual(blockLines(lines, 0), []);
+		});
+
+	});
+
+	suite('indentOf', () => {
+
+		test('counts leading spaces', () => {
+			assert.strictEqual(indentOf('    - name: a'), 4);
+		});
+
+		test('a line with no leading whitespace is 0', () => {
+			assert.strictEqual(indentOf('function: f'), 0);
+		});
+
+	});
+
+	suite('unquote', () => {
+
+		test('strips a matching pair of double quotes', () => {
+			assert.strictEqual(unquote('"react"'), 'react');
+		});
+
+		test('strips a matching pair of single quotes', () => {
+			assert.strictEqual(unquote("'react'"), 'react');
+		});
+
+		test('leaves an unquoted value untouched, trimmed', () => {
+			assert.strictEqual(unquote('  react  '), 'react');
+		});
+
+		test('does not strip mismatched quote characters', () => {
+			assert.strictEqual(unquote('"react\''), '"react\'');
+		});
+
 	});
 
 });

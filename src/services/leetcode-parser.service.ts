@@ -23,7 +23,7 @@ import { parseFrontmatter } from './leetcode-parser.helpers.js';
 import { parseLibDeclarations, parseProjectArtifact } from './project-parser.helpers.js';
 import { parseProgramConfig } from './program-config.helpers.js';
 
-export { defaultPracticeConfig, defaultTestConfig } from './leetcode-parser.helpers.js';
+export { defaultPracticeConfig, defaultTestConfig } from './leetcode-frontmatter-blocks.helpers.js';
 
 /**
  * Parses a LeetCode-flavoured vault `.md` file into a `ParsedLeetCode` structure.

@@ -1,6 +1,6 @@
 import * as assert from 'node:assert';
 import { defaultTestConfig, parseLeetCode } from '../src/services/leetcode-parser.service.js';
-import { SHAPE_TEST_TYPE_IDS, TEST_TYPES } from '../src/types/constants.js';
+import { TEST_TYPES } from '../src/types/constants.js';
 import { languagesForType } from '../src/services/test-envs/env.registry.js';
 
 /**
@@ -62,7 +62,26 @@ suite('leetcode test: config', () => {
 
     test('both sub-keys together', () => {
         const parsed = parseLeetCode(artifact('test:\n  type: call\n  timeoutMs: 1500\n'));
-        assert.deepStrictEqual(parsed.test, { type: 'call', timeoutMs: 1500 });
+        assert.deepStrictEqual(parsed.test, { type: 'call', timeoutMs: 1500, rawType: 'call' });
+    });
+
+    // ── C10: declared-vs-defaulted ──────────────────────────────────────────
+    //
+    // `type` alone collapses "no type: at all" and "type: call" (the default,
+    // named explicitly) onto the same value — `rawType` is the field that lets
+    // a reader (the package.rules.ts mirror rule) tell them apart.
+
+    test('an explicit type: records the raw scalar, pre-fallback', () => {
+        assert.strictEqual(parseLeetCode(artifact('test:\n  type: call\n')).test.rawType, 'call');
+        assert.strictEqual(parseLeetCode(artifact('test:\n  type: in-place\n')).test.rawType, 'in-place');
+        // Unrecognised values are recorded too — parseTestType's fallback
+        // still runs, but the raw text a reader may need is not lost with it.
+        assert.strictEqual(parseLeetCode(artifact('test:\n  type: quantum\n')).test.rawType, 'quantum');
+    });
+
+    test('no type: line at all leaves rawType undefined', () => {
+        assert.strictEqual(parseLeetCode(artifact('')).test.rawType, undefined);
+        assert.strictEqual(parseLeetCode(artifact('test:\n  timeoutMs: 2000\n')).test.rawType, undefined);
     });
 
     test('the block does not swallow the frontmatter keys after it', () => {
@@ -146,13 +165,6 @@ suite('leetcode test: config', () => {
         test('every id is unique — a duplicate row would shadow a status', () => {
             const ids = TEST_TYPES.map(t => t.id);
             assert.strictEqual(new Set(ids).size, ids.length);
-        });
-
-        test('the shape ids are the two that were never a way to deliver a case', () => {
-            assert.deepStrictEqual([...SHAPE_TEST_TYPE_IDS].sort(), ['project', 'service']);
-            // `function` was the legacy spelling of `call`, not a shape — the
-            // verifier's mirror rule must keep tolerating it as a `type:`.
-            assert.ok(!SHAPE_TEST_TYPE_IDS.has('function'));
         });
 
         // A check's `kind:` draws from the vocabulary, but *only* the ids

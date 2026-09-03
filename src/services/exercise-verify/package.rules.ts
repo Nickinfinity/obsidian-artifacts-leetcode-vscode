@@ -1,4 +1,4 @@
-import { DEFAULT_TEST_TYPE, SHAPE_TEST_TYPE_IDS } from '../../types/constants.js';
+import { DEFAULT_TEST_TYPE } from '../../types/constants.js';
 import type { LeetcodeTypeId } from '../../types/leetcode-type.js';
 import type { VerifyRunOptions } from './rules.registry.js';
 import type { ParsedLeetCode } from '../../types/leetcode.types.js';
@@ -169,8 +169,14 @@ function checkCallChecksHaveParams(parsed: ParsedLeetCode, leetcodeType: Leetcod
  * The `checks:` / `test.type` mirror rule (VSX-154 / T1.7): `checks:` present
  * ⟺ `test.type` absent — a checks-graded artifact must not *also* name a
  * top-level execution strategy. The legacy shape markers (`project` /
- * `service`, `SHAPE_TEST_TYPE_IDS`) are tolerated because an unmigrated
- * artifact still carries one; they are shapes, not strategies.
+ * `service`) are tolerated because an unmigrated artifact still carries one;
+ * they are shapes, not strategies. `parseTestType` collapses both to
+ * `DEFAULT_TEST_TYPE` before this rule ever sees them, so no separate
+ * shape-id lookup is reachable here — `declared` is always a `TestTypeId`
+ * `TEST_TYPES` still declares, and neither legacy id is a member any more
+ * (`SHAPE_TEST_TYPE_IDS` is gone; this was its only production reader, and
+ * it was already dead — confirmed by mutation, not by reading). The
+ * `rawType` clause below is what actually carries the tolerance.
  *
  * `checks:` is only reachable here once `checkPackageStructure`'s earlier
  * rules have confirmed it is non-empty, so this function only needs to guard
@@ -186,18 +192,23 @@ function checkCallChecksHaveParams(parsed: ParsedLeetCode, leetcodeType: Leetcod
  *
  * **An absent `test.type` is the target state, not a violation.** The
  * migration deletes the `type:` line from every `test:` block that declares
- * `checks:`, so a migrated artifact declares no strategy at all — and an
- * absent value is indistinguishable here from the default, because
- * `parseTestType` collapses the two before the verifier ever sees them. This
- * rule therefore accepts the default alongside the legacy shape markers, and
+ * `checks:`, so a migrated artifact declares no strategy at all. This rule
+ * therefore accepts the default alongside the legacy shape markers, and
  * refuses only a *deliberately named* single-suite strategy. Requiring the
  * shape marker to be **present** — as an earlier cut did — would have failed
  * every artifact the migration produces.
  *
- * The residual hole is an explicit `type:` naming exactly the default, which
- * reads as absent. Closing it needs the parser to record declared-vs-defaulted;
- * it is not worth a second parse here, and the artifact still grades by its
- * checks either way.
+ * **C10 — closed.** An absent value and an explicit `type: call` (the
+ * default, named) both collapse to `parsed.test.type === 'call'`, which used
+ * to make them indistinguishable here — an artifact declaring both `checks:`
+ * and `type: call` slipped through as if it had declared nothing. The parser
+ * now records the pre-fallback scalar on `parsed.test.rawType`
+ * (`leetcode-frontmatter-blocks.helpers.ts`'s `parseTestBlock`), `undefined`
+ * exactly when no `type:` line was written at all — so this rule tolerates
+ * the collapsed default only when it was never declared, and refuses it the
+ * same as any other named strategy when it was. No second parse: the parser
+ * is the one place that ever reads the raw text, this rule only reads the
+ * fact it already recorded.
  *
  * @param parsed       - Parsed artifact, already known to declare `checks:`.
  * @param leetcodeType - The resolved type, for the message prefix only.
@@ -205,13 +216,15 @@ function checkCallChecksHaveParams(parsed: ParsedLeetCode, leetcodeType: Leetcod
  *   is declared.
  *
  * @example
- * checkTestTypeMirror({ ...parsed, test: { type: 'project', timeoutMs: 5000 } }, 'package'); // → null
+ * checkTestTypeMirror({ ...parsed, test: { type: 'call', timeoutMs: 5000, rawType: 'project' } }, 'package'); // → null
+ * @example
+ * checkTestTypeMirror({ ...parsed, test: { type: 'call', timeoutMs: 5000, rawType: 'call' } }, 'package'); // → a reason
  * @example
  * checkTestTypeMirror({ ...parsed, test: { type: 'in-place', timeoutMs: 5000 } }, 'package'); // → a reason
  */
 function checkTestTypeMirror(parsed: ParsedLeetCode, leetcodeType: LeetcodeTypeId): string | null {
 	const declared = parsed.test.type;
-	if (SHAPE_TEST_TYPE_IDS.has(declared) || declared === DEFAULT_TEST_TYPE) { return null; }
+	if (declared === DEFAULT_TEST_TYPE && parsed.test.rawType !== DEFAULT_TEST_TYPE) { return null; }
 	return `${leetcodeType}: checks declared but test.type is '${sanitizeUntrustedText(declared)}' — `
 		+ 'a checks-graded exercise must not also declare a top-level execution strategy';
 }

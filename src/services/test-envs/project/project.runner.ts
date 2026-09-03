@@ -1,6 +1,7 @@
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import type { LangId } from '../../../types/languages.js';
 import type {
 	FileSpec,
 	ParsedLeetCode,
@@ -236,6 +237,60 @@ function publicCasesOf(check: ProjectCheck): ProjectCheck {
 }
 
 /**
+ * Resolve the library cache directory a `program` artifact's own language
+ * needs — the plumbing carried condition C24 named as missing. `runProgramSuite`
+ * already accepts and consumes a `libDir` exactly as the `call` envs do
+ * (`program.runner.ts:90,113,116`); nothing ever computed one.
+ *
+ * Resolves **exactly one** ecosystem — `programLanguageOf`'s own — never the
+ * union `gradeProjectDir` installs. That union is correct there because a
+ * check-graded tree may genuinely run several languages across its checks and
+ * a `libs.python` entry must not be silently skipped just because the check
+ * *this run* is grading happens to be a `build` check in TypeScript. A
+ * `program` suite has no such second consumer: it builds and runs exactly one
+ * entry point in one language, so installing every declared ecosystem here
+ * was a real regression, not a mirror of the tree rule — it cold-installed
+ * languages the suite could never run, and an install failure in one of
+ * *those* aborted a run that never needed it, which is neither loud nor
+ * correct (the ceiling this closes was explicitly "loud, never a false
+ * green").
+ *
+ * Still goes through `installSetsFor` / `ensureLibEnv` for the one ecosystem
+ * it does need — the same resolution `gradeProjectDir` uses — rather than
+ * re-reading `parsed.libs` directly, so a `libs:` entry declared under a
+ * second language key that happens to share this ecosystem (e.g. a
+ * `typescript:` block for a `.js` entry) is not silently dropped.
+ *
+ * Both places that grade a `program` suite call this one function — this
+ * module's own `runProgramArtifact` below, and the live-challenge path in
+ * `leetcode-run.handlers.ts` — neither resolves libraries a second way.
+ *
+ * @param parsed     - The artifact; only `libs:` is read.
+ * @param langId     - The program's own runnable language (`programLanguageOf`).
+ * @param installRun - Optional install-subprocess stub, threaded straight into
+ *   `ensureLibEnv` exactly as `gradeProjectDir`'s `installRun` option is — so a
+ *   test never reaches the network for a `program` suite either.
+ * @returns The resolved directory (absent when the artifact declares nothing
+ *   for this language), or the installer's own failure reason.
+ *
+ * @example
+ * await resolveProgramLibDir(parsed, 'python'); // → { ok: true, libDir: '/tmp/…/pip-…' }
+ */
+export async function resolveProgramLibDir(
+	parsed: ParsedLeetCode, langId: LangId, installRun?: RunArgv,
+): Promise<{ ok: true; libDir?: string } | { ok: false; reason: string }> {
+	const ecosystem = ecosystemFor(langId);
+	if (ecosystem === undefined) { return { ok: true }; }
+
+	const specs = installSetsFor(parsed, []).get(ecosystem) ?? [];
+	if (specs.length === 0) { return { ok: true }; }
+
+	const install = installRun ? { run: installRun } : {};
+	const installed = await ensureLibEnv(ecosystem, specs, install);
+	return installed.ok ? { ok: true, libDir: installed.dir } : { ok: false, reason: installed.reason };
+}
+
+/**
  * Grade a `program`-suite artifact from its own declared tree — the harness
  * path, mirroring `runProjectChecks` for the check-graded shape.
  *
@@ -247,14 +302,16 @@ function publicCasesOf(check: ProjectCheck): ProjectCheck {
  *
  * @param parsed  - The artifact; must satisfy `isProgramSuite`.
  * @param options - `withSolutions` to overlay the reference; `publicOnly` for
- *   the public half.
+ *   the public half; `installRun` an install-subprocess stub for tests
+ *   (mirrors `gradeProjectDir`'s option of the same name).
  * @returns Per-case results, or a one-case failure naming why nothing ran.
  *
  * @example
  * await runProgramArtifact(parsed, { withSolutions: true });
  */
 export async function runProgramArtifact(
-	parsed: ParsedLeetCode, options: { withSolutions?: boolean; publicOnly?: boolean } = {},
+	parsed: ParsedLeetCode,
+	options: { withSolutions?: boolean; publicOnly?: boolean; installRun?: RunArgv } = {},
 ): Promise<TestResult[]> {
 	const program = parsed.program;
 	const langId = programLanguageOf(parsed);
@@ -269,6 +326,13 @@ export async function runProgramArtifact(
 		return [failedSuite(cases, `program: no program environment for '${langId}'`)];
 	}
 
+	// C24: resolve this run's libraries before anything is written — a
+	// failure here is the artifact's declared `libs:` refusing to install,
+	// not one case's problem, so it fails the whole suite by name exactly as
+	// a build failure does below.
+	const resolved = await resolveProgramLibDir(parsed, langId, options.installRun);
+	if (!resolved.ok) { return [failedSuite(cases, resolved.reason)]; }
+
 	const runDir = await fs.mkdtemp(path.join(os.tmpdir(), 'leet-program-'));
 	try {
 		const tree = options.withSolutions
@@ -278,7 +342,10 @@ export async function runProgramArtifact(
 
 		const entry = path.join(runDir, entryFileFor(program, langId));
 		const code = await fs.readFile(entry, 'utf-8');
-		return await runProgramSuite({ code, tests: cases, parsed, env, program, runDir });
+		return await runProgramSuite({
+			code, tests: cases, parsed, env, program, runDir,
+			...(resolved.libDir === undefined ? {} : { libDir: resolved.libDir }),
+		});
 	} catch (e) {
 		// Failing to materialise or read the tree is not one case's problem.
 		return [failedSuite(cases, e instanceof Error ? e.message : String(e))];

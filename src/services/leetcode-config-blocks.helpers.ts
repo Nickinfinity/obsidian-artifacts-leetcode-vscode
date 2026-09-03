@@ -154,6 +154,30 @@ export const RETAINED_FM_KEYS: ReadonlySet<string> = new Set(CANONICAL_FRONTMATT
  */
 export const TOP_LEVEL_KEY_RE = /^(\w+):/;
 
+/**
+ * A `key: value` line — key restricted to plain identifiers, value the rest
+ * of the line verbatim (untrimmed; callers `.trim()` group 2 themselves).
+ *
+ * Distinct from {@link TOP_LEVEL_KEY_RE}: that one only asks *which key does
+ * this line open* (frontmatter-order checking/writing); this one is for a
+ * block parser that already knows it is inside one key's indented body and
+ * needs both the sub-key name and its scalar value on the same line — a
+ * `test:` block's `  type: call`, a `packages:` entry's `  dir: server`.
+ * **Was four byte-identical copies** (`leetcode-parser.helpers.ts`,
+ * `leetcode-frontmatter-blocks.helpers.ts`, `program-config.helpers.ts`,
+ * `packages-parser.helpers.ts`) before landing here — verified identical
+ * (checksum, not just `diff`) before unifying, exactly the drift this file
+ * exists to prevent for `TOP_LEVEL_KEY_RE` already.
+ *
+ * **Deliberately unflagged**, for the same `lastIndex` reason as
+ * {@link TOP_LEVEL_KEY_RE} — every caller is a fresh `KV_RE.exec(line)` per
+ * line, never a `.matchAll`.
+ *
+ * @example
+ * KV_RE.exec('  type: call')?.slice(1); // → ['type', 'call']
+ */
+export const KV_RE = /^(\w+):\s*(.*)$/;
+
 /** Drop a trailing `\r` so CRLF input parses identically to LF. */
 function stripCr(line: string): string {
 	return line.endsWith('\r') ? line.slice(0, -1) : line;
@@ -404,4 +428,37 @@ export function splitFrontmatter(content: string): { fmRaw: string; body: string
 		fmRaw: match ? match[1] : '',
 		body: match ? content.slice(match[0].length) : content,
 	};
+}
+
+// ── shared block-line grammar ─────────────────────────────────────────────
+//
+// Three sub-parsers (`project-parser.helpers.ts`, `program-config.helpers.ts`,
+// `packages-parser.helpers.ts`) walk the *indented body* of one config-fence
+// key (`## Files`, `params:`, `checks:`, `program:`, `packages:`, …) the same
+// way: find lines deeper-indented than the header, strip a layer of quotes
+// off a scalar. Each carried its own byte-identical copy (condition C26) —
+// diffed 2026-09-01 and found genuinely undrifted — so this is their one
+// shared home instead of a third place a fourth parser would copy from.
+
+/** Lines indented deeper than the block header at `start`, up to the first that is not. */
+export function blockLines(lines: string[], start: number): string[] {
+	const base = indentOf(lines[start]);
+	const out: string[] = [];
+	for (let i = start + 1; i < lines.length; i++) {
+		if (lines[i].trim() === '') { continue; }
+		if (indentOf(lines[i]) <= base) { break; }
+		out.push(lines[i]);
+	}
+	return out;
+}
+
+/** Count of leading whitespace characters. */
+export function indentOf(line: string): number {
+	return /^\s*/.exec(line)?.[0].length ?? 0;
+}
+
+/** Strip one layer of matching quotes, if present. */
+export function unquote(value: string): string {
+	const m = /^"(.*)"$|^'(.*)'$/.exec(value.trim());
+	return m ? m[1] ?? m[2] : value.trim();
 }

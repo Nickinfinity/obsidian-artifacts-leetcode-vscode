@@ -13,7 +13,7 @@ import {
 } from './leetcode-run.finish.js';
 import { closeExerciseEditor, deleteExerciseFile } from '../services/exercise-file.service.js';
 import { discardProjectAttempt, saveProjectDocuments } from '../services/project-file.service.js';
-import { gradeProjectDir, runProjectChecks } from '../services/test-envs/project/project.runner.js';
+import { gradeProjectDir, resolveProgramLibDir, runProjectChecks } from '../services/test-envs/project/project.runner.js';
 import { detectRuntime, runSuite } from '../services/leetcode-runner.service.js';
 import {
 	publicCount,
@@ -189,6 +189,16 @@ async function gradeLiveProgramSuite(
 	}
 	if (!await runtimeReady(LANGUAGES[langId], null)) { return { kind: 'aborted' }; }
 
+	// C24: the same resolution `gradeProjectDir` runs for a check-graded tree,
+	// reused rather than re-implemented — all the logic lives in
+	// `resolveProgramLibDir` (project.runner.ts), so this handler stays a thin
+	// wire onto it.
+	const libs = await resolveProgramLibDir(ctx.parsed, langId);
+	if (!libs.ok) {
+		void vscode.window.showErrorMessage(`Could not install libraries: ${libs.reason}`);
+		return { kind: 'aborted' };
+	}
+
 	await saveProjectDocuments(dir);
 	const cases = options.publicOnly ? publicSuite(ctx.parsed) : submitSuite(ctx.parsed);
 
@@ -203,6 +213,7 @@ async function gradeLiveProgramSuite(
 
 		const results = await runProgramSuite({
 			code, tests: cases, parsed: ctx.parsed, env, program, runDir: dir.fsPath,
+			...(libs.libDir === undefined ? {} : { libDir: libs.libDir }),
 		});
 		return {
 			kind: 'graded',

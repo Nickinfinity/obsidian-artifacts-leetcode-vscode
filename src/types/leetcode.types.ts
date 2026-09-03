@@ -99,6 +99,19 @@ export interface TestConfig {
 	type: TestTypeId;
 	/** Per-case budget in ms; the suite budget is `cases × this`, capped at 60 s */
 	timeoutMs: number;
+	/**
+	 * The `type:` sub-key exactly as written in the artifact, before
+	 * `parseTestType`'s unknown-value fallback collapses it onto `type` above.
+	 * `undefined` when the artifact declared no `type:` line at all — either no
+	 * `test:` block, or one that never mentions `type:`.
+	 *
+	 * `type` alone cannot tell "declared, and it happens to name the default"
+	 * apart from "never declared" — both read `type: 'call'`. This field is
+	 * what lets a reader (`resolveLeetcodeType`'s legacy-shape derivation,
+	 * `package.rules.ts`'s `checks:` / `test.type` mirror rule) tell the two
+	 * apart without a second parse.
+	 */
+	rawType?: string;
 }
 
 /**

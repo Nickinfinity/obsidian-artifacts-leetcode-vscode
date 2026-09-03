@@ -66,12 +66,6 @@ suite('sanitize-text.helpers', () => {
             assert.ok(!clean.includes(long), 'the full untruncated run must not appear');
         });
 
-        test('SEC: a custom maxLen is honoured', () => {
-            const clean = sanitizeUntrustedText('abcdefghij', 5);
-            assert.ok(clean.startsWith('abcde'), clean);
-            assert.ok(/truncated/i.test(clean), clean);
-        });
-
         test('SEC: a very long hostile string does not hang', () => {
             const esc = String.fromCharCode(0x1b);
             const huge = `${esc}[31m${'x'.repeat(100_000)}`;
@@ -228,12 +222,6 @@ suite('sanitize-text.helpers', () => {
             // The whole reason this sibling exists: a compiler diagnostic must not
             // be flattened to 200 characters the way an artifact scalar is.
             assert.ok(MAX_CHILD_OUTPUT_LEN > MAX_UNTRUSTED_TEXT_LEN * 10, 'must be a much larger bound');
-        });
-
-        test('SEC: a custom maxLen is honoured', () => {
-            const clean = sanitizeChildOutput('abcdefghij', 5);
-            assert.ok(clean.startsWith('abcde'), clean);
-            assert.ok(/truncated/i.test(clean), clean);
         });
 
         test('SEC: a very long hostile multi-line string does not hang', () => {

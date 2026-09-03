@@ -227,20 +227,6 @@ export const TEST_TYPES: readonly TestType[] = [
 ];
 
 /**
- * Legacy ids that describe an artifact's **shape**, never a way to deliver a case.
- *
- * They left `TEST_TYPES` with T3.5's narrowing, so nothing derived from that
- * table can produce one any more. This set survives because two consumers read
- * an artifact's **raw** declared scalar rather than a parsed `TestTypeId`: the
- * verifier's mirror rule, which must tolerate `test.type: project` in an
- * artifact the migration has not reached, and the coverage sweep, which must
- * never *demand* an example for a cell no one can author. `function` is
- * deliberately not here — it was the legacy spelling of `call`, not a shape.
- */
-export const SHAPE_TEST_TYPE_IDS: ReadonlySet<string> =
-	new Set<string>(['project', 'service']);
-
-/**
  * Test type assumed when the artifact declares no `test:` block — and the value
  * `parseTestType` collapses any unrecognised scalar to, the legacy spellings
  * (`function`, `project`, `service`, `stdin-stdout`) included.
