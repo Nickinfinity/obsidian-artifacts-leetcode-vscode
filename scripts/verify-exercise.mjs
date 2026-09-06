@@ -93,12 +93,31 @@ const { unimplementedCheckKindsFromContent } = await import(
 // condition could not previously tell apart from each other.
 const { allInfrastructure, infrastructureCount } = await import(
 	pathToFileURL(join(dist, 'exercise-verify', 'starter-red.helpers.js')).href);
-// VSX-231 C12 follow-up: `sanitizeChildOutput` for multi-line child output
+// VSX-231 C12 follow-up, corrected per the independent review of 8d4f908
+// (SEC-1 / Finding 4): `sanitizeChildOutput` for multi-line child output
 // (case/check `detail`), `sanitizeUntrustedText` for a single-line
-// artifact-authored scalar (a check `name`) — display-only, applied at print
+// *composed* message (the WARN line below) — display-only, applied at print
 // time. Never between a raw detail and `allInfrastructure`/`infrastructureCount`
 // above, which must keep reading the unsanitized text (see the header comment
 // on `firstLines` below).
+//
+// The two calls below were swapped from the original C12 pass, which put
+// them on the wrong sink: `sanitizeChildOutput` deliberately preserves `\n`
+// (a `build` check's stderr needs it) and was applied to the WARN line, the
+// file's only print site with no `firstLines` bound on top — an artifact
+// whose warning text embeds a real newline (e.g. `packages:`'s `badElement`
+// interpolating a JSON array element verbatim, VSX-231 SEC-1) could split
+// that single warning across lines and forge a line reading exactly like
+// this CLI's own `OK   <path>` verdict, at column 0, into a sweep's log.
+// `sanitizeUntrustedText` closes it because its C0 sweep (`\x00-\x1F`)
+// includes `\n` itself — the newline is deleted outright, not merely
+// bounded, so **no `firstLines` call is added here**: there is nothing left
+// for a line-count bound to do once the composed message can no longer
+// contain more than one line. Meanwhile `sanitizeUntrustedText`'s 200-char
+// cap was on the `--expecteds` MISMATCH line instead, truncating away the
+// `recomputed=` value the mode exists to print (measured on an ordinary
+// 45-element array) — that line is `sanitizeChildOutput`'s multi-value,
+// higher-cap shape, not a single artifact-authored scalar.
 const { sanitizeChildOutput, sanitizeUntrustedText } = await import(
 	pathToFileURL(join(here, '..', 'dist', 'src', 'utils', 'sanitize-text.helpers.js')).href);
 
@@ -173,9 +192,13 @@ const md = readFileSync(mdPath, 'utf-8');
 // — sanitized once, here, at the print site, rather than at each builder: this
 // is the CLI's only sink for these warnings (they never reach the webview), and
 // one authority at the boundary is what covers every builder without touching
-// two dozen call sites individually.
+// two dozen call sites individually. `sanitizeUntrustedText`, not
+// `sanitizeChildOutput` (SEC-1 / Finding 4 — see the import comment above): a
+// warning is one composed, single-line message, and stripping `\n` outright is
+// what stops an embedded newline (e.g. `packages:`'s `badElement` echoing a
+// JSON array element verbatim) from splitting it into a forged extra line.
 for (const warning of parseLeetCode(md).warnings ?? []) {
-	console.error(`WARN ${mdPath}: ${sanitizeChildOutput(warning)}`);
+	console.error(`WARN ${mdPath}: ${sanitizeUntrustedText(warning)}`);
 }
 
 // ── P6: a `stack` is not swept by default ────────────────────────────────────
@@ -222,8 +245,21 @@ if (expectedsPath) {
 		// `canonicalJson(...)` elsewhere in this file, applied to the one site
 		// that was missed. `input`/`artifact`/`recomputed` are all
 		// artifact-authored case data.
+		//
+		// `sanitizeChildOutput`, not `sanitizeUntrustedText` (SEC-1 / Finding 4
+		// — see the import comment above): this line composes three JSON
+		// values side by side and is the file's "multi-value composed line"
+		// that wants the 4000-char cap, not the 200-char one — measured on an
+		// ordinary 45-element int array, the 200-char cap truncated the line
+		// before `recomputed=` ever appeared, discarding the one value this
+		// mode exists to print. No embedded real newline can reach this line
+		// regardless of which sanitizer runs here: `JSON.stringify` always
+		// escapes a raw `\n` inside `m.input`/`m.artifact`/`m.recomputed` into
+		// the two-character text `\n`, so `sanitizeChildOutput`'s
+		// newline-preserving behaviour is inert on this line — it is chosen
+		// for its length cap alone.
 		const line = `  [${m.index}] input=${JSON.stringify(m.input)} artifact=${JSON.stringify(m.artifact)} recomputed=${JSON.stringify(m.recomputed)}`;
-		console.error(sanitizeUntrustedText(line));
+		console.error(sanitizeChildOutput(line));
 	}
 	process.exit(1);
 }

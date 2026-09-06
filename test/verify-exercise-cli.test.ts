@@ -52,6 +52,297 @@ suite('verify-exercise CLI — process-boundary sinks', () => {
         return { status: r.status, out: `${r.stdout ?? ''}${r.stderr ?? ''}` };
     }
 
+    /** A `program`-suite `package` artifact whose one `## Files` entry is `candidateSource`. */
+    function programSuiteMd(candidateSource: string): string {
+        return [
+            '---',
+            'artifactType: leetcode',
+            'leetcodeType: package',
+            'title: Widget',
+            'difficulty: medium',
+            '---',
+            '',
+            'A program-suite exercise.',
+            '',
+            '```yaml leetcode',
+            'program:',
+            '  channel: argv',
+            'params:',
+            '  - name: n',
+            '    type: int',
+            '```',
+            '',
+            '## Files',
+            '',
+            '```javascript path=main.js role=editable',
+            candidateSource,
+            '```',
+            '',
+            '## Tests',
+            '```json',
+            '[{"input": {"n": 1}, "expected": 1}]',
+            '```',
+        ].join('\n');
+    }
+
+    /**
+     * A `package` artifact with a single `call` check named `checkName`, over
+     * a niladic `probe()` export whose body is `candidateSource`. The lone,
+     * bare `## Tests` fence binds to it automatically (`bindCases`'s
+     * single-check fallback) — no `check=` attribute needed, which matters
+     * here since `checkName` itself carries the hostile bytes under test.
+     */
+    function callCheckMd(checkName: string, candidateSource: string): string {
+        return [
+            '---',
+            'artifactType: leetcode',
+            'leetcodeType: package',
+            'title: Widget',
+            'difficulty: medium',
+            '---',
+            '',
+            'A multi-file exercise.',
+            '',
+            '```yaml leetcode',
+            'checks:',
+            `  - name: ${checkName}`,
+            '    kind: call',
+            '    file: src/probe.js',
+            '    function: probe',
+            '```',
+            '',
+            '## Tests',
+            '',
+            '```json',
+            '[{"input": {}, "expected": 0}]',
+            '```',
+            '',
+            '## Files',
+            '',
+            '```javascript path=src/probe.js role=editable',
+            'export function probe() {',
+            candidateSource,
+            '}',
+            '```',
+        ].join('\n');
+    }
+
+    // ── SEC-1: the WARN print site's embedded-newline forgery (independent ───
+    // review of 8d4f908, default sweep path, no flag needed) ─────────────────
+    //
+    // `sanitizeChildOutput` deliberately preserves `\n` and was the sanitizer
+    // wrapping this exact line — the file's only print site with no
+    // `firstLines` bound on top. An artifact whose warning text carries a
+    // real embedded newline (here, `packages:`'s `badElement`,
+    // `packages-parser.helpers.ts:257`, interpolating a JSON array element
+    // verbatim) could split one WARN line into several, one of which reads
+    // byte-identical to this CLI's own `OK   <path>` verdict at column 0 — a
+    // sweep log could then show a forged pass for a name that never verified.
+    //
+    // The newline is injected via JSON-escape TEXT (`\n`, two ASCII
+    // characters) inside the `start:` argv's JSON-array-literal element —
+    // `safeJsonParse` decodes it into a real newline only once the artifact
+    // is parsed. This test never types a raw control byte or a `\uXXXX`
+    // escape into its own source, per the tool-pipeline hazard.
+
+    test('SEC-1: an embedded newline in a packages: warning cannot forge a standalone verdict-shaped line', () => {
+        const forged = 'OK   /vault/fake-passed.md';
+        const badElementText = `\${X}\\n${forged}\\n`;
+
+        const md = [
+            '---',
+            'artifactType: leetcode',
+            'leetcodeType: package',
+            'title: Widget',
+            'difficulty: medium',
+            '---',
+            '',
+            'A multi-file exercise.',
+            '',
+            '```yaml leetcode',
+            'packages:',
+            '  - name: api',
+            '    dir: api',
+            '    install: ["npm", "install"]',
+            `    start: ["node", "server.js", "${badElementText}"]`,
+            '```',
+            '',
+            '## Files',
+            '',
+            '```javascript path=api/server.js role=editable',
+            '// stub',
+            '```',
+        ].join('\n');
+
+        const { out } = run(write('sec1.md', md));
+        const lines = out.split('\n');
+
+        assert.ok(
+            !lines.includes(forged),
+            `newline forged a standalone verdict-shaped line: ${JSON.stringify(out)}`,
+        );
+        assert.ok(out.includes('WARN'), out);
+        assert.ok(out.includes('uses a substitution other than'), out);
+        // Sanity: the raw (pre-parse) fixture text really carries the
+        // newline-delimited forged line — otherwise this pin would pass
+        // vacuously regardless of whether the sanitizer stripped anything.
+        assert.ok(badElementText.includes(`\\n${forged}\\n`));
+    });
+
+    // ── Finding 4: the MISMATCH line's cap must not swallow `recomputed=` ────
+    //
+    // The pre-fix `sanitizeUntrustedText` (200-char cap) truncated this
+    // composed, three-value line away before `recomputed=` ever appeared —
+    // measured on an ordinary 45-element int array. `sanitizeChildOutput`'s
+    // 4000-char cap is what `--expecteds` actually needs.
+
+    test('Finding 4: the MISMATCH line prints the recomputed value even for a wide array', () => {
+        const wideArray = Array.from({ length: 45 }, (_, i) => i * 7);
+        const md = [
+            '---',
+            'type: leetcode',
+            'title: Widget',
+            'difficulty: easy',
+            '---',
+            '',
+            'Desc.',
+            '',
+            '```yaml leetcode',
+            'function: identity',
+            'params:',
+            '  - name: a',
+            '    type: string',
+            'returns: string',
+            '```',
+            '',
+            '## Tests',
+            '```json',
+            '[{"input": {"a": "x"}, "expected": "unused"}]',
+            '```',
+        ].join('\n');
+        const mdPath = write('wide-mismatch.md', md);
+        const expectedsPath = write('recomputed.json', JSON.stringify([wideArray]));
+
+        const { status, out } = run(mdPath, '--expecteds', expectedsPath);
+
+        assert.strictEqual(status, 1, out);
+        assert.ok(out.includes('MISMATCH'), out);
+        assert.ok(
+            out.includes(`recomputed=${JSON.stringify(wideArray)}`),
+            `recomputed= value was truncated away: ${JSON.stringify(out)}`,
+        );
+    });
+
+    // ── Finding 2: --starter-red's check-path INCONCLUSIVE classification ────
+    // must read the RAW detail, past the 4000-char display cap (site B) ──────
+    //
+    // `8d4f908` claimed the M1 mutation (splicing a sanitizer in ahead of
+    // `allInfrastructure`/`infrastructureCount`) fails "at both classifier
+    // sites." Measured: mutating site B alone
+    // (`const details = red.map(o => o.detail);`) left the suite green —
+    // nothing drove the CHECK path (only the PROGRAM path, site A, had a
+    // fixture). A `call` check's thrown-error `detail` carries no cap of its
+    // own before this line, so the same padding shape as the existing
+    // program-path pin works here.
+
+    test('Finding 2: a check-path infrastructure marker beyond the 4000-char display cap still yields INCONCLUSIVE (exit 3)', function () {
+        this.timeout(30_000);
+
+        const padding = 'x'.repeat(4500);
+        const candidate = `throw new Error(${JSON.stringify(`${padding}\nCannot find module 'jsdom'`)});`;
+
+        const { status, out } = run('--starter-red', write('check-infra.md', callCheckMd('probe', candidate)));
+
+        assert.ok(out.length > 4000, `fixture must actually push a raw detail past the display cap: ${out.length} chars`);
+        assert.strictEqual(status, 3, out);
+        assert.ok(out.includes('INCONCLUSIVE'), out);
+    });
+
+    // ── Finding 3 (S03/S04): the --starter-red program-path print sites ──────
+    // (`:270` INCONCLUSIVE detail, `:278` RED case detail) ────────────────────
+    //
+    // "Five of six sites now have fixtures" undercounted: these two, plus
+    // S05-S08 below, were never swept at all. Both program-path fixtures
+    // crash before touching `$LEET_OUT`, matching the shape the existing
+    // Finding-5 pin already exercises for length — these instead carry ESC
+    // and RLO, which reach `outcome.message`/`r.error` raw (a crashed child's
+    // own stderr, never `canonicalJson`-encoded), so the probe is not vacuous.
+
+    test('S03: an INCONCLUSIVE program-path case detail is sanitized', () => {
+        const esc = String.fromCharCode(0x1b);
+        const rlo = String.fromCharCode(0x202e);
+        const candidate = [
+            `process.stderr.write(${JSON.stringify(`${esc}Cannot find module 'jsdom'${rlo}`)});`,
+            'process.exit(1);',
+        ].join('\n');
+
+        const { status, out } = run('--starter-red', write('s03.md', programSuiteMd(candidate)));
+
+        assert.ok(!out.includes(esc), `ESC byte leaked: ${JSON.stringify(out)}`);
+        assert.ok(!out.includes(rlo), `RLO code point leaked: ${JSON.stringify(out)}`);
+        assert.strictEqual(status, 3, out);
+        assert.ok(out.includes('INCONCLUSIVE') && out.includes("Cannot find module 'jsdom'"), out);
+    });
+
+    test('S04: a RED program-path case detail is sanitized', () => {
+        const esc = String.fromCharCode(0x1b);
+        const rlo = String.fromCharCode(0x202e);
+        const candidate = [
+            `process.stderr.write(${JSON.stringify(`${esc}assertion mismatch: expected 3, got 0${rlo}`)});`,
+            'process.exit(1);',
+        ].join('\n');
+
+        const { status, out } = run('--starter-red', write('s04.md', programSuiteMd(candidate)));
+
+        assert.ok(!out.includes(esc), `ESC byte leaked: ${JSON.stringify(out)}`);
+        assert.ok(!out.includes(rlo), `RLO code point leaked: ${JSON.stringify(out)}`);
+        assert.strictEqual(status, 0, out);
+        assert.ok(out.includes('RED') && out.includes('assertion mismatch'), out);
+    });
+
+    // ── Finding 3 (S05-S08): the --starter-red check-path print sites ────────
+    // (`:310` INCONCLUSIVE name/detail, `:318` RED name/detail) ──────────────
+    //
+    // Each fixture carries hostile bytes in BOTH the declared check `name`
+    // (sanitized with `sanitizeUntrustedText`) and the thrown-error `detail`
+    // (sanitized with `sanitizeChildOutput`) so that removing either call
+    // independently fails a distinct assertion below. Neither value is
+    // `canonicalJson`-encoded on this path (a thrown error's `.message`, and
+    // the artifact-declared `name`, both reach the print site raw), so ESC is
+    // not a vacuous probe here.
+
+    test('S05/S06: an INCONCLUSIVE check-path name and detail are both sanitized', () => {
+        const esc = String.fromCharCode(0x1b);
+        const rlo = String.fromCharCode(0x202e);
+        const hostileName = `${esc}[31mprobe${rlo}`;
+        const candidate = `throw new Error(${JSON.stringify(`${esc}Cannot find module 'jsdom'${rlo}`)});`;
+
+        const { status, out } = run('--starter-red', write('s05.md', callCheckMd(hostileName, candidate)));
+
+        assert.ok(!out.includes(esc), `ESC byte leaked: ${JSON.stringify(out)}`);
+        assert.ok(!out.includes(rlo), `RLO code point leaked: ${JSON.stringify(out)}`);
+        assert.strictEqual(status, 3, out);
+        assert.ok(out.includes('INCONCLUSIVE'), out);
+        assert.ok(out.includes('[31mprobe:'), `check name not sanitized in place: ${JSON.stringify(out)}`);
+        assert.ok(out.includes("Cannot find module 'jsdom'"), `check detail not sanitized in place: ${JSON.stringify(out)}`);
+    });
+
+    test('S07/S08: a RED check-path name and detail are both sanitized', () => {
+        const esc = String.fromCharCode(0x1b);
+        const rlo = String.fromCharCode(0x202e);
+        const hostileName = `${esc}[31mprobe${rlo}`;
+        const candidate = `throw new Error(${JSON.stringify(`${esc}assertion mismatch: expected 3, got 0${rlo}`)});`;
+
+        const { status, out } = run('--starter-red', write('s07.md', callCheckMd(hostileName, candidate)));
+
+        assert.ok(!out.includes(esc), `ESC byte leaked: ${JSON.stringify(out)}`);
+        assert.ok(!out.includes(rlo), `RLO code point leaked: ${JSON.stringify(out)}`);
+        assert.strictEqual(status, 0, out);
+        assert.ok(out.includes('RED'), out);
+        assert.ok(out.includes('[31mprobe:'), `check name not sanitized in place: ${JSON.stringify(out)}`);
+        assert.ok(out.includes('assertion mismatch'), `check detail not sanitized in place: ${JSON.stringify(out)}`);
+    });
+
     // ── SEC-2: the parse-warning print site (default sweep path, no flag) ────
 
     test('SEC-2: a hostile check name in a dropped-check warning is sanitized at the WARN print site', () => {

@@ -530,5 +530,67 @@ suite('exercise-verify — rules registry (leetcode-type axis)', () => {
             // strip) cannot masquerade as a passing pin.
             assert.ok(hostileExpected.includes(rlo) && hostileActual.includes(rlo));
         });
+
+        // ── S15 (independent review of 8d4f908, Finding 3): the sibling ──────
+        // branch of the same ternary — `package.rules.ts:104`'s
+        // `sanitizeChildOutput(failed.error)` — was never exercised. The test
+        // above only drives the `else` branch (a value *mismatch*, `failed.error`
+        // undefined); this one drives a program-suite case that *crashes*
+        // instead, so `failed.error` is set and the truthy branch runs. The
+        // solution overlay itself is made to crash (never touching
+        // `$LEET_OUT`) purely to reach this print site — `verifyExercise`
+        // grades the overlay (`withSolutions: true`), so there is no other way
+        // to make this specific case fail without an unrunnable candidate.
+
+        test("S15: a crashing program-suite solution's stderr is sanitized at the case-failed error branch", async () => {
+            const rlo = String.fromCharCode(0x202e);
+            const hostileStderr = `CRASH-${rlo}hostile`;
+
+            const md = [
+                '---',
+                'artifactType: leetcode',
+                'leetcodeType: package',
+                'title: Widget',
+                'difficulty: medium',
+                '---',
+                '',
+                'A program-suite exercise.',
+                '',
+                '```yaml leetcode',
+                'program:',
+                '  channel: argv',
+                'params:',
+                '  - name: a',
+                '    type: string',
+                '```',
+                '',
+                '## Files',
+                '',
+                '```javascript path=main.js role=editable',
+                '// starter stub, overlaid by # Solutions below',
+                '```',
+                '',
+                '## Tests',
+                '```json',
+                JSON.stringify([{ input: { a: 'x' }, expected: 'y' }]),
+                '```',
+                '',
+                '# Solutions',
+                '',
+                '```javascript path=main.js',
+                `process.stderr.write(${JSON.stringify(hostileStderr)});`,
+                'process.exit(1);',
+                '```',
+            ].join('\n');
+
+            const result = await verifyExercise(md);
+            assert.strictEqual(result.ok, false, JSON.stringify(result));
+            const reason = !result.ok ? result.reason : '';
+            assert.ok(!reason.includes(rlo), `RLO code point leaked: ${JSON.stringify(reason)}`);
+            assert.strictEqual(reason, 'package: case 0 failed: CRASH-hostile', JSON.stringify(reason));
+            // Sanity: the raw stderr the child actually wrote carried the byte
+            // under test, so a vacuous fixture cannot masquerade as a pass.
+            assert.ok(hostileStderr.includes(rlo));
+        });
     });
 });
