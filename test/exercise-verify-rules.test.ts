@@ -97,6 +97,26 @@ suite('exercise-verify — rules registry (leetcode-type axis)', () => {
         assert.strictEqual(result.ok, true, JSON.stringify(result));
     });
 
+    // Mutation-measured gap (code review): mutating the mirror rule to refuse
+    // only the `service` spelling left the whole suite green, because nothing
+    // built a `rawType: 'service'` fixture. Same shape as the `project` test
+    // above — the other legacy shape marker `resolveLeetcodeType` derives
+    // `stack` from — must independently keep the artifact green.
+    test('an unmigrated package still carrying the legacy `service` shape marker verifies green', async () => {
+        const result = await verifyExercise(buildPackageMd({ testBlock: 'test:\n  type: service' }));
+        assert.strictEqual(result.ok, true, JSON.stringify(result));
+    });
+
+    // Mutation-measured gap (code review): mutating the mirror rule to refuse
+    // only the `function` spelling likewise survived unnoticed. `function` is
+    // the legacy spelling of the default itself — not a shape marker — so this
+    // pins the third `rawType` value `checkTestTypeMirror` tolerates alongside
+    // an absent `type:` and the two shape markers.
+    test('an unmigrated package spelling the default as the legacy `function` type verifies green', async () => {
+        const result = await verifyExercise(buildPackageMd({ testBlock: 'test:\n  type: function' }));
+        assert.strictEqual(result.ok, true, JSON.stringify(result));
+    });
+
     // C10: the residual gap the mirror rule was written to catch but could
     // not see — `type: call` names exactly the default, so before the parser
     // recorded the raw scalar this was indistinguishable from no `type:` at
