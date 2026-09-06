@@ -66,6 +66,20 @@ suite('sanitize-text.helpers', () => {
             assert.ok(!clean.includes(long), 'the full untruncated run must not appear');
         });
 
+        test('SEC: strips U+2028/U+2029, the line separators no control or bidi class covers', () => {
+            // Authored by code point on purpose: this toolchain decodes a bare
+            // 4-hex escape into a real byte before the file is written.
+            const ls = String.fromCharCode(0x2028);
+            const ps = String.fromCharCode(0x2029);
+            const clean = sanitizeUntrustedText(`a${ls}OK   /vault/forged.md${ps}b`);
+            assert.ok(!clean.includes(ls), 'U+2028 must not survive');
+            assert.ok(!clean.includes(ps), 'U+2029 must not survive');
+            // The WARN print drops its firstLines bound on the claim that this
+            // sanitizer cannot emit a second line. That holds only if every line
+            // separator goes, not just LF.
+            assert.strictEqual(clean, 'aOK   /vault/forged.mdb');
+        });
+
         test('SEC: a very long hostile string does not hang', () => {
             const esc = String.fromCharCode(0x1b);
             const huge = `${esc}[31m${'x'.repeat(100_000)}`;
@@ -222,6 +236,14 @@ suite('sanitize-text.helpers', () => {
             // The whole reason this sibling exists: a compiler diagnostic must not
             // be flattened to 200 characters the way an artifact scalar is.
             assert.ok(MAX_CHILD_OUTPUT_LEN > MAX_UNTRUSTED_TEXT_LEN * 10, 'must be a much larger bound');
+        });
+
+        test('SEC: strips U+2028/U+2029 while keeping real newlines', () => {
+            const ls = String.fromCharCode(0x2028);
+            const clean = sanitizeChildOutput(`line one\n${ls}forged\nline two`);
+            assert.ok(!clean.includes(ls), 'U+2028 must not survive');
+            assert.ok(clean.includes('\n'), 'genuine newlines are still preserved');
+            assert.strictEqual(clean, 'line one\nforged\nline two');
         });
 
         test('SEC: a very long hostile multi-line string does not hang', () => {

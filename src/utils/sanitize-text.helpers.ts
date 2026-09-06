@@ -38,6 +38,31 @@ const CONTROL_CHARS_RE = /[\x00-\x1F\x7F-\x9F]/g;
 const BIDI_CONTROL_CHARS_RE = /[\u{061C}\u{200E}\u{200F}\u{202A}-\u{202E}\u{2066}-\u{2069}]/gu;
 
 /**
+ * The two Unicode line separators, stripped by **both** sanitizers.
+ *
+ * Neither is a C0/C1 control nor a bidi control, so neither
+ * {@link CONTROL_CHARS_RE} nor {@link BIDI_CONTROL_CHARS_RE} touches them --
+ * and both are line breaks to an HTML renderer, which is one of the two sinks
+ * these sanitizers exist for. Left in, an artifact could forge a
+ * verdict-shaped line in a web log viewer exactly as a raw `\n` did in a
+ * terminal.
+ *
+ * **This is load-bearing for the WARN print's fix.** That site drops its
+ * `firstLines` bound on the reasoning that `sanitizeUntrustedText` deletes
+ * every newline, so a composed message cannot grow a second line. That claim
+ * is only true if *every* line separator goes, not just LF.
+ *
+ * Unreachable through today's `packages:` grammar by accident rather than by
+ * design -- `KV_RE`'s `.` excludes U+2028/U+2029, so such a value truncates
+ * and its JSON fails to parse before reaching a sink. A guard resting on
+ * another module's regex flavour is not a guard.
+ *
+ * @example
+ * sanitizeUntrustedText(`a${String.fromCharCode(0x2028)}b`); // -> 'ab'
+ */
+const LINE_SEPARATOR_CHARS_RE = /[\u{2028}\u{2029}]/gu;
+
+/**
  * Bounds and neutralises an untrusted string before it is interpolated into
  * a verify-reason message.
  *
@@ -75,7 +100,8 @@ const BIDI_CONTROL_CHARS_RE = /[\u{061C}\u{200E}\u{200F}\u{202A}-\u{202E}\u{2066
  * sanitizeUntrustedText('a'.repeat(500)).endsWith('...[truncated]'); // -> true
  */
 export function sanitizeUntrustedText(value: string): string {
-	const clean = value.replace(CONTROL_CHARS_RE, '').replace(BIDI_CONTROL_CHARS_RE, '');
+	const clean = value.replace(CONTROL_CHARS_RE, '').replace(BIDI_CONTROL_CHARS_RE, '')
+		.replace(LINE_SEPARATOR_CHARS_RE, '');
 	return clean.length > MAX_UNTRUSTED_TEXT_LEN
 		? `${clean.slice(0, MAX_UNTRUSTED_TEXT_LEN)}...[truncated]`
 		: clean;
@@ -146,7 +172,8 @@ const CHILD_OUTPUT_CONTROL_CHARS_RE = /[\x00-\x08\x0B-\x1F\x7F-\x9F]/g;
  * sanitizeChildOutput('a'.repeat(10_000)).endsWith('...[truncated]'); // -> true
  */
 export function sanitizeChildOutput(value: string): string {
-	const clean = value.replace(CHILD_OUTPUT_CONTROL_CHARS_RE, '').replace(BIDI_CONTROL_CHARS_RE, '');
+	const clean = value.replace(CHILD_OUTPUT_CONTROL_CHARS_RE, '').replace(BIDI_CONTROL_CHARS_RE, '')
+		.replace(LINE_SEPARATOR_CHARS_RE, '');
 	return clean.length > MAX_CHILD_OUTPUT_LEN
 		? `${clean.slice(0, MAX_CHILD_OUTPUT_LEN)}...[truncated]`
 		: clean;
