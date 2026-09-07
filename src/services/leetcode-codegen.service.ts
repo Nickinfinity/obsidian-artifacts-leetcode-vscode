@@ -1,14 +1,19 @@
 import { SOLUTION_MARKER } from '../types/constants.js';
 import { isLangId, type LangId } from '../types/languages.js';
 import type { ParsedLeetCode } from '../types/leetcode.types.js';
-import { functionNameFor } from './leetcode-parser.service.js';
+import { javaBoilerplate, javaHarness, javaProgramBoilerplate } from './codegen/java.codegen.js';
+import { jsBoilerplate, jsHarness, jsProgramBoilerplate } from './codegen/javascript.codegen.js';
+import { pythonBoilerplate, pythonHarness, pythonProgramBoilerplate } from './codegen/python.codegen.js';
+import { rustBoilerplate, rustHarness, rustProgramBoilerplate } from './codegen/rust.codegen.js';
+import { tsBoilerplate, tsHarness, tsProgramBoilerplate } from './codegen/typescript.codegen.js';
+import type { ProgramConfig } from './program-config.helpers.js';
 
 /** Primitive → language-native lookup. */
 const PRIMITIVES: Record<string, Record<string, string>> = {
-	int:    { java: 'int',     python: 'int',   javascript: 'number',  rust: 'i32'    },
-	float:  { java: 'double',  python: 'float', javascript: 'number',  rust: 'f64'    },
-	string: { java: 'String',  python: 'str',   javascript: 'string',  rust: 'String' },
-	bool:   { java: 'boolean', python: 'bool',  javascript: 'boolean', rust: 'bool'   },
+	int:    { java: 'int',     python: 'int',   javascript: 'number',  typescript: 'number',  rust: 'i32'    },
+	float:  { java: 'double',  python: 'float', javascript: 'number',  typescript: 'number',  rust: 'f64'    },
+	string: { java: 'String',  python: 'str',   javascript: 'string',  typescript: 'string',  rust: 'String' },
+	bool:   { java: 'boolean', python: 'bool',  javascript: 'boolean', typescript: 'boolean', rust: 'bool'   },
 };
 
 /** Java primitive → boxed type used inside generics (`Map<…>`). */
@@ -41,6 +46,7 @@ const TYPE_SYNTAX: Record<string, TypeSyntax> = {
 	java:       { array: i => `${i}[]`,     map: (k, v) => `Map<${k}, ${v}>`,    box: JAVA_BOX },
 	python:     { array: i => `List[${i}]`, map: (k, v) => `Dict[${k}, ${v}]` },
 	javascript: { array: i => `${i}[]`,     map: (k, v) => `Record<${k}, ${v}>` },
+	typescript: { array: i => `${i}[]`,     map: (k, v) => `Record<${k}, ${v}>` },
 	rust:       { array: i => `Vec<${i}>`,  map: (k, v) => `HashMap<${k}, ${v}>` },
 };
 
@@ -110,68 +116,6 @@ export function generateBoilerplate(parsed: ParsedLeetCode, language: string): s
 	return isLangId(language) ? LANG_CODEGEN[language].boilerplate(parsed) : '';
 }
 
-/** Java wrapper: imports + `class Main` + signature + Scanner stdin + System.out.print. */
-function javaBoilerplate(p: ParsedLeetCode): string {
-	const fn     = functionNameFor(p, 'java');
-	const ret    = mapType(p.returns, 'java');
-	const params = p.params.map(pa => `${mapType(pa.type, 'java')} ${pa.name}`).join(', ');
-	const readers = p.params.map(pa => `\t\t// read ${pa.name} from sc`).join('\n');
-	return [
-		'import java.util.*;',
-		'',
-		'class Main {',
-		`\tpublic static ${ret} ${fn}(${params}) {`,
-		`\t\t${SOLUTION_MARKER}`,
-		'\t}',
-		'',
-		'\tpublic static void main(String[] args) {',
-		'\t\tScanner sc = new Scanner(System.in);',
-		readers,
-		'\t\tSystem.out.print("");',
-		'\t}',
-		'}',
-		'',
-	].join('\n');
-}
-
-/** Python wrapper: `def` + `if __name__ == "__main__":` + `input()`. */
-function pythonBoilerplate(p: ParsedLeetCode): string {
-	const fn     = functionNameFor(p, 'python');
-	const params = p.params.map(pa => pa.name).join(', ');
-	const reads  = p.params.map(pa => `\t${pa.name} = input()`).join('\n');
-	return [
-		`def ${fn}(${params}):`,
-		`\t${SOLUTION_MARKER}`,
-		'',
-		'if __name__ == "__main__":',
-		reads || '\tpass',
-		`\tprint(${fn}(${params}))`,
-		'',
-	].join('\n');
-}
-
-/** JavaScript wrapper: `function` + `readline` + `process.stdin`. */
-function jsBoilerplate(p: ParsedLeetCode): string {
-	const fn     = functionNameFor(p, 'javascript');
-	const params = p.params.map(pa => pa.name).join(', ');
-	return [
-		"const readline = require('readline');",
-		"const rl = readline.createInterface({ input: process.stdin });",
-		'',
-		`function ${fn}(${params}) {`,
-		`\t${SOLUTION_MARKER}`,
-		'}',
-		'',
-		'const lines = [];',
-		"rl.on('line', (l) => lines.push(l));",
-		"rl.on('close', () => {",
-		`\tconst result = ${fn}(${params});`,
-		'\tprocess.stdout.write(String(result));',
-		'});',
-		'',
-	].join('\n');
-}
-
 /**
  * Generates a per-language assert-based test harness from the parsed test
  * cases.
@@ -189,61 +133,50 @@ export function generateTestHarness(parsed: ParsedLeetCode, language: string): s
 	return isLangId(language) ? LANG_CODEGEN[language].harness(parsed) : '';
 }
 
-/** Java assert harness with a `class Main { public static void main … }` wrapper. */
-function javaHarness(p: ParsedLeetCode): string {
-	const calls = p.tests.map(t => {
-		const args = p.params.map(pa => jsonToLiteral(t.input[pa.name], 'java')).join(', ');
-		return `\t\t${p.functionName}(${args});`;
-	});
-	return [
-		'class Main {',
-		'\tpublic static void main(String[] args) {',
-		...calls,
-		'\t}',
-		'}',
-		'',
-	].join('\n');
-}
-
-/** Python `assert fn(args) == expected` harness, one assert per case. */
-function pythonHarness(p: ParsedLeetCode): string {
-	const lines = p.tests.map(t => {
-		const args = p.params.map(pa => jsonToLiteral(t.input[pa.name], 'python')).join(', ');
-		const exp  = jsonToLiteral(t.expected, 'python');
-		return `assert ${p.functionName}(${args}) == ${exp}`;
-	});
-	return lines.length === 0 ? '# no test cases\n' : `${lines.join('\n')}\n`;
-}
-
-/** JS `assert.deepStrictEqual(fn(args), expected)` harness, one per case. */
-function jsHarness(p: ParsedLeetCode): string {
-	const head = "const assert = require('assert');";
-	const lines = p.tests.map(t => {
-		const args = p.params.map(pa => jsonToLiteral(t.input[pa.name], 'javascript')).join(', ');
-		const exp  = jsonToLiteral(t.expected, 'javascript');
-		return `assert.deepStrictEqual(${p.functionName}(${args}), ${exp});`;
-	});
-	return [head, ...lines, ''].join('\n');
-}
-
 /**
  * Per-runnable-language code generators, keyed by `LangId`. Adding a runnable
  * language is one entry here (plus a `TYPE_SYNTAX` row) rather than a new branch
  * in every `if (lang === …)` cascade. Presence in this map is exactly what makes
- * `generateBoilerplate` / `generateTestHarness` emit for a language.
+ * `generateBoilerplate` / `generateTestHarness` / `generateProgramBoilerplate`
+ * emit for a language.
  */
 interface LangCodegen {
 	/** Runnable stdin/stdout wrapper carrying a `<<SOLUTION>>` marker. */
 	boilerplate(parsed: ParsedLeetCode): string;
 	/** Assert-based test harness for the parsed cases. */
 	harness(parsed: ParsedLeetCode): string;
+	/** `program`-type wrapper: reads the declared channel, writes `$LEET_OUT`. */
+	programBoilerplate(parsed: ParsedLeetCode, config: ProgramConfig): string;
 }
 
 const LANG_CODEGEN: Record<LangId, LangCodegen> = {
-	java:       { boilerplate: javaBoilerplate,   harness: javaHarness },
-	python:     { boilerplate: pythonBoilerplate, harness: pythonHarness },
-	javascript: { boilerplate: jsBoilerplate,     harness: jsHarness },
+	java:       { boilerplate: javaBoilerplate,   harness: javaHarness,   programBoilerplate: javaProgramBoilerplate },
+	python:     { boilerplate: pythonBoilerplate, harness: pythonHarness, programBoilerplate: pythonProgramBoilerplate },
+	javascript: { boilerplate: jsBoilerplate,     harness: jsHarness,     programBoilerplate: jsProgramBoilerplate },
+	rust:       { boilerplate: rustBoilerplate,   harness: rustHarness,   programBoilerplate: rustProgramBoilerplate },
+	typescript: { boilerplate: tsBoilerplate,     harness: tsHarness,     programBoilerplate: tsProgramBoilerplate },
 };
+
+/**
+ * Generates the `program`-type Layer-1 starter: same signature shape as
+ * {@link generateBoilerplate}, but the emitted `main` reads its case from the
+ * channel declared in `config` (never a fixed stdin reader when the channel
+ * is `argv`/`flags`) and writes the graded answer to `$LEET_OUT`
+ * (`out-channel.ts`) instead of stdout — the defining trait of the `program`
+ * test type over `call`.
+ *
+ * @param parsed   - Parsed LeetCode artifact (function name, params, returns).
+ * @param language - Target language id.
+ * @param config   - Parsed `program:` block (channel + optional flags).
+ * @returns Program-shaped boilerplate containing exactly one `<<SOLUTION>>`
+ *   marker, or `''` for a language with no registered codegen.
+ *
+ * @example
+ * generateProgramBoilerplate(parsed, 'java', { channel: 'argv' });
+ */
+export function generateProgramBoilerplate(parsed: ParsedLeetCode, language: string, config: ProgramConfig): string {
+	return isLangId(language) ? LANG_CODEGEN[language].programBoilerplate(parsed, config) : '';
+}
 
 /**
  * Converts a JSON value into a language-specific source-code literal.
@@ -257,14 +190,14 @@ const LANG_CODEGEN: Record<LangId, LangCodegen> = {
  * @example
  * jsonToLiteral([1, 2, 3], 'java');
  */
-export function jsonToLiteral(value: unknown, language: string): string {
-	if (value === null) { return language === 'python' ? 'None' : 'null'; }
+export function jsonToLiteral(value: unknown, language: string, declaredType?: string): string {
+	if (value === null) { return language === 'python' || language === 'rust' ? 'None' : 'null'; }
 	if (typeof value === 'boolean') { return boolLiteral(value, language); }
 	if (typeof value === 'number')  { return String(value); }
-	if (typeof value === 'string')  { return JSON.stringify(value); }
-	if (Array.isArray(value))       { return arrayLiteral(value, language); }
+	if (typeof value === 'string')  { return stringLiteral(value, language); }
+	if (Array.isArray(value))       { return arrayLiteral(value, language, declaredType); }
 	if (typeof value === 'object')  { return objectLiteral(value as Record<string, unknown>, language); }
-	if (value === undefined)        { return language === 'python' ? 'None' : 'undefined'; }
+	if (value === undefined)        { return language === 'python' || language === 'rust' ? 'None' : 'undefined'; }
 	return JSON.stringify(value);
 }
 
@@ -274,11 +207,73 @@ function boolLiteral(value: boolean, language: string): string {
 	return String(value);
 }
 
+/**
+ * String → a quoted literal, `String::from("…")` for Rust.
+ *
+ * A `&str`-typed param still fails — at compile time, not at `validate` —
+ * because `String::from(…)` always yields an owned `String`; the compiler
+ * error names the mismatch clearly enough to skip a dedicated check here.
+ */
+function stringLiteral(value: string, language: string): string {
+	if (language === 'rust') { return `String::from("${rustEscape(value)}")`; }
+	return JSON.stringify(value);
+}
+
+/** Single-character escapes `rustc` requires literally — not derivable from JSON's. */
+const RUST_CHAR_ESCAPES: Record<string, string> = {
+	'\\': String.raw`\\`,
+	'"': String.raw`\"`,
+	'\n': String.raw`\n`,
+	'\r': String.raw`\r`,
+	'\t': String.raw`\t`,
+	'\0': String.raw`\0`,
+};
+
+/** Prefix for Rust's `\u{…}` code-point escape — pulled out so the interpolated build below stays a single, non-nested template. */
+const RUST_UNICODE_ESCAPE_PREFIX = String.raw`\u{`;
+
+/**
+ * Escape a raw string into the body of a Rust `"…"` literal, one character
+ * at a time.
+ *
+ * Never chain a regex over `JSON.stringify`'s output to get here: JSON
+ * escapes `\b`/`\f` the way Rust doesn't recognise them, but the bigger trap
+ * is `a\b` (a literal backslash followed by the letter b) — its JSON form
+ * `"a\\b"` ends in a `\b` substring that *looks* like the backspace escape
+ * and isn't, so a `.replace(/\\b/g, …)` would silently corrupt it. Building
+ * from the source string's actual characters sidesteps that entirely.
+ *
+ * @param value - Raw string to escape.
+ * @returns Rust literal body, unquoted.
+ *
+ * @example
+ * rustEscape('a\tb'); // → 'a\\tb'
+ */
+function rustEscape(value: string): string {
+	let out = '';
+	for (const ch of value) {
+		const known = RUST_CHAR_ESCAPES[ch];
+		if (known !== undefined) {
+			out += known;
+			continue;
+		}
+		const code = ch.codePointAt(0) ?? 0;
+		out += code < 0x20 || code === 0x7f ? `${RUST_UNICODE_ESCAPE_PREFIX}${code.toString(16)}}` : ch;
+	}
+	return out;
+}
+
 /** Format an array as a language-specific list literal. */
-function arrayLiteral(arr: unknown[], language: string): string {
+function arrayLiteral(arr: unknown[], language: string, declaredType?: string): string {
 	const items = arr.map(x => jsonToLiteral(x, language)).join(', ');
 	if (language === 'java') {
-		return `new ${javaElementType(arr)}[]{${items}}`;
+		return `new ${javaElementType(arr, declaredType)}[]{${items}}`;
+	}
+	if (language === 'rust') {
+		// ponytail: `vec![]` can't type-infer standalone for an empty array;
+		// upgrade would thread the declared param type through — touches
+		// five languages, not now.
+		return `vec![${items}]`;
 	}
 	return `[${items}]`;
 }
@@ -290,19 +285,28 @@ function arrayLiteral(arr: unknown[], language: string): string {
  * literal `new int[][]{…}`). Without this, a `[[1,2],[3,4]]` argument renders as
  * `new Object[]{…}` and fails to compile against an `int[][]` parameter.
  *
- * A heterogeneous or empty array degrades to `Object`, which compiles wherever
- * an `Object[]` is accepted and fails loudly where it is not — the honest
- * outcome for a test case whose shape the type system cannot recover.
+ * An **empty** array has no contents to infer from, so the artifact's declared
+ * parameter type is used instead: `[]` for an `int[]` parameter must render
+ * `new int[]{}`, because `new Object[]{}` does not convert to `int[]` and the
+ * whole suite fails to compile. An empty-array case is ordinary — "no items"
+ * is the first edge case anyone writes — so leaving it to inference made a
+ * normal exercise uncompilable.
  *
- * @param arr - Array whose element type is needed.
+ * A heterogeneous array with no declared type still degrades to `Object`, which
+ * compiles wherever an `Object[]` is accepted and fails loudly where it is not.
+ *
+ * @param arr          - Array whose element type is needed.
+ * @param declaredType - The parameter's `params:` type, when one is known.
  * @returns Java type name, e.g. `'int'`, `'String'`, `'int[]'`.
  *
  * @example
- * javaElementType([1, 2]);       // → 'int'
- * javaElementType([[1], [2]]);   // → 'int[]'
+ * javaElementType([1, 2]);           // → 'int'
+ * javaElementType([[1], [2]]);       // → 'int[]'
+ * javaElementType([], 'int[]');      // → 'int'
+ * javaElementType([], 'int[][]');    // → 'int[]'
  */
-function javaElementType(arr: unknown[]): string {
-	if (arr.length === 0) { return 'Object'; }
+function javaElementType(arr: unknown[], declaredType?: string): string {
+	if (arr.length === 0) { return declaredElementType(declaredType) ?? 'Object'; }
 	if (arr.every(e => typeof e === 'number' && Number.isInteger(e))) { return 'int'; }
 	if (arr.every(e => typeof e === 'number'))  { return 'double'; }
 	if (arr.every(e => typeof e === 'string'))  { return 'String'; }
@@ -313,8 +317,37 @@ function javaElementType(arr: unknown[]): string {
 	return 'Object';
 }
 
+
+/**
+ * The Java element type of a declared array parameter, e.g. `int[]` → `int`.
+ *
+ * Strips one `[]` and maps what remains through `TYPE_SYNTAX`, so a nested
+ * `int[][]` yields `int[]` and an unmapped name is passed through as written.
+ *
+ * @param declaredType - A `params:` type, or `undefined` when none is known.
+ * @returns The element type, or `undefined` when the declaration is not an array.
+ *
+ * @example
+ * declaredElementType('int[]');    // → 'int'
+ * declaredElementType('string[]'); // → 'String'
+ * declaredElementType('int');      // → undefined
+ */
+function declaredElementType(declaredType?: string): string | undefined {
+	if (declaredType === undefined || !declaredType.endsWith('[]')) { return undefined; }
+
+	// `mapType` is the one authority for artifact type → native type, and it
+	// already handles nesting: `int[]` → `int[]`, `string` → `String`.
+	return mapType(declaredType.slice(0, -2), 'java');
+}
+
 /** Format an object as a language-specific dict/object literal. */
 function objectLiteral(obj: Record<string, unknown>, language: string): string {
+	if (language === 'rust') {
+		const entries = Object.entries(obj).map(([k, v]) =>
+			`(${stringLiteral(k, 'rust')}, ${jsonToLiteral(v, language)})`,
+		);
+		return `HashMap::from([${entries.join(', ')}])`;
+	}
 	const pairs = Object.entries(obj).map(([k, v]) =>
 		`${JSON.stringify(k)}: ${jsonToLiteral(v, language)}`,
 	);

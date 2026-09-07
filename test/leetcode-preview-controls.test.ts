@@ -7,8 +7,8 @@ import {
     renderNavHeader,
     renderPracticeControls,
     renderSetups,
-    renderTestCounts,
 } from '../src/ui/panels/leetcodePreview.controls.js';
+import { renderTestCounts } from '../src/ui/panels/leetcodePreview.counts.js';
 import { defaultPracticeConfig, defaultTestConfig } from '../src/services/leetcode-parser.service.js';
 import { PRACTICE_OPTIONS } from '../src/types/constants.js';
 import type { ParsedLeetCode } from '../src/types/leetcode.types.js';
@@ -25,6 +25,7 @@ suite('leetcodePreview.controls', () => {
     function fixture(overrides: Partial<ParsedLeetCode> = {}): ParsedLeetCode {
         return {
             title:        'Two Sum',
+            leetcodeType: 'function',
             difficulty:   'easy',
             functionName: 'twoSum',
             status:       'unsolved',
@@ -122,8 +123,10 @@ suite('leetcodePreview.controls', () => {
         });
 
         test('a language with no environment for the test type is filtered out', () => {
+            // `ruby` has no registered function env (rust/typescript now do, as of
+            // wave 3), so it is the honest stand-in for "declared but unrunnable".
             const p = fixture({
-                setups:    [{ language: 'rust', code: 'fn two_sum() {}' }],
+                setups:    [{ language: 'ruby', code: 'def two_sum; end' }],
                 solutions: [{ language: 'python', code: '# py' }],
             });
             assert.deepStrictEqual(availableLanguages(p), ['python']);
@@ -131,6 +134,103 @@ suite('leetcodePreview.controls', () => {
 
         test('a reserved test type leaves no language selectable', () => {
             const p = fixture({ test: { type: 'class', timeoutMs: 5000 } });
+            assert.deepStrictEqual(availableLanguages(p), []);
+        });
+
+        // A `stack` has no registered env either, but it is a *file tree*: Solve
+        // It writes `## Files` and opens the tabs, so gating it on the registry
+        // left the exercise impossible to open at all. Grading stays refused
+        // downstream — this only decides what the selector may offer.
+        //
+        // The shape is declared on the **leetcode-type axis**, never by a
+        // `test.type` value. Asking the test-type value a question about the
+        // artifact's shape is the flattening the axis split undoes, and a
+        // fixture that omits `leetcodeType` is read as a buffer — which is what
+        // this assertion caught the moment `isMultiFile` stopped reading
+        // `test.type`. (`type: 'service'` was the spelling here until T3.5
+        // deleted the legacy ids; `call` is what a migrated tree parses to, and
+        // `languagesForType('call', 'stack')` is `[]` all the same.)
+        test('a multi-file type with no env still offers its declared languages', () => {
+            const p = fixture({ leetcodeType: 'stack', test: { type: 'call', timeoutMs: 5000 } });
+            assert.deepStrictEqual(availableLanguages(p), ['javascript', 'python']);
+        });
+
+        // The `leetcodeType` argument `languagesForType` takes is load-bearing
+        // here, and nothing pinned it until this test: the case above cannot,
+        // because that call answers `[]` for a `stack` either way.
+        //
+        // This is the shape D14's migration actually produces — a check-graded
+        // `package` whose `type:` line was deleted, so `test.type` falls back
+        // to `DEFAULT_TEST_TYPE`, now `call`. Two answers diverge: with the
+        // shape, `languagesForType('call', 'package')` is `[]` (a `call` env
+        // serves one buffer, never a tree), the multi-file relaxation applies,
+        // and every declared language is offered so the tree can be opened at
+        // all. Answer it as "any shape" instead and the result is all five
+        // runnable languages, the relaxation switches off, and `ruby` —
+        // declared by this artifact, runnable by nothing — silently disappears
+        // from the selector.
+        test('a migrated package offers every declared language, because the shape argument reaches the registry', () => {
+            const p = fixture({
+                leetcodeType: 'package',
+                setups:       [{ language: 'ruby', code: 'def solve; end' }],
+                solutions:    [{ language: 'python', code: '# py' }],
+            });
+            assert.deepStrictEqual(availableLanguages(p), ['ruby', 'python']);
+        });
+
+        // ── the shape real multi-file artifacts actually have ─────────────────
+        //
+        // Both relaxation tests above hand the fixture `setups`/`solutions`, and
+        // **no multi-file artifact in the vault has either**: a tree declares its
+        // files in `## Files` and its reference overlay as `path=`-carrying
+        // fences, which land in `files`/`solutionFiles`. Measured across all 14
+        // multi-file artifacts: 13 parse to `setups: []`, `solutions: []`, so
+        // `availableLanguages` returned `[]`, `renderIdleControls` rendered Solve
+        // It `disabled`, and clicking it did nothing — including on
+        // `react-counter.md`, the documented F5 smoke artifact, and on
+        // `args-sum.md`. The relaxation was real and inert: it switches off the
+        // registry gate over a list that was already empty.
+        test('a multi-file artifact offers the languages of its ## Files tree, with no setups at all', () => {
+            const p = fixture({
+                leetcodeType: 'package',
+                setups:       [],
+                solutions:    [],
+                files:        [
+                    { path: 'main.py', language: 'python', content: '', role: 'editable' },
+                    { path: 'data.json', language: 'json', content: '', role: 'readonly' },
+                ],
+            });
+            assert.deepStrictEqual(availableLanguages(p), ['python']);
+        });
+
+        test('a non-runnable ## Files language never becomes selectable on its own', () => {
+            const p = fixture({
+                leetcodeType: 'stack',
+                setups:       [],
+                solutions:    [],
+                files:        [
+                    { path: 'style.css', language: 'css', content: '', role: 'editable' },
+                    { path: 'notes.txt', language: 'text', content: '', role: 'readonly' },
+                ],
+            });
+            assert.deepStrictEqual(availableLanguages(p), []);
+        });
+
+        test('a buffer artifact ignores ## Files entirely — the tree is not its shape', () => {
+            const p = fixture({
+                setups:    [],
+                solutions: [],
+                files:     [{ path: 'main.py', language: 'python', content: '', role: 'editable' }],
+            });
+            assert.deepStrictEqual(availableLanguages(p), []);
+        });
+
+        test('the multi-file relaxation does not leak into a reserved single-file type', () => {
+            const p = fixture({
+                test:      { type: 'in-place', timeoutMs: 5000 },
+                setups:    [{ language: 'ruby', code: '' }],
+                solutions: [{ language: 'python', code: '' }],
+            });
             assert.deepStrictEqual(availableLanguages(p), []);
         });
 
@@ -158,9 +258,113 @@ suite('leetcodePreview.controls', () => {
         });
 
         test('names the offending test type when it is a reserved one', () => {
-            const html = renderLanguageRow(fixture({ test: { type: 'class', timeoutMs: 5000 } }));
+            // No declared language, so `refusalHint` has nothing to name and the
+            // generic hint renders — the three-axis sentence is the test below.
+            const html = renderLanguageRow(fixture({
+                test: { type: 'class', timeoutMs: 5000 }, setups: [], solutions: [],
+            }));
             assert.ok(!html.includes('<select'));
             assert.ok(html.includes('<code>class</code>'));
+        });
+
+        // A single runnable language is not a choice — the user configures
+        // nothing, the run defaults to it. No visible chooser, but a hidden
+        // marker still carries the id so the webview knows the language.
+        test('a single runnable language renders no visible selector', () => {
+            const p = fixture({
+                setups:    [{ language: 'rust', code: 'fn two_sum() {}' }],
+                solutions: [],
+            });
+            const html = renderLanguageRow(p);
+            assert.ok(!html.includes('<select'), 'no dropdown for one language');
+            assert.ok(/<input type="hidden" id="langSelector" value="rust"/.test(html),
+                'a hidden marker carries the single language');
+        });
+
+        test('two or more runnable languages render a visible selector', () => {
+            const html = renderLanguageRow(fixture());
+            assert.ok(html.includes('<select id="langSelector"'));
+        });
+
+        // ── C15: refusalFor wiring ──────────────────────────────────────────
+        // `refusalFor` is exported, unit-tested and had zero production callers
+        // before this task — a documented authority nothing consulted. This is
+        // its one live wiring point: `renderLanguageRow` falls back to a generic
+        // hint today regardless of *why* no language is offered; C15 asks for
+        // the three-axis sentence instead, whenever it can actually say more.
+
+        test('names all three axes through refusalFor when leetcodeType is declared and the triple is unimplemented', () => {
+            // The "obvious live case" from the task: `class` is reserved, so
+            // `languagesForType('class', 'function')` is `[]` and the panel
+            // reaches the empty-selector branch with a declared-but-unrunnable
+            // 'java'. Before the wiring this rendered the generic hint.
+            const p = fixture({
+                leetcodeType: 'function',
+                test:         { type: 'class', timeoutMs: 5000 },
+                setups:       [{ language: 'java', code: 'class X {}' }],
+                solutions:    [],
+            });
+            const html = renderLanguageRow(p);
+            // The sentence goes through `escHtml` on its way into the webview
+            // (C12) — `'` becomes `&#39;`, so the raw-quoted form never appears.
+            assert.ok(html.includes('function artifacts cannot run &#39;class&#39; in java'), html);
+            assert.ok(!html.includes("cannot run 'class'"), 'must not carry an unescaped quote: ' + html);
+            assert.ok(!/in any language this exercise provides/.test(html), html);
+        });
+
+        test('keeps the generic hint when leetcodeType is undefined — never defaulted to function', () => {
+            // Same reserved-type shape as above, but `leetcodeType` is stripped.
+            // The field became **required** at T3.5 (C1/C6), so the cast is what
+            // makes this reachable at all — and the guard stays because the
+            // alternative at this call site is `?? 'function'`, which would
+            // describe a `stack` as a buffer in a sentence shown to the solver.
+            const p = { ...fixture({ test: { type: 'class', timeoutMs: 5000 } }), leetcodeType: undefined };
+            const html = renderLanguageRow(p as unknown as ParsedLeetCode);
+            assert.ok(html.includes('<code>class</code>'), html);
+            assert.ok(!html.includes('cannot run'), html);
+        });
+
+        test('does not consult refusalFor for a check-graded package, even when its declared language has no matching env', () => {
+            // A `package` with `checks:` grades through `gradeProjectDir`, never
+            // the suite registry `refusalFor` reads — consulting it there is the
+            // inert guard T1.16 shipped twice.
+            //
+            // **The shape had to change at T3.5 and the reason is the point.**
+            // This used to declare `test.type: 'project'`, which resolved five
+            // stub envs, so the registry gate switched on and filtered `ruby`
+            // out. Those envs are gone: for a check-graded tree the registry now
+            // answers `[]`, the multi-file relaxation applies, and every declared
+            // language is offered — there is no empty-selector branch left to
+            // reach. `program` is the one suite type a tree *can* resolve, so it
+            // is what still produces the branch this guard sits in: five program
+            // languages, `ruby` among none of them.
+            const p = fixture({
+                leetcodeType: 'package',
+                checks: [{ name: 'builds', kind: 'build', argv: ['true'], cases: [], publicCount: 0 }],
+                test:      { type: 'program', timeoutMs: 5000 },
+                setups:    [{ language: 'ruby', code: '' }],
+                solutions: [],
+            });
+            const html = renderLanguageRow(p);
+            assert.ok(!html.includes('cannot run'), html);
+            assert.ok(/no test environment/i.test(html), html);
+        });
+
+        // C12: a refusal reason reaching a webview is untrusted the moment any
+        // of its three interpolated axes can be artifact-authored text — the
+        // declared language name is exactly that (a `## <Language>` heading is
+        // free text `resolveLangId` passes through unchanged when unrecognised).
+        test('escapes a hostile declared language name before the refusalFor sentence reaches the webview', () => {
+            const p = fixture({
+                leetcodeType: 'function',
+                test:         { type: 'class', timeoutMs: 5000 },
+                setups:       [{ language: '<img src=x onerror=alert(1)>', code: '' }],
+                solutions:    [],
+            });
+            const html = renderLanguageRow(p);
+            assert.ok(!/<img/i.test(html), `must not carry a raw <img tag: ${html}`);
+            assert.ok(!/<script/i.test(html), `must not carry a raw <script tag: ${html}`);
+            assert.ok(html.includes('&lt;img'), html);
         });
     });
 
@@ -299,6 +503,25 @@ suite('leetcodePreview.controls', () => {
             assert.ok(!html.includes('id="solveBtn"'));
         });
 
+        // The language is fixed once the clock starts — the selector was the
+        // pre-start choice, and offering it mid-run risks grading a language
+        // other than the one whose temp file is open.
+        test('running renders no visible language selector, even with 2+ languages', () => {
+            const html = renderControls('running', fixture(), 'python');
+            assert.ok(!html.includes('<select'), 'no dropdown while running');
+        });
+
+        test('running carries the active language as a hidden marker', () => {
+            const html = renderControls('running', fixture(), 'python');
+            assert.ok(/<input type="hidden" id="langSelector" value="python"/.test(html),
+                'the locked language is emitted so the webview filters blocks to it');
+        });
+
+        test('solved still offers the selector for a retry (2+ languages)', () => {
+            const html = renderControls('solved', fixture());
+            assert.ok(html.includes('<select id="langSelector"'));
+        });
+
         test('solved shows the .solved-summary block and a Solve It retry button', () => {
             const html = renderControls('solved', fixture());
             assert.ok(html.includes('class="solved-summary"'));
@@ -357,6 +580,83 @@ suite('leetcodePreview.controls', () => {
             const html = renderTestCounts(fixture({ tests: twoCases, finalTests: secret }));
             assert.ok(!html.includes('987654'));
             assert.ok(!html.includes('sekrit'));
+        });
+
+        // ── project: the suite is `checks:`, not `## Tests` ────────────────────
+        // The function-suite reading told a build-only exercise it had `0 tests`
+        // and hid the second check gating a solver's Submit entirely.
+
+        test('a build-only project names its check instead of reading "0 tests"', () => {
+            const html = renderTestCounts(fixture({
+                tests: [], finalTests: [],
+                checks: [{ name: 'type-checks', kind: 'build', argv: ['tsc'], cases: [], publicCount: 0 }],
+            }));
+            assert.ok(!/0 tests/.test(html), `must not claim zero tests: ${html}`);
+            assert.ok(html.includes('type-checks'), html);
+            assert.ok(html.includes('build'), html);
+        });
+
+        test('every check is listed, so none gating Submit is invisible', () => {
+            const html = renderTestCounts(fixture({
+                tests: twoCases, finalTests: [twoCases[0]],
+                checks: [
+                    {
+                        name: 'catalogue filter', kind: 'call',
+                        file: 'src/lib/catalogue.ts', function: 'filterInStock',
+                        cases: [...twoCases, twoCases[0]], publicCount: 2,
+                    },
+                    { name: 'app builds', kind: 'build', argv: ['tsc'], cases: [], publicCount: 0 },
+                ],
+            }));
+            assert.ok(html.includes('catalogue filter'), html);
+            assert.ok(html.includes('app builds'), html);
+            assert.ok(/2 public/.test(html), html);
+            assert.ok(/1 hidden/.test(html), html);
+        });
+
+        test('a check name is escaped — it is artifact-controlled', () => {
+            const html = renderTestCounts(fixture({
+                tests: [], finalTests: [],
+                checks: [{
+                    name: '<img src=x onerror=alert(1)>', kind: 'build',
+                    argv: ['true'], cases: [], publicCount: 0,
+                }],
+            }));
+            assert.ok(!html.includes('<img'), `check name must be escaped: ${html}`);
+            assert.ok(html.includes('&lt;img'), html);
+        });
+
+        // `program` is not registered in the env registry this wave (T2.5 ships
+        // the factory, T2.8 wires it in) — so a `package` + `program` artifact
+        // has no test environment at all today. The counts line must still read
+        // the parsed suite, never gate on the registry: this pins that a
+        // registry-blind dispatch (the correct design) is what ships, guarding
+        // against the naive wrong one the orchestrator flagged — a dispatch that
+        // checks `languagesForType(...).length` before rendering would report
+        // `0 tests` for this exact artifact.
+        test('a package + program artifact renders its real case counts, never a registry-gated zero', () => {
+            const p = fixture({
+                leetcodeType: 'package',
+                test:         { type: 'program', timeoutMs: 5000 },
+                tests: twoCases, finalTests: [],
+                checks: [],
+            });
+            const html = renderTestCounts(p);
+            assert.ok(/2 tests/.test(html), html);
+            assert.ok(!/0 tests/.test(html), html);
+        });
+
+        test('a project check never reveals a hidden case value', () => {
+            const html = renderTestCounts(fixture({
+                tests: [], finalTests: [],
+                checks: [{
+                    name: 'counter', kind: 'dom-assert', file: 'src/App.jsx',
+                    cases: [{ input: { x: 1 }, expected: 'ok' }, { input: { x: 987654 }, expected: 'sekrit' }],
+                    publicCount: 1,
+                }],
+            }));
+            assert.ok(!html.includes('987654'), html);
+            assert.ok(!html.includes('sekrit'), html);
         });
     });
 });

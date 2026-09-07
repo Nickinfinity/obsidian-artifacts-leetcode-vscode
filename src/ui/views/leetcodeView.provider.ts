@@ -1,10 +1,10 @@
 import * as vscode from 'vscode';
 import { pickLeetCodeExercise } from '../../commands/leetcode.command.js';
+import { postChallengeState } from '../../commands/leetcode-run.finish.js';
 import {
 	discardChallenge,
 	handleRunTests,
 	handleSubmit,
-	postChallengeState,
 } from '../../commands/leetcode-run.handlers.js';
 import { isExerciseEditorOpen } from '../../services/exercise-file.service.js';
 import { challengeState, startChallenge } from '../../services/leetcode-challenge.service.js';
@@ -74,7 +74,7 @@ interface WebviewMsg {
  * do that.
  *
  * @example
- * const provider = new LeetCodeViewProvider(context, 'LeetCode');
+ * const provider = new LeetCodeViewProvider(context);
  * context.subscriptions.push(
  *   vscode.window.registerWebviewViewProvider('obsidian-leetcode.view', provider),
  * );
@@ -85,11 +85,9 @@ export class LeetCodeViewProvider implements vscode.WebviewViewProvider {
 
 	/**
 	 * @param context - Extension context owning the vault path and temp storage.
-	 * @param dir     - Artifact directory name (always `'LeetCode'`).
 	 */
 	constructor(
 		private readonly context: vscode.ExtensionContext,
-		private readonly dir: string,
 	) {
 		context.subscriptions.push(
 			vscode.window.tabGroups.onDidChangeTabs(() => this.onTabsChanged()),
@@ -141,7 +139,7 @@ export class LeetCodeViewProvider implements vscode.WebviewViewProvider {
 	 * await provider.openPicker();
 	 */
 	async openPicker(): Promise<void> {
-		const picked = await pickLeetCodeExercise(this.context, this.dir);
+		const picked = await pickLeetCodeExercise(this.context);
 		if (!picked) { return; }
 		this.showExercise(picked.fileUri, picked.parsed);
 	}
@@ -162,9 +160,15 @@ export class LeetCodeViewProvider implements vscode.WebviewViewProvider {
 	private render(): void {
 		if (!this.view) { return; }
 		const cspSource = this.view.webview.cspSource;
+		const phase = this.currentPhase();
+		// The running phase locks its language; seed the marker so Run Tests /
+		// Submit and block-filtering stay bound to it. `currentPhase()` already
+		// proved a `running` phase belongs to *this* exercise, so its session's
+		// langId is the right one; other phases don't use the marker.
+		const activeLangId = phase === 'running' ? (challengeState()?.langId ?? '') : '';
 		this.view.webview.html = this.ctx
 			? renderLeetCodePreviewHtml(
-				this.ctx.parsed, this.ctx.cssUris, cspSource, '', this.currentPhase(), this.timerSeed(),
+				this.ctx.parsed, this.ctx.cssUris, cspSource, '', phase, this.timerSeed(), activeLangId,
 			)
 			: renderLeetCodeEmptyStateHtml(this.cssUris(), cspSource);
 	}
@@ -235,7 +239,7 @@ export class LeetCodeViewProvider implements vscode.WebviewViewProvider {
 		if (!this.ctx) { return; }
 
 		if (msg.command === 'solveIt')             { await this.handleSolveIt(msg); }
-		else if (msg.command === 'runTests')       { await handleRunTests(this.ctx, msg.language); }
+		else if (msg.command === 'runTests')       { await handleRunTests(this.ctx); }
 		else if (msg.command === 'submit')         { await handleSubmit(this.ctx, msg.language); }
 		else if (msg.command === 'selectLanguage') { this.handleSelectLanguage(); }
 		else if (msg.command === 'back')           { await this.handleBack(); }

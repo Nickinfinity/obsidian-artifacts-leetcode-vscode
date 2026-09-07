@@ -29,9 +29,9 @@ suite('makeFunctionEnv', () => {
         };
     }
 
-    test('carries type "function" and the spec language', () => {
+    test('carries type "call" and the spec language', () => {
         const env = makeFunctionEnv(spec());
-        assert.strictEqual(env.type, 'function');
+        assert.strictEqual(env.type, 'call');
         assert.strictEqual(env.language, 'python');
     });
 

@@ -1,0 +1,464 @@
+/**
+ * Config-fence extraction, plus the two frontmatter-adjacent primitives that
+ * share its grammar: the D2 "moved to the body" key list and the
+ * frontmatter/body split.
+ *
+ * Spec: `ARTIFACT_LEETCODE_FILE_FORMAT.md` §2.5. All three read
+ * attacker-controlled `.md` text, so `extractConfigBlocks` walks lines
+ * one at a time — the same bounded fence-toggle `leetcode-section-bounds
+ * .helpers.ts`'s `boundaryOutsideFence` uses — rather than a lazy
+ * `[\s\S]*?` regex over the whole body. A hostile multi-megabyte fence (or a
+ * fence that never closes) therefore costs one linear pass, never
+ * catastrophic backtracking.
+ */
+
+/** One config fence's byte range in the `body` string it was extracted from. */
+export interface ConfigSpan {
+	/** Offset of the fence's opening ` ``` ` line, inclusive. */
+	start: number;
+	/** Offset just past the fence's closing ` ``` ` line, exclusive. */
+	end: number;
+}
+
+/** Result of walking every ` ```yaml leetcode ` fence in a document body. */
+export interface ConfigBlocksResult {
+	/** Every fence body, in document order, joined with `\n`. */
+	raw: string;
+	/**
+	 * One entry per fence, in document order — offsets into the `body`
+	 * argument passed to `extractConfigBlocks`, **not** the whole file. The
+	 * one caller (W2.0's `extractDescription`) subtracts these ranges from its
+	 * slice so a config fence sitting between the description and
+	 * `## Examples` never renders as raw YAML prose.
+	 */
+	spans: ConfigSpan[];
+	/** Author-facing problems: an unterminated fence, an off-column-0 line, a duplicated key. */
+	warnings: string[];
+}
+
+/** ` ```yaml leetcode `, exactly — no `path=` or other trailing token. */
+const CONFIG_MARKER_RE = /^yaml\s+leetcode\s*$/;
+
+/** A closing fence: backticks, then only whitespace — trailing spaces/tabs are not "unterminated". */
+const CLOSING_FENCE_RE = /^```\s*$/;
+
+/**
+ * D6's asymmetric duplicate-key precedence, restated as a lookup: which
+ * occurrence wins when the same top-level key is declared in two fences.
+ * `parseFrontmatter` overwrites its accumulator on every match (**last**
+ * wins) for the scalar/block keys it reads directly; `parseLibs` /
+ * `parseChecks` locate their block with `lines.findIndex(…)` and stop at the
+ * first hit (**first** wins) for the other three.
+ *
+ * A `Map`, not a `Record` — the key comes straight off `TOP_LEVEL_KEY_RE`'s
+ * `\w+`, which admits `__proto__`/`constructor`/`toString`. A plain-object
+ * lookup resolves those through the prototype chain instead of `undefined`,
+ * so an artifact declaring `__proto__:` in two fences interpolated
+ * `[object Object]` into a user-facing warning. `.get()` has no chain to
+ * fall through and types the miss honestly as `… | undefined`.
+ */
+const DUPLICATE_KEY_WINNER = new Map<string, 'first' | 'last'>([
+	['function', 'last'], ['functions', 'last'], ['params', 'last'], ['returns', 'last'],
+	['test', 'last'], ['practice', 'last'], ['tags', 'last'],
+	['libs', 'first'], ['checks', 'first'], ['packages', 'first'],
+]);
+
+/**
+ * The D2 "moved to the body" key set. The one authority for this list — no
+ * other module re-lists these names. Exported (not just the
+ * `legacyFrontmatterKeys` predicate built on it) because W2.2 needs the
+ * *complement*: `KNOWN_FM_KEYS` minus this set is what stays a frontmatter
+ * scalar, and only the raw list — not a yes/no check — can drive that split.
+ *
+ * `program` joins the set with the `program:` test type: it is execution
+ * configuration like every other member, so it belongs in a body fence, a
+ * frontmatter copy of it must fail `verifyExercise` the same way, and the
+ * near-miss key warner must recognise it rather than reading it as a typo.
+ *
+ * `packages` replaced `services` here in wave 3.A, once `packages-parser
+ * .helpers.ts` (T3.1) existed to parse it. The two spellings were deliberately
+ * out of step until then: the migration renamed the block on disk in T1.13,
+ * and swapping this entry before a parser existed would have made the migrator
+ * stop recognising the very key it had just written. With the parser landed,
+ * the divergence inverts — leaving `services` here makes the near-miss warner
+ * call the four migrated vault artifacts' own `packages:` block an unknown key
+ * and suggest they rename it back. See `ARTIFACT_LEETCODE_FILE_FORMAT.md` §9.3.
+ */
+export const BODY_SET_KEYS: ReadonlySet<string> = new Set([
+	'function', 'functions', 'params', 'returns', 'test', 'practice', 'libs', 'checks', 'packages',
+	'program',
+]);
+
+/**
+ * The D2 keys that **stay** in frontmatter — `LeetCodeSummary` plus the two
+ * type discriminators, `artifactType` (D11's rename of `type`) and
+ * `leetcodeType` (D1, the leetcode-type axis) — **in the canonical order a
+ * clean artifact writes them in.** `patchFrontmatterField` (T1.12) inserts an
+ * absent key at its index here rather than appending after `tags`, and
+ * `orderViolation` (`frontmatter-order.helpers.ts`, T1.10) walks this same
+ * tuple to report the first out-of-order pair. A `Set`'s iteration order is
+ * insertion order (spec-guaranteed), so `RETAINED_FM_KEYS` falls out of the
+ * tuple below rather than re-listing the same seven names a second time —
+ * order is strictly more information than membership, so the tuple is the
+ * authority and the set is derived, never the reverse.
+ *
+ * **`type` is deliberately not a member of this set any more.** D11 is a hard
+ * cut: a bare `type:` is what `verifyExercise` fails by name, not a second
+ * spelling this set quietly keeps accepting. `type` stays *parseable* —
+ * `isLeetCodeArtifact` (`artifact-migrator.helpers.ts`) still finds it by a raw
+ * regex over frontmatter text, which is how the migrator locates what to
+ * rewrite — but that lookup does not go through this set, so removing `type`
+ * here cannot break it.
+ *
+ * These must never be declared in a config fence. `parseLeetCode` reads the
+ * merged text and `applyScalar` is last-wins, so a fence would win — while
+ * `patchFrontmatterField` still *writes* `status:` to frontmatter and
+ * `parseFrontmatterOnly` (the picker) still *reads* it there. An artifact with
+ * `status:` in a fence therefore submits green, gets `status: solved` written to
+ * frontmatter, shows solved in the picker, and shows unsolved on the challenge
+ * screen forever. `extractConfigBlocks` warns rather than changing precedence:
+ * silently reassigning the winner would be a second, invisible rule.
+ */
+export const CANONICAL_FRONTMATTER_ORDER = [
+	'artifactType', 'leetcodeType', 'title', 'difficulty', 'status', 'algorithm', 'tags',
+] as const;
+
+/** `CANONICAL_FRONTMATTER_ORDER`, as the membership set most callers need. */
+export const RETAINED_FM_KEYS: ReadonlySet<string> = new Set(CANONICAL_FRONTMATTER_ORDER);
+
+/**
+ * A frontmatter line that opens a **top-level** key, capturing the key name.
+ *
+ * **Anchored (`^`)** so an indented continuation line — a `tags:` block's
+ * `- foo`, a `params:` sub-key — never matches, and a **single `\w+`
+ * quantifier over a single class** keeps a pathologically long key linear
+ * rather than a backtracking hang (`S8786`).
+ *
+ * Lives beside {@link CANONICAL_FRONTMATTER_ORDER} because the two are always
+ * used together — you match a line to learn its key, then ask where that key
+ * belongs — and because it was previously declared byte-identically in both
+ * `frontmatter-order.helpers.ts` (which checks the order) and
+ * `frontmatter-patcher.service.ts` (which writes it). Two copies of the rule
+ * deciding *what counts as a key* is how the two sides of one invariant drift
+ * apart: the checker would accept a line the writer never recognised.
+ *
+ * **Deliberately unflagged.** A `g` flag would carry `lastIndex` between calls
+ * and make a shared module-scope regex skip every other line (`S6351`), which
+ * is exactly the footgun a shared constant would otherwise spread to both
+ * consumers at once.
+ *
+ * @example
+ * TOP_LEVEL_KEY_RE.exec('status: solved')?.[1]; // → 'status'
+ * @example
+ * TOP_LEVEL_KEY_RE.exec('  nested: value');     // → null (indented, not top level)
+ */
+export const TOP_LEVEL_KEY_RE = /^(\w+):/;
+
+/**
+ * A `key: value` line — key restricted to plain identifiers, value the rest
+ * of the line verbatim (untrimmed; callers `.trim()` group 2 themselves).
+ *
+ * Distinct from {@link TOP_LEVEL_KEY_RE}: that one only asks *which key does
+ * this line open* (frontmatter-order checking/writing); this one is for a
+ * block parser that already knows it is inside one key's indented body and
+ * needs both the sub-key name and its scalar value on the same line — a
+ * `test:` block's `  type: call`, a `packages:` entry's `  dir: server`.
+ * **Was four byte-identical copies** (`leetcode-parser.helpers.ts`,
+ * `leetcode-frontmatter-blocks.helpers.ts`, `program-config.helpers.ts`,
+ * `packages-parser.helpers.ts`) before landing here — verified identical
+ * (checksum, not just `diff`) before unifying, exactly the drift this file
+ * exists to prevent for `TOP_LEVEL_KEY_RE` already.
+ *
+ * **Deliberately unflagged**, for the same `lastIndex` reason as
+ * {@link TOP_LEVEL_KEY_RE} — every caller is a fresh `KV_RE.exec(line)` per
+ * line, never a `.matchAll`.
+ *
+ * @example
+ * KV_RE.exec('  type: call')?.slice(1); // → ['type', 'call']
+ */
+export const KV_RE = /^(\w+):\s*(.*)$/;
+
+/** Drop a trailing `\r` so CRLF input parses identically to LF. */
+function stripCr(line: string): string {
+	return line.endsWith('\r') ? line.slice(0, -1) : line;
+}
+
+/** Lines consumed while reading one config fence's body, and where the read ended up. */
+interface ReadFenceResult {
+	contentLines: string[];
+	nextIndex: number;
+	/** Offset just past the closing ` ``` ` line's own characters — excludes its trailing `\n`. */
+	spanEnd: number;
+	/** Offset to resume scanning from — `spanEnd` plus the separator `split('\n')` consumed. */
+	resumeOffset: number;
+}
+
+/**
+ * Consumes lines from `start` until a closing ` ``` ` line (backticks, then
+ * only whitespace), or end of input.
+ *
+ * @param lines      - The document's lines (already split on `\n`).
+ * @param start      - Index of the first line *after* the opening fence.
+ * @param startOffset - Character offset of `lines[start]` in the original body.
+ * @returns The fence's content lines and where the scan continues, or
+ *   `undefined` when no closing line was found — the caller must discard
+ *   everything read so an unterminated fence yields no partial block.
+ */
+function readConfigFence(lines: string[], start: number, startOffset: number): ReadFenceResult | undefined {
+	const contentLines: string[] = [];
+	let offset = startOffset;
+	let i = start;
+	while (i < lines.length) {
+		const line = stripCr(lines[i]);
+		if (CLOSING_FENCE_RE.test(line)) {
+			const spanEnd = offset + lines[i].length;
+			return { contentLines, nextIndex: i + 1, spanEnd, resumeOffset: spanEnd + 1 };
+		}
+		offset += lines[i].length + 1;
+		contentLines.push(line);
+		i++;
+	}
+	return undefined;
+}
+
+/**
+ * D5: a config fence's top-level keys must start at column 0. The fence's
+ * first non-blank line is the only line that *cannot* legitimately be an
+ * indented sub-key (nothing precedes it to nest under), so an indent there
+ * names the defect without needing a full YAML indent-tracker.
+ */
+function checkIndentation(contentLines: string[], warnings: string[]): void {
+	const first = contentLines.find(l => l.trim() !== '');
+	if (first !== undefined && /^\s/.test(first)) {
+		warnings.push(`config fence: line not at column 0 (kept verbatim) — '${first}'`);
+	}
+}
+
+/** Column-0 top-level keys a fence body declares. */
+function collectTopLevelKeys(contentLines: string[]): Set<string> {
+	const keys = new Set<string>();
+	for (const line of contentLines) {
+		const m = TOP_LEVEL_KEY_RE.exec(line);
+		if (m) { keys.add(m[1]); }
+	}
+	return keys;
+}
+
+/**
+ * A config fence declaring a frontmatter-retained key — the mirror of
+ * `legacyFrontmatterKeys`, and the reason `RETAINED_FM_KEYS` is exported.
+ *
+ * The two halves of the format each have a home; this names the wrong-way
+ * violation, exactly as the D4 hard cut names the other way. Warn only: the
+ * fence still wins, because `applyScalar` is last-wins and quietly inverting
+ * that for six keys would be a second rule nobody could see.
+ *
+ * @param blockKeys - Per-fence top-level key sets, in document order.
+ * @param warnings  - Sink, appended in place.
+ *
+ * @example
+ * warnRetainedKeys([new Set(['status'])], out);
+ * // out: ["config fence: 'status:' belongs in frontmatter — …"]
+ */
+function warnRetainedKeys(blockKeys: Set<string>[], warnings: string[]): void {
+	const seen = new Set<string>();
+	for (const keys of blockKeys) {
+		for (const key of keys) {
+			if (!RETAINED_FM_KEYS.has(key) || seen.has(key)) { continue; }
+			seen.add(key);
+			warnings.push(`config fence: '${key}:' belongs in frontmatter — the fence wins here, but the picker and the status writer read frontmatter, so the two will disagree`);
+		}
+	}
+}
+
+/** D6: the same top-level key declared in two-or-more fences — name it and say which occurrence wins. */
+function warnDuplicateKeys(blockKeys: Set<string>[], warnings: string[]): void {
+	const blockCount = new Map<string, number>();
+	for (const keys of blockKeys) {
+		for (const key of keys) { blockCount.set(key, (blockCount.get(key) ?? 0) + 1); }
+	}
+	for (const [key, count] of blockCount) {
+		const winner = DUPLICATE_KEY_WINNER.get(key);
+		if (count < 2 || !winner) { continue; }
+		warnings.push(`config: '${key}' is declared in ${count} fences — the ${winner} occurrence wins`);
+	}
+}
+
+/**
+ * Walks a document body for every ` ```yaml leetcode ` config fence.
+ *
+ * A single linear pass over `body`'s lines, mirroring
+ * `boundaryOutsideFence`'s fence-toggle: any *other* fence (a `## Files`
+ * entry, a Setup/Solution code block, a bare ` ``` `) is skipped as one
+ * opaque region, so a fence-shaped line **inside** it can never be mistaken
+ * for a second config marker — nesting cannot bleed, and two adjacent config
+ * fences cannot merge into one. An unterminated fence contributes no block,
+ * only a warning: a truncated document must never read as a valid, partial
+ * one.
+ *
+ * @param body - Content to scan (the post-frontmatter body, or any substring
+ *   of it — offsets in the result are relative to *this* argument, not the
+ *   whole file).
+ * @returns Every fence body joined in document order, their spans, and any
+ *   warnings.
+ *
+ * @example
+ * extractConfigBlocks('```yaml leetcode\nreturns: int\n```');
+ * // → { raw: 'returns: int', spans: [{ start: 0, end: 33 }], warnings: [] }
+ */
+export function extractConfigBlocks(body: string): ConfigBlocksResult {
+	const lines = body.split('\n');
+	const warnings: string[] = [];
+	const blocks: string[] = [];
+	const spans: ConfigSpan[] = [];
+	const blockKeys: Set<string>[] = [];
+
+	let offset = 0;
+	let fenced = false;
+	let i = 0;
+	while (i < lines.length) {
+		const line = stripCr(lines[i]);
+
+		if (!fenced && line.startsWith('```') && CONFIG_MARKER_RE.test(line.slice(3))) {
+			const opened = readConfigFence(lines, i + 1, offset + lines[i].length + 1);
+			if (!opened) {
+				warnings.push('config fence: unterminated ```yaml leetcode — no config read from it');
+				break;
+			}
+			spans.push({ start: offset, end: opened.spanEnd });
+			checkIndentation(opened.contentLines, warnings);
+			blockKeys.push(collectTopLevelKeys(opened.contentLines));
+			blocks.push(opened.contentLines.join('\n'));
+			i = opened.nextIndex;
+			offset = opened.resumeOffset;
+			continue;
+		}
+
+		if (line.startsWith('```')) { fenced = !fenced; }
+		offset += lines[i].length + 1;
+		i++;
+	}
+
+	// A non-config fence (Setup/Solution/`## Files`/a bare ```) that never
+	// closes swallows every line after it into "still inside a fence", which
+	// silently hides any real config marker further down — the same failure
+	// mode as an unterminated config fence, just from the other direction.
+	if (fenced) {
+		warnings.push('config: an unterminated ``` fence earlier in the document may hide config fences after it');
+	}
+
+	warnRetainedKeys(blockKeys, warnings);
+	warnDuplicateKeys(blockKeys, warnings);
+	return { raw: blocks.join('\n'), spans, warnings };
+}
+
+/**
+ * The D2 body-set keys (`function`, `functions`, `params`, `returns`,
+ * `test`, `practice`, `libs`, `checks`, `packages`, `program`) found at column
+ * 0 in raw frontmatter text. The one authority for "the body set" — no other
+ * module re-lists these ten names.
+ *
+ * @param fmRaw - Raw frontmatter body (no `---` fences).
+ * @returns Found keys, in document order; `[]` when clean.
+ *
+ * @example
+ * legacyFrontmatterKeys('title: X\nfunction: twoSum\n'); // → ['function']
+ */
+export function legacyFrontmatterKeys(fmRaw: string): string[] {
+	const found = new Set<string>();
+	for (const line of fmRaw.split(/\r?\n/)) {
+		const m = TOP_LEVEL_KEY_RE.exec(line);
+		if (m && BODY_SET_KEYS.has(m[1])) { found.add(m[1]); }
+	}
+	return [...found];
+}
+
+/**
+ * Raw frontmatter text with every D2 body-set key **removed** — the key's own
+ * line plus its indented continuation lines.
+ *
+ * D4 is a hard cut: an execution-config key left in frontmatter is *ignored*,
+ * not read. Warning about it while still parsing it would be precisely the dual
+ * read D4 forbids, so the text handed to `parseFrontmatter` must not contain it.
+ * `legacyFrontmatterKeys` names them for the warning; this removes them for the
+ * parse. Both live here because both are the body-set list's business.
+ *
+ * A continuation line is one starting with whitespace, the same rule
+ * `scanIndentedBlock` uses in `leetcode-parser.helpers.ts` — so `params:` takes
+ * its `- name:`/`type:` lines with it, and the next column-0 key ends the block.
+ *
+ * @param fmRaw - Raw frontmatter body (no `---` fences).
+ * @returns The same text with body-set blocks dropped; unchanged when clean.
+ *
+ * @example
+ * withoutBodySetKeys('title: X\nparams:\n  - name: a\n    type: int\nstatus: unsolved');
+ * // → 'title: X\nstatus: unsolved'
+ */
+export function withoutBodySetKeys(fmRaw: string): string {
+	const kept: string[] = [];
+	let dropping = false;
+	for (const line of fmRaw.split('\n')) {
+		const key = TOP_LEVEL_KEY_RE.exec(stripCr(line));
+		if (key) { dropping = BODY_SET_KEYS.has(key[1]); }
+		else if (dropping && !/^\s/.test(stripCr(line))) { dropping = false; }
+		if (!dropping) { kept.push(line); }
+	}
+	return kept.join('\n');
+}
+
+const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/;
+
+/**
+ * Splits a full `.md` artifact into its raw frontmatter text and the body
+ * that follows. The one authority for this split — `parseLeetCode` and
+ * `verifyExercise` both call it rather than each carrying their own copy of
+ * `FRONTMATTER_RE`; a second copy is how a config key could hide from the D4
+ * hard-cut check.
+ *
+ * @param content - Full UTF-8 `.md` file content.
+ * @returns `fmRaw` (no `---` fences) and `body` (everything after); `fmRaw`
+ *   is `''` and `body` is the whole input when no frontmatter block opens it.
+ *
+ * @example
+ * splitFrontmatter('---\ntitle: X\n---\nBody'); // → { fmRaw: 'title: X', body: 'Body' }
+ */
+export function splitFrontmatter(content: string): { fmRaw: string; body: string } {
+	const match = FRONTMATTER_RE.exec(content);
+	return {
+		fmRaw: match ? match[1] : '',
+		body: match ? content.slice(match[0].length) : content,
+	};
+}
+
+// ── shared block-line grammar ─────────────────────────────────────────────
+//
+// Three sub-parsers (`project-parser.helpers.ts`, `program-config.helpers.ts`,
+// `packages-parser.helpers.ts`) walk the *indented body* of one config-fence
+// key (`## Files`, `params:`, `checks:`, `program:`, `packages:`, …) the same
+// way: find lines deeper-indented than the header, strip a layer of quotes
+// off a scalar. Each carried its own byte-identical copy (condition C26) —
+// diffed 2026-09-01 and found genuinely undrifted — so this is their one
+// shared home instead of a third place a fourth parser would copy from.
+
+/** Lines indented deeper than the block header at `start`, up to the first that is not. */
+export function blockLines(lines: string[], start: number): string[] {
+	const base = indentOf(lines[start]);
+	const out: string[] = [];
+	for (let i = start + 1; i < lines.length; i++) {
+		if (lines[i].trim() === '') { continue; }
+		if (indentOf(lines[i]) <= base) { break; }
+		out.push(lines[i]);
+	}
+	return out;
+}
+
+/** Count of leading whitespace characters. */
+export function indentOf(line: string): number {
+	return /^\s*/.exec(line)?.[0].length ?? 0;
+}
+
+/** Strip one layer of matching quotes, if present. */
+export function unquote(value: string): string {
+	const m = /^"(.*)"$|^'(.*)'$/.exec(value.trim());
+	return m ? m[1] ?? m[2] : value.trim();
+}

@@ -5,10 +5,11 @@ import {
 	isSelfRecursive,
 	scanBraceLoops,
 	scanPythonLoops,
+	type SingleQuoteRole,
 	stripCLikeComments,
 	stripPythonComments,
 } from './leetcode-bigo.helpers.js';
-import { isLangId, type LangId } from '../types/languages.js';
+import { isLangId, LANG_IDS, type LangId } from '../types/languages.js';
 import type { BigOConfidence, BigOEstimate } from '../types/leetcode.types.js';
 
 /** Languages this heuristic understands. Anything else is reported, not guessed. */
@@ -46,11 +47,16 @@ export function estimateBigO(code: string, langId: string, functionName?: string
 		return {
 			notation: 'unknown',
 			confidence: 'low',
-			reason: `no Big-O heuristic for language '${langId}' — only java, python, and javascript are supported`,
+			reason: `no Big-O heuristic for language '${langId}' — only ${LANG_IDS.join(', ')} are supported`,
 		};
 	}
 
-	const cleaned = lang === 'python' ? stripPythonComments(code) : stripCLikeComments(code);
+	// Rust's `'` is a lifetime/label sigil far more often than a char quote;
+	// stripping it as a quote blanks the rest of the function.
+	const singleQuote: SingleQuoteRole = lang === 'rust' ? 'char-or-lifetime' : 'string';
+	const cleaned = lang === 'python'
+		? stripPythonComments(code)
+		: stripCLikeComments(code, singleQuote);
 
 	const recursive = !!functionName && isSelfRecursive(cleaned, functionName);
 	const memoized = recursive && hasMemoIndicator(cleaned);

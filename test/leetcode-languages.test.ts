@@ -15,9 +15,9 @@ import {
  */
 suite('languages registry', () => {
 
-    test('the runnable set is exactly the three executable languages', () => {
+    test('the runnable set is exactly the five executable languages', () => {
         assert.deepStrictEqual([...LANG_IDS].sort((a, b) => a.localeCompare(b)),
-            ['java', 'javascript', 'python']);
+            ['java', 'javascript', 'python', 'rust', 'typescript']);
     });
 
     test('every entry is keyed by its own id', () => {
@@ -73,12 +73,27 @@ suite('languages registry', () => {
         assert.strictEqual(LANGUAGES.javascript.displayName, 'JavaScript');
     });
 
+    test('rust detectCmd and displayName', () => {
+        assert.strictEqual(LANGUAGES.rust.detectCmd, 'rustc --version');
+        assert.strictEqual(LANGUAGES.rust.displayName, 'Rust');
+    });
+
+    // TypeScript's probe is `node`, not `tsc`: the default path type-strips in
+    // process and never invokes a compiler, so requiring one would gate the
+    // language on a toolchain it does not use.
+    test('typescript probes node, not a compiler', () => {
+        assert.strictEqual(LANGUAGES.typescript.detectCmd, 'node --version');
+        assert.strictEqual(LANGUAGES.typescript.displayName, 'TypeScript');
+    });
+
     test('isLangId narrows runnable ids and rejects everything else', () => {
         assert.ok(isLangId('java'));
         assert.ok(isLangId('python'));
         assert.ok(isLangId('javascript'));
-        assert.strictEqual(isLangId('rust'), false);
+        assert.ok(isLangId('rust'));
+        assert.ok(isLangId('typescript'));
         assert.strictEqual(isLangId('ruby'), false);
+        assert.strictEqual(isLangId('typescriptreact'), false);
         assert.strictEqual(isLangId(''), false);
     });
 

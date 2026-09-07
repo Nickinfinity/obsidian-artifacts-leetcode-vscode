@@ -15,6 +15,16 @@ export interface LoopScanResult {
 	hasEarlyReturn: boolean;
 }
 
+/**
+ * What a `'` means in a language's source.
+ *
+ * `'string'` — Java/JavaScript/TypeScript, where `'` always opens a quoted
+ * literal. `'char-or-lifetime'` — Rust, where it opens a char literal only
+ * when one closes immediately; otherwise it is a lifetime (`&'a str`) or a
+ * loop label (`'outer:`) and must survive stripping untouched.
+ */
+export type SingleQuoteRole = 'string' | 'char-or-lifetime';
+
 /** Sort calls recognised per language — a known, well-understood n log n cost. */
 const SORT_PATTERNS: Record<string, RegExp[]> = {
 	java: [/\bArrays\.sort\s*\(/, /\bCollections\.sort\s*\(/],
@@ -62,8 +72,12 @@ const MEMO_RE = /\b(memo|cache|dp)\b/i;
  * @example
  * stripCLikeComments('int x = 1; // for (;;) {}');
  * // → 'int x = 1;                '
+ *
+ * @example
+ * stripCLikeComments("'outer: for i in 0..n {}", 'char-or-lifetime'); // Rust
+ * // → label survives; only real char literals are blanked
  */
-export function stripCLikeComments(code: string): string {
+export function stripCLikeComments(code: string, singleQuote: SingleQuoteRole = 'string'): string {
 	const out: string[] = [];
 	let i = 0;
 	const n = code.length;
@@ -74,12 +88,44 @@ export function stripCLikeComments(code: string): string {
 
 		if (ch === '/' && next === '/') { i = consumeLineComment(code, i, out); continue; }
 		if (ch === '/' && next === '*') { i = consumeBlockComment(code, i, out); continue; }
-		if (ch === '"' || ch === '\'' || ch === '`') { i = consumeCLikeString(code, i, ch, out); continue; }
+		if (ch === '"' || ch === '`') { i = consumeCLikeString(code, i, ch, out); continue; }
+		if (ch === '\'') {
+			if (singleQuote === 'string' || opensCharLiteral(code, i)) {
+				i = consumeCLikeString(code, i, ch, out);
+				continue;
+			}
+			// Rust lifetime or loop label — an ordinary token, not a quote.
+			out.push(ch);
+			i++;
+			continue;
+		}
 
 		out.push(ch);
 		i++;
 	}
 	return out.join('');
+}
+
+/**
+ * Whether the `'` at `pos` opens a character literal rather than a Rust
+ * lifetime or loop label.
+ *
+ * A char literal closes almost immediately — `'x'`, or `'\n'` / `'\u{1F600}'`
+ * for an escape. A lifetime (`&'a str`) and a label (`'outer:`) have no
+ * closing quote at all, so consuming them as a quote blanks everything up to
+ * the *next* unrelated `'` — or, when the count is odd, the entire rest of the
+ * source. That silently grades real work as `O(1)`, which is why this
+ * lookahead exists.
+ */
+function opensCharLiteral(code: string, pos: number): boolean {
+	if (code[pos + 1] !== '\\') { return code[pos + 2] === '\''; }
+
+	// Escaped form — scan a short window for the closing quote.
+	for (let k = pos + 2; k < Math.min(code.length, pos + 12); k++) {
+		if (code[k] === '\'') { return true; }
+		if (code[k] === '\n') { return false; }
+	}
+	return false;
 }
 
 /** Consume a `//` comment up to (not including) the next newline. */
@@ -174,23 +220,28 @@ function consumeTriplePythonString(code: string, start: number, quote: string, o
 	return i;
 }
 
-// ── Loop nesting — brace-delimited languages (Java, JavaScript) ────────────
+// ── Loop nesting — brace-delimited languages (Java, JavaScript, Rust) ──────
 
 /**
- * Scans brace-delimited (Java/JavaScript) source, already stripped of
+ * Scans brace-delimited (Java/JavaScript/Rust) source, already stripped of
  * comments and strings, for loop nesting depth and early exits.
  *
  * Tracks a stack of `{ … }` blocks, tagging each as a loop body when it is
- * opened by a `for( … )`, `while( … )`, or `do { … } while( … )` header —
- * `if`/function/class braces push a non-loop marker so they nest around a
- * loop without inflating its depth. `return`/`break` tokens are flagged only
- * while at least one loop body is currently open.
+ * opened by a `for( … )`, `while( … )`, or `do { … } while( … )` header (Java
+ * and JavaScript), or by a parenthesis-free `for … in … { }` / `while … { }`
+ * header (Rust) — `if`/function/class braces push a non-loop marker so they
+ * nest around a loop without inflating its depth. `return`/`break` tokens
+ * are flagged only while at least one loop body is currently open.
  *
- * @param code - Comment/string-stripped Java or JavaScript source.
+ * @param code - Comment/string-stripped Java, JavaScript, or Rust source.
  * @returns Deepest loop nesting and whether an early exit was found.
  *
  * @example
  * scanBraceLoops('for (int i = 0; i < n; i++) { for (int j = 0; j < n; j++) {} }');
+ * // → { maxDepth: 2, hasEarlyReturn: false }
+ *
+ * @example
+ * scanBraceLoops('for i in 0..n { for j in 0..n {} }'); // Rust
  * // → { maxDepth: 2, hasEarlyReturn: false }
  */
 export function scanBraceLoops(code: string): LoopScanResult {
@@ -229,8 +280,22 @@ function isWordChar(c: string | undefined): boolean {
 }
 
 /**
+ * A parenthesis-free loop header: the statement opens with `for`, `while`, or
+ * Rust's bare `loop`, optionally behind a `'label:` prefix.
+ *
+ * The trailing `\b` is load-bearing — without it `looper_state { … }` would
+ * read as a loop and inflate the nesting depth. The optional label matters
+ * more than it looks: labels exist to break out of *nested* loops, so missing
+ * them loses depth exactly where the complexity grade is least forgiving.
+ */
+const PAREN_FREE_LOOP_HEADER = /^\s*(?:'[A-Za-z_]\w*\s*:\s*)?(?:for|while|loop)\b/;
+
+/**
  * Whether the `{` at `bracePos` opens a loop body — a `for( … )`/`while( … )`
- * header immediately precedes it, or it is the `{` of a `do { … }`.
+ * header immediately precedes it, it is the `{` of a `do { … }`, or (Rust,
+ * and other brace languages with parenthesis-free headers) the statement
+ * immediately before it is a `PAREN_FREE_LOOP_HEADER` — e.g. `for i in 0..n
+ * { … }`, `while cond { … }`, `loop { … }`, `'outer: for i in 0..n { … }`.
  */
 function isLoopBrace(code: string, bracePos: number): boolean {
 	let j = bracePos - 1;
@@ -240,7 +305,21 @@ function isLoopBrace(code: string, bracePos: number): boolean {
 
 	let wordEnd = j;
 	while (j >= 0 && /[A-Za-z_]/.test(code[j])) { j--; }
-	return code.slice(j + 1, wordEnd + 1) === 'do';
+	if (code.slice(j + 1, wordEnd + 1) === 'do') { return true; }
+
+	return PAREN_FREE_LOOP_HEADER.test(precedingStatement(code, bracePos));
+}
+
+/**
+ * Text of the statement immediately before the `{` at `bracePos` — from the
+ * nearest prior `{`, `}`, `;` (or the start of the source) up to `bracePos`.
+ * Lets `isLoopBrace` recognise a parenthesis-free loop header, which has no
+ * `)` or bare `do` for the paren/do-while checks above to find.
+ */
+function precedingStatement(code: string, bracePos: number): string {
+	let k = bracePos - 1;
+	while (k >= 0 && code[k] !== '{' && code[k] !== '}' && code[k] !== ';') { k--; }
+	return code.slice(k + 1, bracePos);
 }
 
 /** Find the `for`/`while` word immediately before the `(` matching the `)` at `closeParenIdx`. */

@@ -2,16 +2,18 @@ import * as vscode from 'vscode';
 import { getNonce } from '../../utils/helpers.js';
 import { validateObsidianVault } from '../../services/vault.service.js';
 import { refreshVaultContext } from '../../services/context.service.js';
-import { getVaultPath, setVaultPath } from '../../services/vault-path.store.js';
+import { getUseVaultRoot, getVaultPath, setUseVaultRoot, setVaultPath } from '../../services/vault-path.store.js';
 
 /**
  * Opens the settings webview panel where the user selects their Obsidian vault
- * root directory. Unlike the core extension there are no artifact-type toggles
- * — this extension only ever reads the `LeetCode/` directory, which is
- * auto-created when the vault is set.
+ * root directory and toggles `useVaultRoot`. Unlike the core extension there
+ * are no artifact-type toggles — this extension only ever reads exercises
+ * from either the `LeetCode/` subfolder (default, auto-created) or the vault
+ * root itself (`useVaultRoot: true`, nothing created or moved).
  *
- * The vault path is persisted in per-machine `globalState` (not Settings
- * Sync) so each installation keeps its own OS-correct path.
+ * The vault path and the toggle are both persisted in per-machine
+ * `globalState` (not Settings Sync) so each installation keeps its own
+ * OS-correct path and preference.
  *
  * @param context - Extension context providing the extension URI for assets.
  *
@@ -39,6 +41,7 @@ export function openSettingsPanel(context: vscode.ExtensionContext): void {
 		if (savedPath) {
 			panel.webview.postMessage({ command: 'updatePath', path: savedPath });
 		}
+		panel.webview.postMessage({ command: 'updateUseVaultRoot', value: getUseVaultRoot(context) });
 	}
 
 	panel.onDidChangeViewState(({ webviewPanel }) => {
@@ -56,7 +59,7 @@ export function openSettingsPanel(context: vscode.ExtensionContext): void {
 				openLabel: 'Select Vault',
 			});
 
-			if (folderUri && folderUri[0]) {
+			if (folderUri?.[0]) {
 				const selectedFolderPath = folderUri[0].fsPath;
 
 				if (!validateObsidianVault(selectedFolderPath)) {
@@ -67,13 +70,16 @@ export function openSettingsPanel(context: vscode.ExtensionContext): void {
 
 				vscode.window.showInformationMessage(`Obsidian vault path saved: ${selectedFolderPath}`);
 
-				// Sets the vaultConfigured context key and auto-creates LeetCode/.
+				// Sets the vaultConfigured context key and creates LeetCode/ unless useVaultRoot is on.
 				await refreshVaultContext(context);
 
 				panel.webview.postMessage({ command: 'updatePath', path: selectedFolderPath });
 			} else {
 				vscode.window.showWarningMessage('No folder selected.');
 			}
+		} else if (message.command === 'setUseVaultRoot') {
+			await setUseVaultRoot(context, Boolean(message.value));
+			await refreshVaultContext(context);
 		}
 	});
 
@@ -115,7 +121,7 @@ function getWebviewContent(webview: vscode.Webview, extensionUri: vscode.Uri): s
 
     <div class="intro">
       <p>This extension turns <code>type: leetcode</code> notes in your <strong>Obsidian vault</strong> into runnable coding challenges with auto-generated boilerplate, a per-language test harness, and a child-process test runner.</p>
-      <p>Point the extension to your vault's root folder — the directory that contains your <code>.obsidian/</code> folder. A <code>LeetCode/</code> directory is created automatically. Your selection is saved per installation (not synced across devices).</p>
+      <p>Point the extension to your vault's root folder — the directory that contains your <code>.obsidian/</code> folder. By default a <code>LeetCode/</code> subfolder is created automatically and exercises live there; check the box below to keep exercises in the vault root instead. Your selection is saved per installation (not synced across devices).</p>
     </div>
 
     <div class="vault-dir-section">
@@ -129,6 +135,11 @@ function getWebviewContent(webview: vscode.Webview, extensionUri: vscode.Uri): s
       <button id="selectFolderButton">
         <span>Select Vault Folder</span>
       </button>
+
+      <label class="vault-root-toggle">
+        <input type="checkbox" id="useVaultRootCheckbox">
+        <span>Use vault root directly (don't create a LeetCode subfolder)</span>
+      </label>
     </div>
 
   </div>
@@ -140,12 +151,18 @@ function getWebviewContent(webview: vscode.Webview, extensionUri: vscode.Uri): s
       vscode.postMessage({ command: 'selectFolder' });
     });
 
+    document.getElementById('useVaultRootCheckbox').addEventListener('change', (event) => {
+      vscode.postMessage({ command: 'setUseVaultRoot', value: event.target.checked });
+    });
+
     window.addEventListener('message', (event) => {
       const message = event.data;
       if (message.command === 'updatePath') {
         const el = document.getElementById('folderPath');
         el.textContent = message.path;
         el.classList.add('has-path');
+      } else if (message.command === 'updateUseVaultRoot') {
+        document.getElementById('useVaultRootCheckbox').checked = message.value;
       }
     });
   </script>

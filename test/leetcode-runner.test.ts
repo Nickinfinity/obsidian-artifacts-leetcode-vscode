@@ -26,6 +26,7 @@ suite('leetcode-runner', () => {
     function fixture(overrides: Partial<ParsedLeetCode> = {}): ParsedLeetCode {
         return {
             title:        'Add',
+            leetcodeType: 'function',
             difficulty:   'easy',
             functionName: 'add',
             status:       'unsolved',
@@ -148,7 +149,7 @@ suite('leetcode-runner', () => {
         test('a suite timeout recovers printed cases and marks the rest timeout', async () => {
             // Case 0 returns; case 1 spins forever. The per-case budget is tiny so
             // the suite budget stays well under Mocha's own timeout.
-            const parsed = fixture({ test: { type: 'function', timeoutMs: 400 } });
+            const parsed = fixture({ test: { type: 'call', timeoutMs: 400 } });
             const spin = 'function add(a, b) { if (a === 10) { while (true) {} } return a + b; }';
             const results = await runSuite(spin, cases, parsed, javascriptFunctionEnv);
 

@@ -122,6 +122,22 @@ button:hover {
   margin-top: 28px;
 }
 
+.vault-root-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 0.9rem;
+  color: var(--vscode-foreground);
+}
+
+.vault-root-toggle input[type="checkbox"] {
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
 .directories-section {
   display: none;
   margin-top: 28px;
@@ -231,6 +247,58 @@ button:hover {
 .desc {
   color: var(--vscode-descriptionForeground);
   margin-bottom: 10px;
+}
+
+/* Description Markdown — the subset renderMarkdownLite emits, nothing else. */
+.desc p {
+  margin: 0 0 8px;
+}
+
+.desc p:last-child {
+  margin-bottom: 0;
+}
+
+.desc h4 {
+  margin: 12px 0 6px;
+  font-size: 13px;
+  color: var(--vscode-foreground);
+}
+
+.desc ul,
+.desc ol {
+  margin: 0 0 8px;
+  padding-left: 20px;
+}
+
+.desc li {
+  margin-bottom: 3px;
+}
+
+.desc blockquote {
+  margin: 8px 0;
+  padding: 6px 10px;
+  border-left: 3px solid var(--vscode-panel-border);
+  background: var(--vscode-textBlockQuote-background);
+}
+
+.desc blockquote p:last-child {
+  margin-bottom: 0;
+}
+
+.desc code {
+  font-family: var(--vscode-editor-font-family);
+  font-size: 12px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: var(--vscode-textCodeBlock-background);
+}
+
+.desc strong {
+  color: var(--vscode-foreground);
+}
+
+.desc a {
+  color: var(--vscode-textLink-foreground);
 }
 
 .tags {

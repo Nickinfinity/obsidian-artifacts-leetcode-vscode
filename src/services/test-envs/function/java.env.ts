@@ -37,6 +37,20 @@ export const javaFunctionEnv = makeFunctionEnv({
 	runnerFile: 'Runner.java',
 	compile: 'javac Solution.java Runner.java',
 	run: 'java -cp . Runner',
+
+	/**
+	 * Drop `-cp .` when this run has libraries, so `CLASSPATH` governs.
+	 *
+	 * A command-line `-cp` **overrides** the environment variable outright, so
+	 * the jars would silently not be on the runtime classpath — the compile
+	 * would succeed (javac reads `CLASSPATH`, having no `-cp` of its own) and
+	 * the run would then fail with `NoClassDefFoundError` on the library.
+	 *
+	 * Nothing is interpolated: the command becomes another fixed literal, and
+	 * `libEnvVars('maven', …)` already ends the classpath with `.` so `Runner`
+	 * is still found in the temp directory it was compiled into.
+	 */
+	withLibs: () => ({ run: 'java Runner' }),
 	candidateContent: javaSolutionFile,
 	buildRunner: runnerSource,
 
@@ -101,7 +115,7 @@ function runnerSource(ctx: EnvContext): string {
 	const { parsed, cases, langId } = ctx;
 	const fn = functionNameFor(parsed, langId);
 	const caseRows = cases.map(c => {
-		const args = parsed.params.map(p => jsonToLiteral(c.input[p.name], 'java'));
+		const args = parsed.params.map(p => jsonToLiteral(c.input[p.name], 'java', p.type));
 		return `\t\t__cases.add(() -> Solution.${fn}(${args.join(', ')}));`;
 	});
 

@@ -1,10 +1,12 @@
 import * as vscode from 'vscode';
-import { END_CHALLENGE_COMMAND, TICK_MS } from '../types/constants.js';
+import { END_CHALLENGE_COMMAND, isMultiFile, TICK_MS } from '../types/constants.js';
 import type { ChallengeState, ParsedLeetCode, PracticeConfig, TimerTick } from '../types/leetcode.types.js';
 import { formatRemaining, timerTick } from './leetcode-challenge.helpers.js';
 import { openExerciseFile } from './exercise-file.service.js';
+import { openProjectFiles } from './project-file.service.js';
 import { LeetCodeTimer } from './leetcode-timer.service.js';
 import { PracticeMode } from './practice-mode.service.js';
+import { createGroupRegistry, type BootedGroupRegistry } from './test-envs/http/server.lifecycle.js';
 
 /**
  * A live challenge run: one temp file, one set of editor restrictions, one
@@ -17,14 +19,35 @@ import { PracticeMode } from './practice-mode.service.js';
 export interface ChallengeSession {
 	/** Canonical `languageId` the run was started in */
 	langId: string;
-	/** URI of the temp exercise file opened in the main editor group */
+	/** URI of the temp exercise file opened in the main editor group. For a
+	 * `project` run this is the **primary editable file** of the tree, so every
+	 * existing consumer (live buffer, close, delete) keeps working unchanged. */
 	fileUri: vscode.Uri;
+	/**
+	 * Run directory of a `project` attempt's file tree, or `null` for the
+	 * single-file types.
+	 *
+	 * Its presence is what tells the run handlers to grade a **directory** —
+	 * bundling and executing real files — rather than one candidate buffer.
+	 */
+	projectDir: vscode.Uri | null;
 	/** Stopwatch used to stamp `duration` into the solution metadata on Submit */
 	timer: LeetCodeTimer;
 	/** Snapshot-owning practice-mode applier */
 	practice: PracticeMode;
 	/** Status-bar clock entry — set by every run, bounded or unlimited (P7) */
 	statusBar: vscode.StatusBarItem | null;
+	/**
+	 * Process groups a booted `http`/`stack` server left running under this
+	 * session (S12). `bootServer` (`test-envs/http/server.lifecycle.ts`)
+	 * registers a group the moment it spawns one — before readiness is even
+	 * known — so `endChallenge()` can tear down whatever is still registered
+	 * regardless of why the booting code's own `finally` never got to run
+	 * (the extension host dying, VS Code exiting, a panel disposed mid-boot).
+	 * That is what lets `deactivate()` cover an orphaned server for free,
+	 * exactly as it already covers the practice-mode snapshot.
+	 */
+	bootedGroups: BootedGroupRegistry;
 	/** Handle of the timer's tick interval — set by every run (P7) */
 	ticker: ReturnType<typeof setInterval> | null;
 	/** Epoch-ms at which the time limit expires; `null` when unlimited */
@@ -102,7 +125,15 @@ export async function startChallenge(
 ): Promise<ChallengeSession> {
 	await endChallenge();
 
-	const fileUri = await openExerciseFile(context, parsed, langId);
+	// A multi-file exercise is a tree, not a buffer: materialise it and open its
+	// editable files, keeping `fileUri` pointed at the primary tab so nothing
+	// downstream needs to know which shape this run has. `service` opens the
+	// same way it parses — it is a tree with no environment, so *Solve It* gives
+	// the solver their files and grading refuses in the run handlers.
+	const project = isMultiFile(parsed.leetcodeType)
+		? await openProjectFiles(context, parsed)
+		: null;
+	const fileUri = project ? project.primary : await openExerciseFile(context, parsed, langId);
 
 	const practice = new PracticeMode();
 	await practice.apply(config.options);
@@ -124,8 +155,9 @@ export async function startChallenge(
 	};
 
 	const session: ChallengeSession = {
-		langId, fileUri, timer, practice, finishing: false,
+		langId, fileUri, projectDir: project?.dir ?? null, timer, practice, finishing: false,
 		statusBar: null, ticker: null, deadline: null, state,
+		bootedGroups: createGroupRegistry(),
 	};
 
 	startTimer(session, parsed.title, config.timeLimitMinutes, callbacks);
@@ -135,13 +167,18 @@ export async function startChallenge(
 }
 
 /**
- * Tear down the active challenge: restore editor settings, stop the countdown.
+ * Tear down the active challenge: restore editor settings, stop the
+ * countdown, and kill every process group this session still has registered
+ * (S12) — a booted `http`/`stack` server included, whether or not its own
+ * boot code ever reached its own `finally`.
  *
  * Safe to call when nothing is running — used both by the explicit
- * `obsidian-leetcode.endChallenge` command and by the preview panel's dispose
- * handler.
+ * `obsidian-leetcode.endChallenge` command, by the preview panel's dispose
+ * handler, and by `deactivate()`, which is what gives an orphaned server the
+ * same free cleanup the practice-mode snapshot already gets.
  *
- * @returns Resolves once every setting has been written back.
+ * @returns Resolves once every setting has been written back and every
+ *   registered process group has been torn down.
  *
  * @example
  * await endChallenge();
@@ -154,6 +191,7 @@ export async function endChallenge(): Promise<void> {
 	if (session.ticker)    { clearInterval(session.ticker); }
 	if (session.statusBar) { session.statusBar.dispose(); }
 	if (session.timer.isRunning()) { session.timer.reset(); }
+	await session.bootedGroups.teardownAll();
 	await session.practice.restore();
 }
 

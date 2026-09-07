@@ -1,7 +1,19 @@
 import * as vscode from 'vscode';
-import { activeChallenge, claimSubmission, endChallenge, releaseSubmission } from '../services/leetcode-challenge.service.js';
+import * as fs from 'node:fs/promises';
+import { activeChallenge, type ChallengeSession, claimSubmission, endChallenge, releaseSubmission } from '../services/leetcode-challenge.service.js';
 import { buildExecutable, escapeRe } from '../services/leetcode-candidate.helpers.js';
+import { projectGradeRefusal } from './leetcode-run.helpers.js';
+import {
+	finishChallenge,
+	postChallengeState,
+	postResults,
+	postResultsHtml,
+	postViewState,
+	readArtifactContent,
+} from './leetcode-run.finish.js';
 import { closeExerciseEditor, deleteExerciseFile } from '../services/exercise-file.service.js';
+import { discardProjectAttempt, saveProjectDocuments } from '../services/project-file.service.js';
+import { gradeProjectDir, resolveProgramLibDir, runProjectChecks } from '../services/test-envs/project/project.runner.js';
 import { detectRuntime, runSuite } from '../services/leetcode-runner.service.js';
 import {
 	publicCount,
@@ -14,16 +26,20 @@ import { resolveLangId } from '../services/language-map.service.js';
 import { functionNameFor } from '../services/leetcode-parser.service.js';
 import { estimateBigO } from '../services/leetcode-bigo.service.js';
 import { appendAttempt } from '../services/attempts-writer.service.js';
-import { testEnvFor } from '../services/test-envs/env.registry.js';
+import { isBatchEnv, testEnvFor } from '../services/test-envs/env.registry.js';
+import { entryFileFor } from '../services/test-envs/program/make-program-env.js';
+import { isProgramSuite, programLanguageOf, runProgramSuite } from '../services/test-envs/program/program.runner.js';
+import { resolveContained } from '../services/test-envs/project/files.writer.js';
 import type { TestEnv } from '../services/test-envs/env.types.js';
 import {
 	renderBigOEstimateHtml,
 	renderLeetCodePreviewHtml,
+	renderProjectResultsHtml,
 	renderTestResultsHtml,
 } from '../ui/panels/leetcodePreview.panel.js';
-import { FENCE } from '../types/constants.js';
+import { FENCE, isMultiFile } from '../types/constants.js';
 import { isLangId, LANGUAGES, type LanguageConfig } from '../types/languages.js';
-import type { AttemptEntry, BigOEstimate, ChallengePhase, LeetCodeStatus, TestResult } from '../types/leetcode.types.js';
+import type { AttemptEntry, BigOEstimate, ChallengePhase, LeetCodeStatus, ProjectCheckOutcome, TestResult } from '../types/leetcode.types.js';
 import type { PanelCtx } from '../ui/views/leetcodeView.provider.js';
 
 /**
@@ -38,22 +54,44 @@ import type { PanelCtx } from '../ui/views/leetcodeView.provider.js';
  * this guard exists because webview state drifts when the panel is disposed or
  * the challenge is ended from the command palette.
  *
- * @param ctx      - Panel session state.
- * @param language - Language chosen in the panel.
+ * The language is taken from the **live session**, not the webview: the panel
+ * shows no language chooser mid-run, so the language is whatever Solve It
+ * started, and grading must bind to the buffer that is actually open.
+ *
+ * @param ctx - Panel session state.
  *
  * @example
- * await handleRunTests(ctx, 'javascript');
+ * await handleRunTests(ctx);
  */
-export async function handleRunTests(ctx: PanelCtx, language: string | undefined): Promise<void> {
-	const setup = resolveRunSetup(ctx, language);
-	if (!setup) { return; }
-	const { langId, lang, env } = setup;
-
+export async function handleRunTests(ctx: PanelCtx): Promise<void> {
 	const session = activeChallenge();
-	if (session?.langId !== langId) {
+	if (!session) {
 		void vscode.window.showWarningMessage('Start the challenge with "Solve It" first.');
 		return;
 	}
+
+	// Shape-driven, not `test.type === 'project'`: the wave-1.E migration
+	// deletes the `type:` line from every check-graded artifact's `test:`
+	// block (D14), so a migrated artifact's `test.type` collapses to the
+	// default and that string comparison goes false on the very files the
+	// migration just wrote. `isMultiFile` reads the leetcode-type axis
+	// instead, which the migration never touches.
+	//
+	// `isMultiFile` alone would dispatch *every* multi-file artifact into
+	// directory grading unconditionally — a `service` run also carries a
+	// `projectDir`, and grading one whose `http` checks were dropped at parse
+	// time as unimplemented would report its surviving `build` check green
+	// and call an ungraded exercise solved. `projectRunAllowed` (backed by
+	// `projectGradeRefusal`) is consulted before anything is written or run,
+	// so that artifact is refused by name instead (S3).
+	if (session.projectDir && isMultiFile(ctx.parsed.leetcodeType)) {
+		await runTestsForTree(ctx, session);
+		return;
+	}
+
+	const setup = resolveRunSetup(ctx, session.langId);
+	if (!setup) { return; }
+	const { langId, lang, env } = setup;
 
 	const code = await liveBuffer(session.fileUri);
 	if (!await runtimeReady(lang, env)) { return; }
@@ -67,6 +105,145 @@ export async function handleRunTests(ctx: PanelCtx, language: string | undefined
 		void vscode.window.showInformationMessage('All public tests pass — Submit when ready.');
 	}
 }
+
+/**
+ * Run Tests for a **multi-file** artifact — the public half, writing nothing.
+ *
+ * A tree is graded one of two ways and the artifact decides which: by its
+ * declared `checks:`, or — with no checks and a `program:` block — as a single
+ * suite of cases run against the built program (P5). Before this split a
+ * `package` + `program` artifact was graded against an **empty** check list, so
+ * it produced no outcome at all and could never be solved.
+ *
+ * Extracted from `handleRunTests` to keep that function under the cognitive
+ * complexity limit — the two branches are one decision, not a chain.
+ *
+ * @param ctx     - Panel session state.
+ * @param session - The live challenge, whose `projectDir` holds the tree.
+ *
+ * @example
+ * await runTestsForTree(ctx, activeChallenge()!);
+ */
+async function runTestsForTree(ctx: PanelCtx, session: ChallengeSession): Promise<void> {
+	if (!session.projectDir) { return; }
+	if (!await projectRunAllowed(ctx)) { return; }
+
+	const suite = await gradeLiveProgramSuite(ctx, session.projectDir, { publicOnly: true });
+	if (suite.kind === 'aborted') { return; }
+	if (suite.kind === 'graded') {
+		postResults(ctx, suite.results);
+		announceIfAllPass(suite.results.length > 0 && suite.results.every(r => r.passed), 'tests');
+		return;
+	}
+
+	const outcomes = await gradeLiveProject(ctx, session.projectDir, { publicOnly: true });
+	postResultsHtml(ctx, renderProjectResultsHtml(outcomes));
+	announceIfAllPass(outcomes.length > 0 && outcomes.every(o => o.passed), 'checks');
+}
+
+/** The one "everything green, Submit when ready" toast, so the two tree paths cannot word it differently. */
+function announceIfAllPass(allPassed: boolean, noun: 'tests' | 'checks'): void {
+	if (allPassed) {
+		void vscode.window.showInformationMessage(`All public ${noun} pass — Submit when ready.`);
+	}
+}
+
+/**
+ * Grade a live `program`-suite tree, or report that this artifact is not one.
+ *
+ * "Is this a program suite?" is answered by the artifact, not by a label: it
+ * declares a `program:` block and **no** `checks:`. The two are mutually
+ * exclusive by the D14 mirror rule, so there is no artifact both branches
+ * could claim.
+ *
+ * Saves first, exactly as `gradeLiveProject` does and for the same reason: the
+ * program is built from **files on disk**, so an unsaved buffer would grade the
+ * previous version of what the solver is typing.
+ *
+ * @param ctx     - Panel session state.
+ * @param dir     - The run's project directory.
+ * @param options - `publicOnly` for the mid-challenge Run Tests loop.
+ * @returns `notProgram` when the artifact is check-graded, `aborted` when the
+ *   run could not start (already reported), else the graded results.
+ *
+ * @example
+ * await gradeLiveProgramSuite(ctx, session.projectDir, { publicOnly: true });
+ */
+async function gradeLiveProgramSuite(
+	ctx: PanelCtx, dir: vscode.Uri, options: { publicOnly?: boolean },
+): Promise<ProgramSuiteRun> {
+	const program = ctx.parsed.program;
+	if (!isProgramSuite(ctx.parsed) || !program) { return { kind: 'notProgram' }; }
+
+	const langId = programLanguageOf(ctx.parsed);
+	if (!langId) {
+		const declared = ctx.parsed.files?.[0]?.language ?? '(none)';
+		void vscode.window.showErrorMessage(`Unsupported language for a program exercise: ${declared}.`);
+		return { kind: 'aborted' };
+	}
+
+	const env = testEnvFor('program', langId, ctx.parsed.leetcodeType);
+	if (!env || isBatchEnv(env)) {
+		void vscode.window.showErrorMessage(`No program test environment for ${langId}.`);
+		return { kind: 'aborted' };
+	}
+	if (!await runtimeReady(LANGUAGES[langId], null)) { return { kind: 'aborted' }; }
+
+	// C24: the same resolution `gradeProjectDir` runs for a check-graded tree,
+	// reused rather than re-implemented — all the logic lives in
+	// `resolveProgramLibDir` (project.runner.ts), so this handler stays a thin
+	// wire onto it.
+	const libs = await resolveProgramLibDir(ctx.parsed, langId);
+	if (!libs.ok) {
+		void vscode.window.showErrorMessage(`Could not install libraries: ${libs.reason}`);
+		return { kind: 'aborted' };
+	}
+
+	await saveProjectDocuments(dir);
+	const cases = options.publicOnly ? publicSuite(ctx.parsed) : submitSuite(ctx.parsed);
+
+	try {
+		// `resolveContained` **before** the read, not after. `emit` will contain
+		// this same path again on its way into an argv element, but reading it
+		// first with a raw join would let artifact text choose a host file to
+		// open — the parser's shape guard is the belt, and this is the braces
+		// it is explicitly documented as needing.
+		const entry = resolveContained(dir.fsPath, entryFileFor(program, langId));
+		const code = await fs.readFile(entry, 'utf-8');
+
+		const results = await runProgramSuite({
+			code, tests: cases, parsed: ctx.parsed, env, program, runDir: dir.fsPath,
+			...(libs.libDir === undefined ? {} : { libDir: libs.libDir }),
+		});
+		return {
+			kind: 'graded',
+			results: tagSuiteKinds(results, options.publicOnly ? cases.length : publicCount(ctx.parsed)),
+		};
+	} catch (e) {
+		// A refused path or an unreadable entry is the run failing to start, not
+		// a wrong answer — report it and let the caller leave the challenge
+		// exactly as it was.
+		void vscode.window.showErrorMessage(
+			`Could not read the program entry: ${e instanceof Error ? e.message : String(e)}`,
+		);
+		return { kind: 'aborted' };
+	}
+}
+
+/**
+ * What a live program-suite grading attempt produced.
+ *
+ * Three outcomes, deliberately not two: an empty result array used to mean
+ * both "graded nothing" and "never started", so a **missing runtime** was
+ * persisted as a failed attempt — the artifact downgraded to `attempted` and
+ * an empty attempt recorded because Java was not installed. The buffer path
+ * has always done the opposite (release the claim, write nothing), and this
+ * type is what lets the tree path agree with it.
+ */
+type ProgramSuiteRun =
+	| { kind: 'notProgram' }
+	| { kind: 'aborted' }
+	| { kind: 'graded'; results: TestResult[] };
 
 /**
  * Handle a `submit` message — grade public **and** final cases; one shot.
@@ -96,15 +273,26 @@ export async function handleRunTests(ctx: PanelCtx, language: string | undefined
  * await handleSubmit(ctx, 'python');
  */
 export async function handleSubmit(ctx: PanelCtx, language: string | undefined): Promise<void> {
-	const setup = resolveRunSetup(ctx, language);
-	if (!setup) { return; }
-	const { langId, lang, env } = setup;
-
 	// Claimed synchronously, before any `await` below — see the re-entrancy
 	// note above. `liveSession` (not a fresh `activeChallenge()` call) is what
 	// `wasLive` and `finishChallenge` both key off for the rest of this run.
 	const liveSession = activeChallenge();
-	const wasLive = liveSession?.langId === langId;
+
+	// Shape-driven, not `test.type === 'project'` — see the matching comment
+	// on the Run Tests dispatch above; the same D14/S3 reasoning applies here.
+	if (isMultiFile(ctx.parsed.leetcodeType)) {
+		await submitProject(ctx, liveSession);
+		return;
+	}
+	// A live run's language is authoritative — the panel offers no chooser
+	// mid-run, and there is only ever one session, so it is this exercise's.
+	// `language` (the webview's marker/choice) is the fallback for a dry-run
+	// Submit with no live challenge.
+	const setup = resolveRunSetup(ctx, liveSession?.langId ?? language);
+	if (!setup) { return; }
+	const { langId, lang, env } = setup;
+
+	const wasLive = liveSession !== null;
 	if (wasLive && liveSession && !claimSubmission(liveSession)) { return; }
 
 	const code = await candidateSource(ctx, langId);
@@ -137,6 +325,151 @@ export async function handleSubmit(ctx: PanelCtx, language: string | undefined):
 	else                { postResultsHtml(ctx, html); }
 }
 
+// ── project: grade a directory, not a buffer ─────────────────────────────────
+
+/**
+ * Grade the solver's live project tree.
+ *
+ * Saves first: a project's checks bundle and execute **files on disk**, unlike
+ * the function types, which read the live buffer straight out of the editor. A
+ * missing save would silently grade the previous version of whatever is being
+ * typed.
+ *
+ * The live session's booted-group registry rides along (S12): an `http` check
+ * boots a real server, and its own `finally` only covers a run that *ends*.
+ * Registering the group on the session is what makes `endChallenge()` — and
+ * therefore `deactivate()` — tear it down when VS Code exits or the panel is
+ * disposed mid-check, exactly as the practice-mode snapshot is restored.
+ *
+ * @param ctx     - Panel session state.
+ * @param dir     - The run's project directory.
+ * @param options - `publicOnly` for the mid-challenge Run Tests loop.
+ * @returns One outcome per declared check.
+ *
+ * @example
+ * await gradeLiveProject(ctx, session.projectDir, { publicOnly: true });
+ */
+async function gradeLiveProject(
+	ctx: PanelCtx, dir: vscode.Uri, options: { publicOnly?: boolean },
+): Promise<ProjectCheckOutcome[]> {
+	await saveProjectDocuments(dir);
+	return gradeProjectDir(ctx.parsed, dir.fsPath, {
+		...options, registry: activeChallenge()?.bootedGroups,
+	});
+}
+
+/**
+ * Read the artifact fresh and ask whether this directory-graded run may
+ * proceed (`projectGradeRefusal`), surfacing the reason as an error toast
+ * when it may not.
+ *
+ * Re-reads from disk rather than trusting `ctx.parsed`: the panel parses the
+ * `.md` once at file-open time and never refreshes it, so `ctx.parsed.checks`
+ * alone cannot answer whether the artifact declares a check kind nothing
+ * implements — the whole point `projectGradeRefusal`'s R2 half exists for.
+ *
+ * @param ctx - Panel session state.
+ * @returns True when the run may proceed; false after showing the refusal.
+ *
+ * @example
+ * if (!await projectRunAllowed(ctx)) { return; }
+ */
+async function projectRunAllowed(ctx: PanelCtx): Promise<boolean> {
+	const raw = await readArtifactContent(ctx.fileUri);
+	const refusal = projectGradeRefusal(raw, ctx.parsed);
+	if (refusal) {
+		void vscode.window.showErrorMessage(refusal);
+		return false;
+	}
+	return true;
+}
+
+/**
+ * Submit a `project` exercise — every check, public **and** hidden.
+ *
+ * Mirrors the function-type Submit's outcomes (solved / attempted / dry run
+ * writes nothing) but grades a directory. A dry-run Submit with no live
+ * challenge grades the **reference** tree, which is the only tree that exists
+ * when nobody has pressed Solve It — the artifact's own `# Solutions` overlays,
+ * exactly what `verify-exercise.mjs` grades.
+ *
+ * No Big-O line: the heuristic reads one candidate function, and a project is a
+ * component tree. Reporting a complexity for it would be noise dressed as
+ * analysis.
+ *
+ * @param ctx         - Panel session state.
+ * @param liveSession - The in-flight session, or `null` for a dry run.
+ *
+ * @example
+ * await submitProject(ctx, activeChallenge());
+ */
+async function submitProject(ctx: PanelCtx, liveSession: ChallengeSession | null): Promise<void> {
+	if (!await projectRunAllowed(ctx)) { return; }
+
+	const wasLive = liveSession !== null && liveSession.projectDir !== null;
+	if (wasLive && liveSession && !claimSubmission(liveSession)) { return; }
+
+	// A `program`-suite tree submits as a **suite**, public + final, exactly
+	// like a buffer exercise — it has cases, not checks. Run Tests already
+	// takes this branch; Submit has to as well, or an artifact could pass every
+	// public case and still be unsolvable.
+	if (liveSession?.projectDir) {
+		const suite = await gradeLiveProgramSuite(ctx, liveSession.projectDir, {});
+		if (suite.kind === 'aborted') {
+			// Never reaches `finishChallenge`, so release the claim or a later
+			// retry — after installing the runtime — is blocked forever by a
+			// session stuck mid-claim. Exactly what the buffer path does.
+			if (wasLive && liveSession) { releaseSubmission(liveSession); }
+			return;
+		}
+		if (suite.kind === 'graded') {
+			await finishProgramSubmit(ctx, suite.results, wasLive);
+			return;
+		}
+	}
+
+	const outcomes = liveSession?.projectDir
+		? await gradeLiveProject(ctx, liveSession.projectDir, {})
+		: await runProjectChecks(ctx.parsed, { withSolutions: true });
+
+	const html = renderProjectResultsHtml(outcomes);
+	const allPassed = outcomes.length > 0 && outcomes.every(o => o.passed);
+	const args = { ctx, langId: ctx.parsed.files?.[0]?.language ?? 'javascript', html, wasLive, code: '', bigO: null };
+
+	if (allPassed)    { await finishChallenge({ ...args, status: 'solved' }); }
+	else if (wasLive) { await finishChallenge({ ...args, status: 'attempted' }); }
+	else              { postResultsHtml(ctx, html); }
+}
+
+/**
+ * Finish a `program`-suite Submit: same three outcomes as every other Submit.
+ *
+ * No Big-O, for the reason `submitProject` gives — the heuristic reads one
+ * candidate function, and a program is an entry point plus whatever tree it
+ * ships.
+ *
+ * @param ctx     - Panel session state.
+ * @param results - Public + final results for the whole suite.
+ * @param wasLive - Whether a live challenge backed this Submit.
+ *
+ * @example
+ * await finishProgramSubmit(ctx, results, true);
+ */
+async function finishProgramSubmit(ctx: PanelCtx, results: TestResult[], wasLive: boolean): Promise<void> {
+	const html = renderTestResultsHtml(results);
+	const allPassed = results.length > 0 && results.every(r => r.passed);
+	// The **canonical** language, not the raw declared string: `finishChallenge`
+	// writes the `## <Language>` attempt heading and matches a fence with it, so
+	// an artifact declaring `js` would otherwise file its attempt under `js` and
+	// miss its own solution fence.
+	const langId = programLanguageOf(ctx.parsed) ?? 'javascript';
+	const args = { ctx, langId, html, wasLive, code: '', bigO: null };
+
+	if (allPassed)    { await finishChallenge({ ...args, status: 'solved' }); }
+	else if (wasLive) { await finishChallenge({ ...args, status: 'attempted' }); }
+	else              { postResultsHtml(ctx, html); }
+}
+
 /**
  * Discard the run tied to `tempFileUri`: end the challenge, close its editor
  * tab, and delete its temp file.
@@ -152,7 +485,15 @@ export async function handleSubmit(ctx: PanelCtx, language: string | undefined):
  * await discardChallenge(ctx.attemptUri);
  */
 export async function discardChallenge(tempFileUri: vscode.Uri | null): Promise<void> {
+	// Read before ending: `endChallenge` clears the session, and a project run's
+	// directory is the only handle on the rest of its tree.
+	const projectDir = activeChallenge()?.projectDir ?? null;
 	await endChallenge();
+
+	if (projectDir) {
+		await discardProjectAttempt(projectDir);
+		return;
+	}
 	if (!tempFileUri) { return; }
 	await closeExerciseEditor(tempFileUri);
 	await deleteExerciseFile(tempFileUri);
@@ -187,10 +528,23 @@ function resolveRunSetup(ctx: PanelCtx, language: string | undefined): RunSetup 
 	}
 	const lang = LANGUAGES[langId];
 
-	const env = testEnvFor(ctx.parsed.test.type, langId);
+	const env = testEnvFor(ctx.parsed.test.type, langId, ctx.parsed.leetcodeType);
 	if (!env) {
 		void vscode.window.showErrorMessage(
 			`No ${ctx.parsed.test.type} test environment for ${langId}.`,
+		);
+		return null;
+	}
+	// This is the **buffer** door: `runSuite` runs one process for the whole
+	// suite. A per-case env (`program`) is graded through `runProgramSuite`
+	// against a run directory instead, and reaching here with one would mean a
+	// buffer-shaped artifact resolved a tree-shaped env — which the registry
+	// already prevents (`program` declares `leetcodeTypes: ['package']`, and a
+	// `package` never takes this path). Narrowed rather than cast, so a future
+	// registration cannot walk into `runSuite` unnoticed.
+	if (!isBatchEnv(env)) {
+		void vscode.window.showErrorMessage(
+			`The ${ctx.parsed.test.type} test type grades a project directory, not a single buffer.`,
 		);
 		return null;
 	}
@@ -208,12 +562,15 @@ function resolveRunSetup(ctx: PanelCtx, language: string | undefined): RunSetup 
  * @example
  * await runtimeReady(LANGUAGES.python, pythonFunctionEnv);
  */
-async function runtimeReady(lang: LanguageConfig, env: TestEnv): Promise<boolean> {
+async function runtimeReady(lang: LanguageConfig, env: TestEnv | null): Promise<boolean> {
 	if (!await detectRuntime(lang.detectCmd)) {
 		void vscode.window.showErrorMessage(`Runtime not found. Install ${lang.displayName} to run tests.`);
 		return false;
 	}
-	if (env.detect && !await env.detect()) {
+	// `null` for a `program` env: version gating is a `TestEnv` affordance
+	// (`requires`/`detect`) that the per-case envs do not have, so there is
+	// nothing beyond the toolchain probe above to ask.
+	if (env?.detect && !await env.detect()) {
 		void vscode.window.showErrorMessage(
 			`Missing test dependency for ${env.language}: ${(env.requires ?? []).join(', ')}.`,
 		);
@@ -248,213 +605,4 @@ async function candidateSource(ctx: PanelCtx, langId: string): Promise<string | 
 
 	const stored = ctx.parsed.solutions.find(s => resolveLangId(s.language) === langId);
 	return stored ? stored.code : null;
-}
-
-// ── Finishing a challenge ─────────────────────────────────────────────────────
-
-/** Everything `finishChallenge` needs to persist a terminal Submit outcome. */
-interface FinishArgs {
-	/** Panel session state. */
-	ctx: PanelCtx;
-	/** Canonical language id — locates the solution fence and the `## <Language>` attempt heading. */
-	langId: string;
-	/** Rendered results table (plus Big-O line) to seed into the re-rendered panel. */
-	html: string;
-	/** Terminal status to write into the artifact's frontmatter. */
-	status: LeetCodeStatus;
-	/** Whether this Submit graded a live challenge buffer — gates the P6 attempt-history write. */
-	wasLive: boolean;
-	/** The submitted buffer, verbatim — recorded as the attempt's code when `wasLive`. */
-	code: string;
-	/** Big-O estimate for this run — recorded alongside the attempt when `wasLive`. */
-	bigO: BigOEstimate;
-}
-
-/**
- * End the run, persist the outcome, and re-render the panel with its results.
- *
- * The results HTML is seeded into the fresh document rather than posted after
- * it: reassigning `webview.html` restarts the webview, and a `postMessage` into
- * one that is still booting can be dropped.
- *
- * @param args - See `FinishArgs`.
- *
- * @example
- * await finishChallenge({ ctx, langId: 'python', html, status: 'solved', wasLive: true, code, bigO });
- */
-async function finishChallenge(args: FinishArgs): Promise<void> {
-	const { ctx, langId, html, status, wasLive, code, bigO } = args;
-	const session = activeChallenge();
-	const duration = session?.timer.isRunning() ? session.timer.stop() : null;
-
-	await endChallenge();
-	postChallengeState(ctx, false);
-
-	await persistOutcome({ fileUri: ctx.fileUri, langId, status, duration, wasLive, code, bigO });
-
-	ctx.parsed.status = status;
-	// `status` here is always 'solved' or 'attempted' — the two terminal
-	// outcomes finishChallenge is ever called with — so it maps 1:1 onto the
-	// matching ChallengePhase.
-	const phase: ChallengePhase = status === 'solved' ? 'solved' : 'attempted';
-	postViewState(ctx, phase);
-	ctx.panel.webview.html = renderLeetCodePreviewHtml(
-		ctx.parsed, ctx.cssUris, ctx.panel.webview.cspSource, html, phase,
-	);
-}
-
-/** Everything `persistOutcome` needs for its single read-patch-write. */
-interface PersistOutcomeArgs {
-	/** Path to the `.md` artifact. */
-	fileUri: vscode.Uri;
-	/** Canonical language id whose solution/attempt heading is targeted. */
-	langId: string;
-	/** Terminal status to write. */
-	status: LeetCodeStatus;
-	/** `XmYs` timer result, or `null` when no challenge was timed. */
-	duration: string | null;
-	/** Whether an attempt-history entry should be recorded (never for a dry-run Submit). */
-	wasLive: boolean;
-	/** The submitted buffer, verbatim — recorded as the attempt's code when `wasLive`. */
-	code: string;
-	/** Big-O estimate for this run — recorded alongside the attempt when `wasLive`. */
-	bigO: BigOEstimate;
-}
-
-/**
- * Persist the terminal outcome of a Submit in **one** read-patch-write.
- *
- * `status` (+ the `<!-- meta: … -->` duration comment on a solve) and the P6
- * `# Attempts` entry both live in the same `.md` file — reading it once,
- * applying both patches to the in-memory string, and writing once avoids the
- * double-`writeFile` race the two concerns would otherwise create if each
- * patch read-modified-wrote independently.
- *
- * A dry-run Submit never reaches here (the caller only invokes
- * `finishChallenge` when `wasLive`, or when all cases passed with no live
- * challenge it skips `finishChallenge` entirely) — `wasLive` gates the attempt
- * write regardless, so a future caller cannot accidentally record one.
- *
- * @param args - See `PersistOutcomeArgs`.
- *
- * @example
- * await persistOutcome({ fileUri, langId: 'python', status: 'solved', duration: '3m12s', wasLive: true, code, bigO });
- */
-async function persistOutcome(args: PersistOutcomeArgs): Promise<void> {
-	const { fileUri, langId, status, duration, wasLive, code, bigO } = args;
-	const raw = new TextDecoder().decode(await vscode.workspace.fs.readFile(fileUri));
-
-	let next = patchFrontmatterField(raw, 'status', status);
-	if (status === 'solved') { next = insertSolvedMeta(next, langId, duration); }
-	if (wasLive) { next = appendAttempt(next, langId, buildAttemptEntry(duration, status, code, bigO)); }
-
-	await vscode.workspace.fs.writeFile(fileUri, new TextEncoder().encode(next));
-}
-
-/**
- * Insert the `<!-- meta: { "solved_at": …, "duration": … } -->` comment
- * immediately before the first fenced code block for `language`.
- *
- * Pure string patch — no I/O — so `persistOutcome` can apply it against the
- * same in-memory `raw` the status and attempt patches also touch. An artifact
- * with no such fence, or no timed duration, is returned unchanged.
- *
- * @param raw      - Full `.md` content, already carrying the new `status:` field.
- * @param language - Language id whose solution receives the meta comment.
- * @param duration - `XmYs` timer result, or `null` when no challenge was timed.
- * @returns The patched content.
- *
- * @example
- * insertSolvedMeta(raw, 'python', '3m12s');
- */
-function insertSolvedMeta(raw: string, language: string, duration: string | null): string {
-	if (!duration) { return raw; }
-	const meta = `<!-- meta: { "solved_at": "${new Date().toISOString()}", "duration": "${duration}" } -->`;
-	const fenceRe = new RegExp(String.raw`(^|\n)(${FENCE}${escapeRe(language)}\r?\n)`);
-	const m = fenceRe.exec(raw);
-	if (!m) { return raw; }
-	const insertAt = m.index + m[1].length;
-	return `${raw.slice(0, insertAt)}${meta}\n${raw.slice(insertAt)}`;
-}
-
-/**
- * Build the `AttemptEntry` payload for `appendAttempt` from a finished
- * Submit's results.
- *
- * @param duration - `XmYs` timer result; falls back to `'0m0s'` in the
- *   unexpected case where `finishChallenge` was reached with no running timer
- *   — `wasLive` implies a challenge session started the timer, so this is a
- *   defensive default, not the common path.
- * @param status   - Terminal status this Submit produced.
- * @param code     - The submitted buffer, verbatim.
- * @param bigO     - Big-O estimate computed from the same buffer.
- * @returns The entry to append.
- *
- * @example
- * buildAttemptEntry('8m22s', 'solved', code, bigO);
- */
-function buildAttemptEntry(
-	duration: string | null, status: LeetCodeStatus, code: string, bigO: BigOEstimate,
-): AttemptEntry {
-	return {
-		at:         new Date().toISOString(),
-		duration:   duration ?? '0m0s',
-		passed:     status === 'solved',
-		bigO:       bigO.notation,
-		confidence: bigO.confidence,
-		code,
-	};
-}
-
-// ── Webview messaging ─────────────────────────────────────────────────────────
-
-/** Post a rendered results table into the panel's results sink. */
-export function postResults(ctx: PanelCtx, results: TestResult[]): void {
-	void ctx.panel.webview.postMessage({
-		command: 'testResults',
-		html:    renderTestResultsHtml(results),
-	});
-}
-
-/**
- * Post an already-rendered results sink fragment verbatim.
- *
- * Used by a dry-run Submit (no live challenge — grading a stored solution),
- * whose fragment already carries the Big-O line alongside the results table;
- * re-deriving it from `results` via `postResults` would drop that line.
- *
- * @param ctx  - Panel session state.
- * @param html - Pre-rendered results sink fragment.
- *
- * @example
- * postResultsHtml(ctx, renderTestResultsHtml(results) + renderBigOEstimateHtml(bigO));
- */
-function postResultsHtml(ctx: PanelCtx, html: string): void {
-	void ctx.panel.webview.postMessage({ command: 'testResults', html });
-}
-
-/** Tell the webview whether a challenge is live, so it can gate the Run Tests button. */
-export function postChallengeState(ctx: PanelCtx, active: boolean): void {
-	void ctx.panel.webview.postMessage({ command: 'challengeState', active });
-}
-
-/**
- * Tell the webview which `ChallengeState['phase']` it is now in.
- *
- * Coexists with `challengeState` rather than replacing it — `challengeState`
- * still drives the `editorOpen`-gated Run Tests toggle wired in the sidebar
- * view provider. `viewState` is the newer, more general lifecycle signal; a
- * future pass can retire `challengeState` once the webview script drives its
- * DOM purely off `viewState`, but that touches the in-page toggle logic and is
- * out of scope here — today's transitions still go through a full
- * `webview.html` re-render, and this message is a forward-compatible hook.
- *
- * @param ctx   - Panel session state.
- * @param phase - The phase the panel has just transitioned to.
- *
- * @example
- * postViewState(ctx, 'solved');
- */
-export function postViewState(ctx: PanelCtx, phase: ChallengePhase): void {
-	void ctx.panel.webview.postMessage({ command: 'viewState', phase });
 }

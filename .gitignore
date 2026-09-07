@@ -6,3 +6,10 @@ node_modules
 /.claude/*
 /.claude-flow/*
 .mcp.json
+
+# Branch-local plan files (CREATING_A_PLAN.md §1) — never in a PR diff
+docs/
+
+# Artifacts live in the Obsidian vault, never here (CLAUDE.md, "Artifacts live in the vault")
+examples/
+.vscode/

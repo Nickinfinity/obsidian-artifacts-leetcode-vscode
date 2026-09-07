@@ -7,7 +7,9 @@
  * sensible `languageId` and file extension). A language is a `LangId` only when
  * a solver can Solve It → Run Tests → Submit in it end to end.
  */
-export type LangId = 'java' | 'python' | 'javascript';
+import type { LibEcosystem } from '../services/libs/lib-ecosystem.js';
+
+export type LangId = 'java' | 'python' | 'javascript' | 'rust' | 'typescript';
 
 /**
  * One executable language's configuration — the single source of truth the
@@ -28,6 +30,15 @@ export interface LanguageConfig {
 	readonly detectCmd: string;
 	/** Fence shorthands that resolve to `id` — every one lives in `LANG_ALIAS`. */
 	readonly aliases: readonly string[];
+	/**
+	 * Registry that serves this language's `libs:`.
+	 *
+	 * Lives here rather than in a parallel `LANG_ECOSYSTEM` map, because a
+	 * second table naming the same languages is drift waiting to happen —
+	 * this registry is already the one authority for runnable-language
+	 * metadata. Read it through `ecosystemFor`, never by indexing a raw key.
+	 */
+	readonly ecosystem: LibEcosystem;
 }
 
 /**
@@ -45,6 +56,7 @@ export const LANGUAGES: Record<LangId, LanguageConfig> = {
 		commentPrefix: '//',
 		detectCmd: 'java --version',
 		aliases: [],
+		ecosystem: 'maven',
 	},
 	python: {
 		id: 'python',
@@ -53,6 +65,7 @@ export const LANGUAGES: Record<LangId, LanguageConfig> = {
 		commentPrefix: '#',
 		detectCmd: 'python3 --version',
 		aliases: ['py', 'py3', 'python3'],
+		ecosystem: 'pip',
 	},
 	javascript: {
 		id: 'javascript',
@@ -61,6 +74,28 @@ export const LANGUAGES: Record<LangId, LanguageConfig> = {
 		commentPrefix: '//',
 		detectCmd: 'node --version',
 		aliases: ['js', 'node', 'mjs', 'cjs'],
+		ecosystem: 'pnpm',
+	},
+	rust: {
+		id: 'rust',
+		displayName: 'Rust',
+		fileExt: 'rs',
+		commentPrefix: '//',
+		detectCmd: 'rustc --version',
+		aliases: ['rs'],
+		ecosystem: 'cargo',
+	},
+	typescript: {
+		id: 'typescript',
+		displayName: 'TypeScript',
+		fileExt: 'ts',
+		commentPrefix: '//',
+		// `node`, not `tsc`: the default path strips types in process (Node's
+		// own `stripTypeScriptTypes`) and never invokes a compiler, so gating on
+		// a TypeScript toolchain would reject a machine that can run the tests.
+		detectCmd: 'node --version',
+		aliases: ['ts'],
+		ecosystem: 'pnpm',
 	},
 };
 

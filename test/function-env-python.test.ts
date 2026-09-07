@@ -8,6 +8,7 @@ import type { ParsedLeetCode, TestCase } from '../src/types/leetcode.types.js';
 function fixture(overrides: Partial<ParsedLeetCode> = {}): ParsedLeetCode {
     return {
         title: 'Two Sum', difficulty: 'easy', functionName: 'twoSum', status: 'unsolved',
+        leetcodeType: 'function',
         params: [{ name: 'nums', type: 'int[]' }, { name: 'flag', type: 'bool' }],
         returns: 'int[]', description: '', examples: [],
         tests: [], finalTests: [], test: defaultTestConfig(),
@@ -39,7 +40,7 @@ suite('function × python env', () => {
     suite('emit', () => {
 
         test('declares the env identity', () => {
-            assert.strictEqual(pythonFunctionEnv.type, 'function');
+            assert.strictEqual(pythonFunctionEnv.type, 'call');
             assert.strictEqual(pythonFunctionEnv.language, 'python');
         });
 

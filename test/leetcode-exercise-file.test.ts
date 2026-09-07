@@ -17,6 +17,7 @@ suite('exercise-file', () => {
     function fixture(overrides: Partial<ParsedLeetCode> = {}): ParsedLeetCode {
         return {
             title:        'Two Sum',
+            leetcodeType: 'function',
             difficulty:   'easy',
             functionName: 'twoSum',
             algorithm:    'hash-map',
@@ -124,8 +125,12 @@ suite('exercise-file', () => {
             assert.ok(!code.includes('// solution here'));
         });
 
+        // Deliberately a non-`LangId`: every runnable language has a codegen
+        // template, so naming one here only holds until that language lands.
+        // `generateBoilerplate` returns '' for anything outside the registry,
+        // which is the condition this test actually cares about.
         test('a language with neither a setup nor a template yields empty source', () => {
-            assert.strictEqual(resolveStarterCode(fixture(), 'typescript'), '');
+            assert.strictEqual(resolveStarterCode(fixture(), 'ruby'), '');
         });
 
         test('a setup wins even for a language that has a template', () => {

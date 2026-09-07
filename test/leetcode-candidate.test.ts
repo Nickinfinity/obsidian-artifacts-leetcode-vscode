@@ -15,6 +15,7 @@ suite('leetcode-candidate', () => {
     function fixture(overrides: Partial<ParsedLeetCode> = {}): ParsedLeetCode {
         return {
             title: 'Add', difficulty: 'easy', functionName: 'add', status: 'unsolved',
+            leetcodeType: 'function',
             params: [{ name: 'a', type: 'int' }, { name: 'b', type: 'int' }],
             returns: 'int', description: '', examples: [],
             tests: [], finalTests: [], test: defaultTestConfig(),

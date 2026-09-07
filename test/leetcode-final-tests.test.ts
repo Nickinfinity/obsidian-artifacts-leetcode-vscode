@@ -87,7 +87,9 @@ suite('leetcode ## Final Tests', () => {
     suite('parseLeetCode', () => {
 
         function artifact(sections: string): string {
-            return `---\ntype: leetcode\ntitle: T\nfunction: f\nreturns: int\nparams: []\n---\n\nProse.\n\n${sections}`;
+            return '---\ntype: leetcode\ntitle: T\n---\n\nProse.\n\n'
+                + '```yaml leetcode\nfunction: f\nreturns: int\nparams: []\n```\n\n'
+                + sections;
         }
 
         test('populates finalTests alongside tests', () => {

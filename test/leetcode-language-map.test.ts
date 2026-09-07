@@ -65,4 +65,30 @@ suite('language-map', () => {
             assert.strictEqual(extForFenceLang('bash'), 'sh');
         });
     });
+
+    // ── Prototype reach-through ───────────────────────────────────────────────
+    // A fence info-string is untrusted text. Both tables are plain object
+    // literals, so an unguarded `TABLE[key]` hands back `Object.prototype` for
+    // these keys — an object where a string was promised, which then stringifies
+    // as "[object Object]" into a language id or a filename.
+
+    suite('inherited keys never resolve through the prototype', () => {
+
+        const inherited = ['__proto__', 'constructor', 'toString', 'hasOwnProperty'];
+
+        test('resolveLangId returns the key itself, never an object', () => {
+            for (const key of inherited) {
+                assert.strictEqual(typeof resolveLangId(key), 'string', key);
+                assert.strictEqual(resolveLangId(key), key.toLowerCase());
+            }
+        });
+
+        test('extForLang falls back rather than returning an object', () => {
+            for (const key of inherited) {
+                const ext = extForLang(key);
+                assert.strictEqual(typeof ext, 'string', key);
+                assert.ok(/^[a-z0-9]+$|^txt$/.test(ext), `${key} → ${ext}`);
+            }
+        });
+    });
 });

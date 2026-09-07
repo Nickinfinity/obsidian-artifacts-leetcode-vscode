@@ -20,6 +20,7 @@ suite('leetcode-codegen golden', () => {
     function fixture(overrides: Partial<ParsedLeetCode> = {}): ParsedLeetCode {
         return {
             title:        'Two Sum',
+            leetcodeType: 'function',
             difficulty:   'easy',
             functionName: 'twoSum',
             algorithm:    'hash-map',
@@ -63,8 +64,12 @@ suite('leetcode-codegen golden', () => {
             'const readline = require(\'readline\');\nconst rl = readline.createInterface({ input: process.stdin });\n\nfunction twoSum(nums, target) {\n\t<<SOLUTION>>\n}\n\nconst lines = [];\nrl.on(\'line\', (l) => lines.push(l));\nrl.on(\'close\', () => {\n\tconst result = twoSum(nums, target);\n\tprocess.stdout.write(String(result));\n});\n');
     });
 
+    // `ruby`, deliberately: this asserts the *non-`LangId`* fallback, and every
+    // runnable language now emits real code. It named `rust` until rust became
+    // runnable — a fixture, not a snapshot, so repointing it preserves the
+    // assertion's intent rather than relaxing the golden net.
     test('an unsupported language yields empty boilerplate', () => {
-        assert.strictEqual(generateBoilerplate(fixture(), 'rust'), '');
+        assert.strictEqual(generateBoilerplate(fixture(), 'ruby'), '');
     });
 
     // ── Harness ───────────────────────────────────────────────────────────────
@@ -101,7 +106,8 @@ suite('leetcode-codegen golden', () => {
             'const assert = require(\'assert\');\n');
     });
 
+    // See the boilerplate counterpart above for why this is `ruby` and not `rust`.
     test('an unsupported language yields empty harness', () => {
-        assert.strictEqual(generateTestHarness(fixture(), 'rust'), '');
+        assert.strictEqual(generateTestHarness(fixture(), 'ruby'), '');
     });
 });

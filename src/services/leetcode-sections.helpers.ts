@@ -5,7 +5,9 @@ import type {
 	TestCase,
 } from '../types/leetcode.types.js';
 import { safeJsonParse } from '../utils/safe-json.js';
-import { sectionBounds } from './leetcode-section-bounds.helpers.js';
+import { type ConfigSpan, extractConfigBlocks } from './leetcode-config-blocks.helpers.js';
+import { boundaryOutsideFence, sectionBounds } from './leetcode-section-bounds.helpers.js';
+import { parseYamlCases } from './yaml-cases.helpers.js';
 
 const SOLUTIONS_RE     = /^# Solutions\s*$/m;
 const SETUP_RE         = /^# Setup\s*$/m;
@@ -14,28 +16,74 @@ const EXAMPLES_RE      = /^## Examples\s*$/m;
 const TESTS_RE         = /^## Tests\s*$/m;
 const FINAL_TESTS_RE   = /^## Final Tests\s*$/m;
 const EXAMPLE_FENCE    = /```example\r?\n([\s\S]*?)```/g;
-const JSON_FENCE       = /```json\r?\n([\s\S]*?)```/;
 const META_RE          = /<!-- meta:\s*(\{[\s\S]*?\})\s*-->/;
 const FENCE_W_META_RE  = /(?:<!-- meta:\s*(\{[\s\S]*?\})\s*-->\s*\r?\n)?```\w+\r?\n([\s\S]*?)```/g;
 const FENCE_W_ATTEMPT_RE = /(?:<!-- attempt:\s*(\{[\s\S]*?\})\s*-->\s*\r?\n)?```\w+\r?\n([\s\S]*?)```/g;
 const FENCE_LANG_RE    = /```\w+\r?\n([\s\S]*?)```/;
 
+/** Any Markdown heading — the description runs until the first one. */
+const DESCRIPTION_BOUNDARY_RE = /^#+ /m;
+
 /**
  * Returns the prose between the closing frontmatter `---` and the first
- * Markdown heading (`#` or `##`), trimmed.
+ * Markdown heading (`#` or `##`), trimmed, **minus every config-fence span**.
  *
- * Returns the entire body trimmed when no heading is present.
+ * Returns the entire body (minus config fences, trimmed) when no heading is
+ * present.
+ *
+ * Two things this must not do, both load-bearing in v2:
+ *
+ * - **A ` ```yaml leetcode ` fence is not description prose.** §2.5's canonical
+ *   placement puts the signature fence after the description and before
+ *   `## Examples` — i.e. *inside* this slice. Left in, `renderMarkdownLite`
+ *   (which has no fenced-code rule) would render its raw YAML body as prose on
+ *   the challenge screen. The spans come from `extractConfigBlocks`, the one
+ *   authority for finding those fences; this function never re-finds them.
+ * - **A column-0 `#` inside a fence is a comment, not a heading.** The boundary
+ *   search goes through `boundaryOutsideFence` — the same fence-aware authority
+ *   `sectionBounds` uses — rather than a bare `body.search(/^#+ /m)`, which
+ *   truncated the description at the first YAML comment.
+ *
+ * An artifact with no config fence and no fenced `#` produces a byte-identical
+ * result to the pre-v2 implementation.
  *
  * @param body - Content after the frontmatter block.
  * @returns Trimmed description string.
  *
  * @example
  * extractDescription('Some prose.\n\n## Examples'); // → 'Some prose.'
+ * extractDescription('Prose.\n\n```yaml leetcode\nreturns: int\n```\n\n## Examples'); // → 'Prose.'
  */
 export function extractDescription(body: string): string {
-	const idx = body.search(/^#+ /m);
-	if (idx === -1) { return body.trim(); }
-	return body.slice(0, idx).trim();
+	const end = boundaryOutsideFence(body, 0, DESCRIPTION_BOUNDARY_RE);
+	return withoutSpans(body.slice(0, end), extractConfigBlocks(body).spans).trim();
+}
+
+/**
+ * Removes each span's characters from `text`, keeping everything between them.
+ *
+ * Spans arrive in document order and never overlap (`extractConfigBlocks` walks
+ * linearly), so one forward cursor is enough. A span starting at or past the end
+ * of `text` belongs to a later part of the body and stops the walk; one that
+ * merely *ends* past it is clamped, so a fence straddling the slice boundary
+ * cannot leak its tail.
+ *
+ * @param text  - The description slice.
+ * @param spans - Config-fence ranges, as offsets into the body `text` came from.
+ * @returns `text` with every span's characters removed.
+ *
+ * @example
+ * withoutSpans('a<fence>b', [{ start: 1, end: 8 }]); // → 'ab'
+ */
+function withoutSpans(text: string, spans: ConfigSpan[]): string {
+	let out = '';
+	let cursor = 0;
+	for (const span of spans) {
+		if (span.start >= text.length) { break; }
+		out += text.slice(cursor, span.start);
+		cursor = Math.min(span.end, text.length);
+	}
+	return out + text.slice(cursor);
 }
 
 /**
@@ -105,13 +153,87 @@ export function extractFinalTests(body: string): TestCase[] {
 
 /** Shared slice-then-parse for the two `TestCase[]` sections. Never throws. */
 function extractJsonCases(body: string, headingRe: RegExp): TestCase[] {
+	return extractCaseFences(body, headingRe).flatMap(f => f.cases);
+}
+
+/**
+ * One ` ```json ` fence of a case section, with the check it names (if any).
+ *
+ * A `project` exercise grades several checks from one section, so each fence
+ * carries `check=<name>`; a `function` exercise writes a single bare fence and
+ * leaves `check` undefined.
+ */
+export interface CaseFence {
+	/** Value of the `check=<name>` info-string attribute; `undefined` on a bare fence */
+	check?: string;
+	/** Cases in this fence; `[]` when its JSON is malformed */
+	cases: TestCase[];
+}
+
+/**
+ * Every ` ```json ` fence under a case section, in document order.
+ *
+ * The info-string is **attribute-bearing** (`` ```json check="app builds" ``) and
+ * *all* fences in the section are taken, not just the first — that is what lets
+ * a `project`'s cases bind to named checks. For a `function` artifact, whose
+ * sections carry exactly one bare fence, the result is the single fence it
+ * always was; a second fence, previously ignored, is now appended.
+ *
+ * Malformed JSON in one fence yields `cases: []` for that fence alone and never
+ * throws — one broken suite must not take the others down with it.
+ *
+ * @param body      - Content after the frontmatter.
+ * @param headingRe - Anchored heading regex (`TESTS_RE` / `FINAL_TESTS_RE`).
+ * @returns One entry per json fence in the section; `[]` when the section is absent.
+ *
+ * @example
+ * extractCaseFences('## Tests\n```json check=api\n[]\n```', /^## Tests\s*$/m);
+ * // → [{ check: 'api', cases: [] }]
+ */
+export function extractCaseFences(body: string, headingRe: RegExp): CaseFence[] {
 	const section = extractSection(body, headingRe);
 	if (!section) { return []; }
-	const fence = JSON_FENCE.exec(section);
-	if (!fence) { return []; }
-	const parsed = safeJsonParse(fence[1]);
-	return Array.isArray(parsed) ? parsed as TestCase[] : [];
+
+	const out: CaseFence[] = [];
+	// Fresh regex per call — a `g` flag at module scope carries `lastIndex`
+	// between calls and would silently skip fences on the second read.
+	//
+	// Both ` ```json ` and ` ```yaml ` are read. The info-string is an
+	// unambiguous discriminator — it says which grammar the body is written in —
+	// so accepting both is not a dual read of one thing, it is two spellings of
+	// the case list, each parsed by exactly one parser. `yaml` here is the
+	// JSON-typed subset in `yaml-cases.helpers.ts`, never full YAML 1.1.
+	const fences = /```(json|yaml)([^\n]*)\r?\n([\s\S]*?)```/g;
+	let match = fences.exec(section);
+	while (match !== null) {
+		// A ` ```yaml leetcode ` config fence is not case data — it can appear
+		// inside a case section, and must not be read as an empty suite.
+		if (!isConfigFence(match[1], match[2])) {
+			const parsed = match[1] === 'yaml' ? parseYamlCases(match[3]) : safeJsonParse(match[3]);
+			out.push({
+				check: checkAttr(match[2]),
+				cases: Array.isArray(parsed) ? parsed as TestCase[] : [],
+			});
+		}
+		match = fences.exec(section);
+	}
+	return out;
 }
+
+/** A ` ```yaml leetcode ` fence is config (§2.5), never a case list. */
+function isConfigFence(lang: string, infoString: string): boolean {
+	return lang === 'yaml' && /^\s*leetcode\s*$/.test(infoString);
+}
+
+/** Read `check=<name>` (quoted or bare) out of a fence info-string. */
+function checkAttr(infoString: string): string | undefined {
+	const attr = /check=(?:"([^"]*)"|(\S+))/.exec(infoString);
+	if (!attr) { return undefined; }
+	return attr[1] ?? attr[2];
+}
+
+/** The two case sections, exposed for the `project` parser's check binding. */
+export const CASE_SECTIONS = { tests: TESTS_RE, final: FINAL_TESTS_RE } as const;
 
 /**
  * Parses the `# Setup` tree into per-language starter stubs.

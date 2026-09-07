@@ -1,4 +1,6 @@
 import type { PracticeOption, TestType } from './leetcode.types.js';
+import type { LeetcodeTypeId } from './leetcode-type.js';
+import { shapeOf } from './leetcode-type.js';
 
 /**
  * Markdown code-fence shorthand → canonical VS Code `languageId`.
@@ -154,31 +156,68 @@ export const PRACTICE_OPTIONS: readonly PracticeOption[] = [
 ];
 
 /**
- * Execution strategies a challenge may declare via `test.type`.
+ * The **one** test-type vocabulary — read by `test.type` and by a check's `kind:`.
  *
- * Only `function` has environments registered (see `test-envs/`). A reserved id
- * parses and validates, but `languagesForType()` resolves it to `[]`, so the
- * panel offers no selectable language — the correct, self-explaining failure
- * rather than a run that dies inside a compiler.
+ * Merged from the two tables that used to overlap: this one and
+ * `project-parser`'s `VALID_KINDS`, which both listed `function` meaning
+ * different things. A check now names its kind from exactly this set, which
+ * is what lets one multi-package artifact grade each check differently.
+ *
+ * **`status` means: can anything execute this id *today*?** Precisely — a
+ * registered environment for a `test.type`, or a `runOneCheck` branch for a
+ * check's `kind:`. It is the table's claim about the tree, so it must never
+ * run ahead of the tree: an id marked `implemented` before its implementation
+ * lands contradicts the registry, which is the thing callers actually ask.
+ *
+ * A `reserved` id parses and validates, but nothing is registered, so
+ * `languagesForType()` resolves it to `[]` and the panel offers no selectable
+ * language — the correct, self-explaining failure rather than a run that dies
+ * inside a compiler.
  *
  * @example
- * TEST_TYPES.find(t => t.id === 'function')?.status; // → 'implemented'
+ * TEST_TYPES.find(t => t.id === 'build')?.status; // → 'implemented'
  */
 export const TEST_TYPES: readonly TestType[] = [
 	{
-		id: 'function',
+		id: 'call',
+		// The five function envs register under this id (T3.5), so the table
+		// and the registry now agree — `languagesForType('call')` answers with
+		// all five, and `kind: call` is what a check inside a tree declares.
 		status: 'implemented',
 		description: 'Call a free function with positional args, compare the return value.',
+	},
+	{
+		id: 'program',
+		status: 'implemented',
+		description: 'Deliver a case by argv, named flags or stdin; compare the value the program writes to $LEET_OUT.',
+	},
+	{
+		id: 'http',
+		// Dispatched per check by `runOneCheck`, exactly like `build` and the
+		// two render kinds — it has no registry entry, because what it grades
+		// is a booted process rather than a language's candidate buffer.
+		status: 'implemented',
+		description: 'Send a real request to a server booted on an assigned loopback port; compare status, headers and body.',
+	},
+	{
+		id: 'build',
+		status: 'implemented',
+		description: 'A declared argv exits 0.',
+	},
+	{
+		id: 'dom-assert',
+		status: 'implemented',
+		description: 'Run declarative steps against a jsdom mount, compare the observed DOM value.',
+	},
+	{
+		id: 'css-assert',
+		status: 'implemented',
+		description: 'As dom-assert, comparing a declared style property or class presence — never layout geometry.',
 	},
 	{
 		id: 'class',
 		status: 'reserved',
 		description: 'Instantiate, invoke a method sequence, compare the sequence of returns (LRUCache, MinStack).',
-	},
-	{
-		id: 'stdin-stdout',
-		status: 'reserved',
-		description: 'Feed raw stdin, compare trimmed stdout.',
 	},
 	{
 		id: 'in-place',
@@ -187,8 +226,49 @@ export const TEST_TYPES: readonly TestType[] = [
 	},
 ];
 
-/** Test type assumed when the artifact declares no `test:` block. */
-export const DEFAULT_TEST_TYPE = 'function';
+/**
+ * Test type assumed when the artifact declares no `test:` block — and the value
+ * `parseTestType` collapses any unrecognised scalar to, the legacy spellings
+ * (`function`, `project`, `service`, `stdin-stdout`) included.
+ */
+export const DEFAULT_TEST_TYPE = 'call';
+
+/**
+ * Is this artifact a **file tree**, rather than one candidate buffer?
+ *
+ * The one authority for that question, and it now reads the leetcode type's
+ * own `shape` column instead of a hand-kept set of *test*-type ids. That set
+ * (`MULTI_FILE_TYPES`, `['project', 'service']`) was the flattening this axis
+ * split exists to undo: it asked the test-type value a question about the
+ * artifact's shape, which is why adding a shape meant editing a second list.
+ *
+ * Three unrelated concerns ask it — the parser (does `## Files` / `checks:`
+ * get parsed?), the challenge (does *Solve It* materialise a directory or
+ * write one buffer?), and the panel (may the selector offer a language the
+ * registry has no env for?) — and each used to answer it with its own
+ * `=== 'project'`, which is why `service` parsed a file tree nothing ever
+ * opened.
+ *
+ * Distinct from *runnable*: a `stack` is a tree that opens and does **not**
+ * grade, because no environment is registered for it yet. Grading capability
+ * stays the registry's answer alone (`testEnvFor` / `languagesForType`).
+ *
+ * @param leetcodeType - The artifact's resolved leetcode type. `undefined` is
+ *   accepted only because the field is still optional on `ParsedLeetCode`; it
+ *   is unreachable for parser output, since `parseLeetCode` always resolves
+ *   it. Answering `false` there is deliberate and pinned by a test, so the
+ *   branch cannot quietly change sense. When the field becomes required,
+ *   **delete the `undefined` case rather than defaulting it at a call site** —
+ *   a defaulted shape opens a `stack` as a single buffer.
+ * @returns True for any shape that is not `buffer`.
+ *
+ * @example
+ * isMultiFile('package');  // → true
+ * isMultiFile('function'); // → false
+ */
+export function isMultiFile(leetcodeType: LeetcodeTypeId | undefined): boolean {
+	return leetcodeType !== undefined && shapeOf(leetcodeType) !== 'buffer';
+}
 
 /** Per-case execution budget when `test.timeoutMs` is absent or unusable. */
 export const DEFAULT_TEST_TIMEOUT_MS = 5_000;
@@ -198,6 +278,49 @@ export const MIN_TEST_TIMEOUT_MS = 100;
 
 /** Hard ceiling on the whole suite's wall-clock budget, regardless of case count. */
 export const MAX_SUITE_TIMEOUT_MS = 60_000;
+
+/**
+ * Wall-clock budget for the **build** step, separate from the suite's.
+ *
+ * A compile is not per-case, so it cannot share the suite budget: `javac` on
+ * two files is a second, while a Cargo link is longer, and one number cannot
+ * be both. Generous rather than tight, because the cost it guards against —
+ * a *cold* dependency build — is paid at install time by the cargo
+ * pre-warm, and what reaches here is an incremental link.
+ *
+ * Matched to the `build` check's own budget: two ways to spawn a compiler
+ * should not disagree about how long one may take.
+ */
+export const COMPILE_TIMEOUT_MS = 120_000;
+
+/**
+ * What one **process start** costs a `program` suite, per case (P5).
+ *
+ * A `call` suite runs one process for every case — the `__LEET__` batch
+ * protocol exists precisely so a compiled language pays its startup once. A
+ * `program` suite cannot: argv and stdin differ per case, so each case *is* an
+ * invocation. Charging nine JVM starts to the solver's algorithm and then
+ * reporting `timeout` blames code that was never slow, so the suite budget
+ * adds this per case on top of `test.timeoutMs`.
+ *
+ * Sized against the slowest start a runnable language has (a cold JVM with a
+ * classpath), not the fastest (`node`), because one number covers all five.
+ * It is deliberately not `test.timeoutMs`-derived: an artifact tightening its
+ * per-case budget must not also shrink the allowance for machinery it does
+ * not control.
+ */
+export const PROGRAM_SPAWN_OVERHEAD_MS = 2_000;
+
+/**
+ * Hard ceiling on a whole `program` suite, regardless of case count.
+ *
+ * Higher than `MAX_SUITE_TIMEOUT_MS` for the reason the constant above
+ * exists: the same nine cases pay nine startups here and one there, so
+ * reusing the `call` cap would re-introduce the misattributed timeout it is
+ * meant to prevent. Matched to the render check's ceiling — the other budget
+ * that covers repeated out-of-process work.
+ */
+export const MAX_PROGRAM_SUITE_TIMEOUT_MS = 180_000;
 
 /**
  * Line prefix every generated test program stamps on its result lines.
@@ -241,6 +364,12 @@ export const CONFIG_NS = 'obsidianLeetcodeTrainer';
 
 /** `globalState` key holding the vault path. Machine-local — never registered for Settings Sync. */
 export const VAULT_PATH_KEY = 'vaultPath';
+
+/**
+ * `globalState` key holding the "use vault root" toggle. Machine-local — same
+ * policy as `VAULT_PATH_KEY`, never registered for Settings Sync.
+ */
+export const USE_VAULT_ROOT_KEY = 'useVaultRoot';
 
 /** Context key used by `package.json` `when` clauses to gate the open command. */
 export const VAULT_CONFIGURED_KEY = 'obsidian-leetcode.vaultConfigured';

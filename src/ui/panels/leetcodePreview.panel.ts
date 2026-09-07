@@ -4,16 +4,19 @@ import type {
 	BigOEstimate,
 	ChallengePhase,
 	ParsedLeetCode,
+	ProjectCheckOutcome,
 	TestResult,
 	TimerTick,
 } from '../../types/leetcode.types.js';
 import { escHtml } from '../../utils/html.helpers.js';
+import { renderMarkdownLite } from '../../utils/markdown-lite.js';
 import {
 	renderControls,
 	renderNavHeader,
 	renderSetups,
-	renderTestCounts,
 } from './leetcodePreview.controls.js';
+import { renderTestCounts } from './leetcodePreview.counts.js';
+import { renderLibChips } from './leetcodePreview.libs.js';
 
 /**
  * Renders the full HTML document for the LeetCode preview panel.
@@ -28,6 +31,7 @@ import {
  *   - description paragraph
  *   - `## Examples` cards (one per parsed example)
  *   - test-count line (`2 public tests · 3 final tests`)
+ *   - declared-library chips, filtered by the selected language
  *   - `# Setup` starter-code blocks
  *   - reference solutions (collapsed behind a `<details>` — spoilers)
  *   - state-gated controls via `renderControls(state, parsed)` — language
@@ -57,7 +61,7 @@ import {
  */
 export function renderLeetCodePreviewHtml(
 	parsed: ParsedLeetCode, cssUris: string[], cspSource: string, resultsHtml = '',
-	state: ChallengePhase = 'idle', timer: TimerTick | null = null,
+	state: ChallengePhase = 'idle', timer: TimerTick | null = null, activeLangId = '',
 ): string {
 	const timerLabel = timer === null ? '' : formatRemaining(timer.ms);
 	const unlimited = timer?.unlimited ?? false;
@@ -68,9 +72,10 @@ export function renderLeetCodePreviewHtml(
 		renderDescription(parsed),
 		renderExamples(parsed),
 		renderTestCounts(parsed),
+		renderLibChips(parsed),
 		renderSetups(parsed),
 		renderSolutionsSection(parsed),
-		renderControls(state, parsed),
+		renderControls(state, parsed, activeLangId),
 		`<div id="results" class="results-container">${resultsHtml}</div>`,
 	].join('\n');
 
@@ -97,6 +102,44 @@ export function renderTestResultsHtml(results: TestResult[]): string {
 	const summary = `<div class="results-summary ${summaryCls}">${passed} / ${total} passed</div>`;
 
 	const rows = results.map(renderResultRow).join('\n');
+	return `${summary}\n${rows}`;
+}
+
+/**
+ * Renders the results table for a `project` exercise — one row per **check**,
+ * not per test case.
+ *
+ * A project's verdict is "every check green", and its checks are heterogeneous:
+ * a build's evidence is a compiler's output, a dom-assert's is a failed
+ * assertion. So each row is name + verdict + whatever the check had to say,
+ * rather than the function table's input/expected/actual columns, which a build
+ * check has nothing to put in.
+ *
+ * Reuses the function table's `test-pass` / `test-fail` classes so both look
+ * like one results surface — no new CSS for a second table.
+ *
+ * @param outcomes - One outcome per declared check, in declaration order.
+ * @returns HTML fragment ready to inject into the results sink.
+ *
+ * @example
+ * renderProjectResultsHtml([{ name: 'app builds', passed: true }]);
+ */
+export function renderProjectResultsHtml(outcomes: ProjectCheckOutcome[]): string {
+	const total = outcomes.length;
+	const passed = outcomes.filter(o => o.passed).length;
+	const summary = `<div class="results-summary ${computeSummaryClass(passed, total)}">`
+		+ `${passed} / ${total} checks passed</div>`;
+
+	const rows = outcomes.map(outcome => {
+		const cls = outcome.passed ? 'test-pass' : 'test-fail';
+		const verdict = outcome.passed ? 'pass' : 'fail';
+		const detail = outcome.detail
+			? `<div class="hint"><pre>${escHtml(outcome.detail)}</pre></div>`
+			: '';
+		return `<div class="test-result ${cls}"><div><strong>${escHtml(outcome.name)}</strong>`
+			+ ` &middot; ${verdict}</div>${detail}</div>`;
+	}).join('\n');
+
 	return `${summary}\n${rows}`;
 }
 
@@ -189,10 +232,16 @@ function renderBadgesRow(p: ParsedLeetCode): string {
 	return `<div class="badges">${parts.join('')}</div>`;
 }
 
-/** Render the description block (omitted when empty). */
+/**
+ * Render the description block (omitted when empty).
+ *
+ * The description is authored Markdown, so it goes through `renderMarkdownLite`
+ * — a whitelist renderer that escapes first and only adds markup for the subset
+ * it supports, so an artifact cannot inject HTML through its own prose.
+ */
 function renderDescription(p: ParsedLeetCode): string {
 	if (!p.description.trim()) { return ''; }
-	return `<div class="desc">${escHtml(p.description)}</div>`;
+	return `<div class="desc">${renderMarkdownLite(p.description)}</div>`;
 }
 
 /** Render the `## Examples` cards section. */
@@ -374,7 +423,7 @@ ${body}
 	// Only the blocks for the active language stay visible.
 	function syncVisibleBlocks() {
 		const lang = currentLang();
-		const blocks = document.querySelectorAll('.setup-block, .solution-block');
+		const blocks = document.querySelectorAll('.setup-block, .solution-block, .lib-block');
 		blocks.forEach((el) => {
 			const match = !lang || el.dataset.language === lang;
 			el.style.display = match ? '' : 'none';

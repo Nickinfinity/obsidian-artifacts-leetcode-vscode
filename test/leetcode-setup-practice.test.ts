@@ -2,17 +2,23 @@ import * as assert from 'node:assert';
 import { parseLeetCode } from '../src/services/leetcode-parser.service.js';
 
 /**
- * Unit tests for the two frontmatter/section features added alongside the
- * "Solve It" flow: the `# Setup` starter-code tree and the `practice:`
- * frontmatter block.
+ * Unit tests for the two features added alongside the "Solve It" flow: the
+ * `# Setup` starter-code tree (a body section, unaffected by the v2 move)
+ * and the `practice:` block, which v2 relocated out of frontmatter into a
+ * body ` ```yaml leetcode ` config fence (§2.5).
  */
 suite('leetcode-setup-practice', () => {
 
     const FENCE = '```';
 
-    /** Compose a `.md` artifact from a frontmatter body and a Markdown body. */
-    function artifact(frontmatter: string, body: string): string {
-        return `---\ntype: leetcode\ntitle: Sliding Window\nfunction: slidingWindow\nreturns: int\nparams: []\n${frontmatter}---\n\nProse.\n\n${body}`;
+    /**
+     * Compose a `.md` artifact whose `practice:` block (when given) lives in
+     * a body config fence, never frontmatter — v2, §2.5. An empty
+     * `configFence` omits the fence entirely, matching "no block ⇒ no fence."
+     */
+    function artifact(configFence: string, body: string): string {
+        const fence = configFence === '' ? '' : `${FENCE}yaml leetcode\n${configFence}${FENCE}\n\n`;
+        return `---\ntype: leetcode\ntitle: Sliding Window\n---\n\nProse.\n\n${fence}${body}`;
     }
 
     // ── # Setup ───────────────────────────────────────────────────────────────

@@ -14,15 +14,57 @@ const SAFE_EXT_RE = /^[a-z0-9]+$/;
  * @param fenceLang - Fence info-string or language heading, any casing.
  * @returns Canonical `languageId`, or `'plaintext'` for an empty input.
  *
+ * The lookup is **own-property only**. A fence info-string is untrusted text, so
+ * a plain `LANG_ALIAS[key]` would reach through the prototype chain and hand
+ * back `Object.prototype` itself for `` ```__proto__ `` — an object where every
+ * caller has been promised a string.
+ *
+ * @param fenceLang - Fence info-string or language heading, any casing.
+ * @returns Canonical `languageId`, or `'plaintext'` for an empty input.
+ *
  * @example
  * resolveLangId('JavaScript'); // → 'javascript'
  * resolveLangId('py');         // → 'python'
  * resolveLangId('c#');         // → 'csharp'
+ * resolveLangId('__proto__');  // → '__proto__' (never Object.prototype)
  */
 export function resolveLangId(fenceLang: string): string {
 	const key = fenceLang.trim().toLowerCase();
 	if (key === '') { return 'plaintext'; }
-	return LANG_ALIAS[key] ?? key;
+	return Object.hasOwn(LANG_ALIAS, key) ? LANG_ALIAS[key] : key;
+}
+
+/**
+ * Display-only `languageId`s and the runnable language each one is graded as.
+ *
+ * VS Code gives `.jsx` / `.tsx` their own ids, but this extension has no
+ * runtime for them — a React file is bundled and executed as plain
+ * JavaScript / TypeScript.
+ */
+const DISPLAY_TO_RUNNABLE: Readonly<Record<string, string>> = {
+	javascriptreact: 'javascript',
+	typescriptreact: 'typescript',
+};
+
+/**
+ * Folds a display-only `languageId` onto the runnable language it is graded
+ * as, leaving every other id untouched.
+ *
+ * One authority for a fact two callers need: `languageOf` (which file a
+ * `function` check grades) and `ecosystemFor` (which registry serves a
+ * `libs:` key). Both used to inline the same pair of `if`s.
+ *
+ * @param langId - Canonical `languageId` (already through `resolveLangId`).
+ * @returns The runnable id, or `langId` unchanged when it is already one.
+ *
+ * @example
+ * runnableLangId('typescriptreact'); // → 'typescript'
+ * runnableLangId('python');          // → 'python'
+ */
+export function runnableLangId(langId: string): string {
+	// Own-property only, for the same reason `resolveLangId` is: the id can
+	// come from untrusted `.md` text, and `['__proto__']` is not a language.
+	return Object.hasOwn(DISPLAY_TO_RUNNABLE, langId) ? DISPLAY_TO_RUNNABLE[langId] : langId;
 }
 
 /**
@@ -42,7 +84,10 @@ export function resolveLangId(fenceLang: string): string {
  * extForLang('c#');         // → 'txt'  (unsafe — should have been aliased)
  */
 export function extForLang(langId: string): string {
-	const known = LANG_EXT[langId];
+	// Own-property only — `LANG_EXT['__proto__']` would otherwise return
+	// `Object.prototype`, which is truthy and lands in a filename as
+	// "[object Object]". Same hazard as `resolveLangId`.
+	const known = Object.hasOwn(LANG_EXT, langId) ? LANG_EXT[langId] : undefined;
 	if (known) { return known; }
 	return SAFE_EXT_RE.test(langId) ? langId : 'txt';
 }

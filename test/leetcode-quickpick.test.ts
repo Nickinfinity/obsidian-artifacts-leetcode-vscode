@@ -1,6 +1,94 @@
 import * as assert from 'node:assert';
-import { buildQuickPickItems } from '../src/commands/quickpick-item.helpers.js';
+import {
+    buildQuickPickItems,
+    FILE_TYPE_DIRECTORY,
+    FILE_TYPE_SYMBOLIC_LINK,
+    parentPath,
+    splitDirEntries,
+} from '../src/commands/quickpick-item.helpers.js';
 import type { LeetCodeSummary } from '../src/types/leetcode.types.js';
+
+const FILE = 1;
+
+/**
+ * Unit tests for splitDirEntries(entries): DirLevel and parentPath(relPath): string.
+ *
+ * Pure, vscode-free: the picker browses one level at a time, so these two decide
+ * what a level shows (folders alphabetical, then `.md` files, symlinks dropped) and
+ * where its `..` row goes.
+ */
+suite('splitDirEntries', () => {
+
+    test('flat level: keeps .md files, drops other extensions', () => {
+        const { dirs, files } = splitDirEntries([
+            ['two-sum.md', FILE],
+            ['notes.txt', FILE],
+            ['three-sum.md', FILE],
+        ]);
+        assert.deepStrictEqual(dirs, []);
+        assert.deepStrictEqual(files, ['two-sum.md', 'three-sum.md']);
+    });
+
+    test('empty level: no entries → empty dirs and files', () => {
+        assert.deepStrictEqual(splitDirEntries([]), { dirs: [], files: [] });
+    });
+
+    test('folders come back alphabetical, independent of listing order', () => {
+        const { dirs, files } = splitDirEntries([
+            ['Strings', FILE_TYPE_DIRECTORY],
+            ['two-sum.md', FILE],
+            ['Arrays', FILE_TYPE_DIRECTORY],
+        ]);
+        assert.deepStrictEqual(dirs, ['Arrays', 'Strings']);
+        assert.deepStrictEqual(files, ['two-sum.md']);
+    });
+
+    test('SECURITY: a symlinked directory is never listed, so it can never be entered', () => {
+        const symlinkedDir = FILE_TYPE_DIRECTORY | FILE_TYPE_SYMBOLIC_LINK;
+        const { dirs, files } = splitDirEntries([
+            ['escape', symlinkedDir],
+            ['safe.md', FILE],
+        ]);
+        assert.deepStrictEqual(dirs, [], 'a symlinked directory must not become a navigable row');
+        assert.deepStrictEqual(files, ['safe.md']);
+    });
+
+    test('dotfile hygiene: a leading-dot directory (e.g. .obsidian) never becomes a row', () => {
+        const { dirs, files } = splitDirEntries([
+            ['.obsidian', FILE_TYPE_DIRECTORY],
+            ['Arrays', FILE_TYPE_DIRECTORY],
+            ['two-sum.md', FILE],
+        ]);
+        assert.deepStrictEqual(dirs, ['Arrays'], '.obsidian must be excluded when browsing the vault root');
+        assert.deepStrictEqual(files, ['two-sum.md']);
+    });
+
+    test('dotfile hygiene: a leading-dot .md file never becomes a row', () => {
+        const { dirs, files } = splitDirEntries([
+            ['.hidden.md', FILE],
+            ['two-sum.md', FILE],
+        ]);
+        assert.deepStrictEqual(files, ['two-sum.md'], '.hidden.md must be excluded from the browse level');
+        assert.deepStrictEqual(dirs, []);
+    });
+
+});
+
+suite('parentPath', () => {
+
+    test('root-level path has no parent', () => {
+        assert.strictEqual(parentPath('two-sum.md'), '');
+    });
+
+    test('nested path drops its last segment', () => {
+        assert.strictEqual(parentPath('function/arrays/two-sum.md'), 'function/arrays');
+    });
+
+    test('a one-level folder goes back to the root', () => {
+        assert.strictEqual(parentPath('Arrays'), '');
+    });
+
+});
 
 /**
  * Unit tests for buildQuickPickItems(entries): QuickPickItemData[].
@@ -39,11 +127,26 @@ suite('buildQuickPickItems', () => {
         assert.strictEqual(item.label, '$(warning) Two Sum');
     });
 
-    test('description is "Difficulty · Status"', () => {
+    test('description is "Difficulty · Status" for a root-level (flat vault) file', () => {
         const [item] = buildQuickPickItems([
             { fileName: 'a.md', parsed: summary({ difficulty: 'medium', status: 'attempted' }) },
         ]);
         assert.strictEqual(item.description, 'Medium · Attempted');
+    });
+
+    test('description prepends the folder path as a category label for a nested file', () => {
+        const [item] = buildQuickPickItems([
+            {
+                fileName: 'function/arrays/two-sum.md',
+                parsed: summary({ difficulty: 'medium', status: 'attempted' }),
+            },
+        ]);
+        assert.strictEqual(item.description, 'function/arrays · Medium · Attempted');
+    });
+
+    test('description category label reflects only the immediate parent folders, not the fileName', () => {
+        const [item] = buildQuickPickItems([{ fileName: 'topic/two-sum.md', parsed: summary() }]);
+        assert.strictEqual(item.description, 'topic · Easy · Unsolved');
     });
 
     test('detail combines algorithm and #tags', () => {
@@ -72,6 +175,11 @@ suite('buildQuickPickItems', () => {
     test('carries the source fileName through unchanged', () => {
         const [item] = buildQuickPickItems([{ fileName: 'binary-search.md', parsed: summary() }]);
         assert.strictEqual(item.fileName, 'binary-search.md');
+    });
+
+    test('carries a nested vault-relative fileName through unchanged', () => {
+        const [item] = buildQuickPickItems([{ fileName: 'function/arrays/binary-search.md', parsed: summary() }]);
+        assert.strictEqual(item.fileName, 'function/arrays/binary-search.md');
     });
 
     // ── sort order ───────────────────────────────────────────────────────────

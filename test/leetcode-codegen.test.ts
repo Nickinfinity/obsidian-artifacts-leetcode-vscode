@@ -16,6 +16,7 @@ suite('leetcode-codegen', () => {
     function fixture(overrides: Partial<ParsedLeetCode> = {}): ParsedLeetCode {
         return {
             title:        'Two Sum',
+            leetcodeType: 'function',
             difficulty:   'easy',
             functionName: 'twoSum',
             algorithm:    'hash-map',
@@ -208,9 +209,37 @@ suite('leetcode-codegen', () => {
             assert.strictEqual(jsonToLiteral([1.5, 2.5], 'java'),    'new double[]{1.5, 2.5}');
         });
 
-        test('a heterogeneous or empty Java array degrades to Object[]', () => {
+        test('a heterogeneous or untyped empty Java array degrades to Object[]', () => {
             assert.strictEqual(jsonToLiteral([], 'java'),       'new Object[]{}');
             assert.strictEqual(jsonToLiteral([1, 'a'], 'java'), 'new Object[]{1, "a"}');
+        });
+
+        /**
+         * An empty array has no contents to infer from, so the declared
+         * parameter type is the only thing that can name its element type.
+         * Without it `[]` rendered `new Object[]{}`, which does not convert to
+         * `int[]` — so *any* Java exercise with an empty-array case failed to
+         * compile, and "no items" is the first edge case anyone writes.
+         */
+        test('an empty Java array takes its element type from the declared param', () => {
+            assert.strictEqual(jsonToLiteral([], 'java', 'int[]'),    'new int[]{}');
+            assert.strictEqual(jsonToLiteral([], 'java', 'string[]'), 'new String[]{}');
+            assert.strictEqual(jsonToLiteral([], 'java', 'bool[]'),   'new boolean[]{}');
+            assert.strictEqual(jsonToLiteral([], 'java', 'int[][]'),  'new int[][]{}');
+        });
+
+        test('a declared type never overrides what the contents already prove', () => {
+            assert.strictEqual(jsonToLiteral([1, 2], 'java', 'int[]'), 'new int[]{1, 2}');
+            assert.strictEqual(
+                jsonToLiteral([[1], [2]], 'java', 'int[][]'),
+                'new int[][]{new int[]{1}, new int[]{2}}',
+            );
+        });
+
+        test('a declared non-array type changes nothing', () => {
+            assert.strictEqual(jsonToLiteral([], 'java', 'int'), 'new Object[]{}');
+            assert.strictEqual(jsonToLiteral([], 'python', 'int[]'), '[]');
+            assert.strictEqual(jsonToLiteral([], 'rust', 'int[]'), 'vec![]');
         });
 
         test('object → JSON for JS, dict for Python', () => {

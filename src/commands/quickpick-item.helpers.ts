@@ -1,8 +1,84 @@
 import type { LeetCodeDifficulty, LeetCodeStatus, LeetCodeSummary } from '../types/leetcode.types.js';
 
+/**
+ * Numeric bits from `vscode.FileType` (`Directory = 2`, `SymbolicLink = 64`), duplicated
+ * here so this module stays `vscode`-free and unit-testable — `vscode` stays at the edges
+ * per CLAUDE.md. `FileType` is a bitmask: a symlinked directory reports as
+ * `Directory | SymbolicLink` (`66`), never a bare `Directory` — callers must test with `&`,
+ * never `===`.
+ */
+export const FILE_TYPE_DIRECTORY = 2;
+export const FILE_TYPE_SYMBOLIC_LINK = 64;
+
+/** One `[name, type]` pair as returned by `vscode.workspace.fs.readDirectory`. */
+export type DirEntry = readonly [name: string, type: number];
+
+/** One browsable directory level — subfolder names and `.md` file names, nothing else. */
+export interface DirLevel {
+	/** Subfolder names, alphabetical. Symlinked directories are excluded entirely. */
+	dirs: string[];
+	/** `.md` file names at this level, in `readDirectory` order (the picker sorts them). */
+	files: string[];
+}
+
+/**
+ * Splits one directory listing into the folders and `.md` files the picker shows.
+ *
+ * Symlinked directories are dropped rather than listed, so the browser can never be
+ * navigated outside the validated vault root (path-containment, security-critical).
+ * A leading-dot name (either kind) is dropped too — harmless in `LeetCode/` subfolder
+ * mode, essential when the picker browses the vault root directly, where `.obsidian/`
+ * (and any other dotfile/dotfolder) must never appear as a row. Folders come back
+ * alphabetical because the picker renders them above the files.
+ *
+ * @param entries - One directory's `[name, type]` pairs, as `readDirectory` returns them.
+ * @returns Alphabetical subfolder names plus the level's `.md` file names.
+ *
+ * @example
+ * splitDirEntries([['Strings', 2], ['Arrays', 2], ['two-sum.md', 1]]);
+ * // → { dirs: ['Arrays', 'Strings'], files: ['two-sum.md'] }
+ * splitDirEntries([['.obsidian', 2]]); // → { dirs: [], files: [] }
+ */
+export function splitDirEntries(entries: readonly DirEntry[]): DirLevel {
+	const dirs: string[] = [];
+	const files: string[] = [];
+
+	for (const [name, type] of entries) {
+		if (name.startsWith('.')) { continue; }
+		if ((type & FILE_TYPE_DIRECTORY) !== 0) {
+			if ((type & FILE_TYPE_SYMBOLIC_LINK) === 0) { dirs.push(name); }
+		} else if (name.endsWith('.md')) {
+			files.push(name);
+		}
+	}
+
+	dirs.sort((a, b) => a.localeCompare(b));
+	return { dirs, files };
+}
+
+/**
+ * Folder path of a vault-relative path — `''` when it sits at the root.
+ *
+ * Shared by the picker's "go up one level" step and the item builder's category label.
+ *
+ * @param relPath - Vault-relative path, e.g. `'function/arrays/two-sum.md'`.
+ * @returns Everything before the last `/`, or `''` when there is none.
+ *
+ * @example
+ * parentPath('function/arrays/two-sum.md'); // → 'function/arrays'
+ */
+export function parentPath(relPath: string): string {
+	const slashIndex = relPath.lastIndexOf('/');
+	return slashIndex === -1 ? '' : relPath.slice(0, slashIndex);
+}
+
 /** One `{ fileName, parsed }` pair the picker maps into a `QuickPickItemData`. */
 export interface QuickPickEntry {
-	/** `.md` file name (basename, e.g. `'two-sum.md'`) relative to the LeetCode dir */
+	/**
+	 * Vault-relative path to the `.md` file, e.g. `'two-sum.md'` or
+	 * `'function/arrays/two-sum.md'`. The segment before the last `/` (if any) becomes the
+	 * description's category label.
+	 */
 	fileName: string;
 	/** Frontmatter summary — from either the full parse or `parseFrontmatterOnly` */
 	parsed: LeetCodeSummary;
@@ -75,9 +151,11 @@ export function buildQuickPickItems(entries: QuickPickEntry[]): QuickPickItemDat
 /** Build a single `QuickPickItemData` from one `{ fileName, parsed }` pair. */
 function buildQuickPickItem(entry: QuickPickEntry): QuickPickItemData {
 	const { parsed } = entry;
+	const status = `${DIFFICULTY_LABEL[parsed.difficulty]} · ${STATUS_LABEL[parsed.status]}`;
+	const category = parentPath(entry.fileName);
 	return {
 		label: `$(${STATUS_ICON[parsed.status]}) ${parsed.title}`,
-		description: `${DIFFICULTY_LABEL[parsed.difficulty]} · ${STATUS_LABEL[parsed.status]}`,
+		description: category ? `${category} · ${status}` : status,
 		detail: buildDetail(parsed),
 		fileName: entry.fileName,
 	};

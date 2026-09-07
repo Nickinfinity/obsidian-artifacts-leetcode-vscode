@@ -20,6 +20,7 @@ suite('function × java env', () => {
     function fixture(overrides: Partial<ParsedLeetCode> = {}): ParsedLeetCode {
         return {
             title: 'Two Sum', difficulty: 'easy', functionName: 'twoSum', status: 'unsolved',
+            leetcodeType: 'function',
             params: [{ name: 'nums', type: 'int[]' }, { name: 'target', type: 'int' }],
             returns: 'int[]', description: '', examples: [],
             tests: [], finalTests: [], test: defaultTestConfig(),
@@ -49,7 +50,7 @@ suite('function × java env', () => {
     suite('emit — files and commands', () => {
 
         test('declares the env identity', () => {
-            assert.strictEqual(javaFunctionEnv.type, 'function');
+            assert.strictEqual(javaFunctionEnv.type, 'call');
             assert.strictEqual(javaFunctionEnv.language, 'java');
         });
 

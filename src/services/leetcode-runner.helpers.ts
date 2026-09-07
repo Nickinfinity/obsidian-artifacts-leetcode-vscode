@@ -76,3 +76,43 @@ export function errorResult(index: number, testCase: TestCase, message: string):
 		error:    message,
 	};
 }
+
+/**
+ * Whether a child died because its budget ran out, rather than failing on its
+ * own terms.
+ *
+ * `exec` reports a timeout kill as `killed` — but a child that ignores
+ * `SIGTERM` and is force-killed can arrive with only the signal set, so both
+ * are checked.
+ *
+ * @param error - The rejected `exec` error.
+ * @returns `true` when the process was killed rather than exiting.
+ *
+ * @example
+ * timedOut({ killed: true }); // → true
+ */
+export function timedOut(error: { killed?: boolean; signal?: NodeJS.Signals | null }): boolean {
+	return Boolean(error.killed) || error.signal === 'SIGTERM';
+}
+
+/**
+ * The message every case carries when the build step fails.
+ *
+ * A timeout is called one: killed children usually produce **no** stderr, so
+ * the generic path would report `compilation error: unknown failure` and send
+ * a solver hunting for a syntax mistake that is not there.
+ *
+ * @param error - The rejected `exec` error.
+ * @returns One user-facing sentence.
+ *
+ * @example
+ * compileFailure({ killed: true });                 // → 'compilation timed out'
+ * compileFailure({ stderr: 'error: expected `;`' }); // → 'compilation error: error: expected `;`'
+ */
+export function compileFailure(
+	error: { killed?: boolean; signal?: NodeJS.Signals | null; stderr?: string; message?: string },
+): string {
+	if (timedOut(error)) { return 'compilation timed out'; }
+	const detail = (error.stderr ?? error.message ?? '').trim();
+	return `compilation error: ${detail || 'unknown failure'}`;
+}

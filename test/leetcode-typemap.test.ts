@@ -1,5 +1,5 @@
 import * as assert from 'node:assert';
-import { mapType } from '../src/services/leetcode-codegen.service.js';
+import { mapType, jsonToLiteral } from '../src/services/leetcode-codegen.service.js';
 
 /**
  * Unit tests for mapType(genericType, language): string.
@@ -60,6 +60,80 @@ suite('mapType', () => {
 
     test('unknown language returns the generic type as-is', () => {
         assert.strictEqual(mapType('int', 'cobol'), 'int');
+    });
+
+});
+
+/**
+ * Unit tests for jsonToLiteral(value, language): string — Rust literals only.
+ *
+ * java/python/javascript coverage lives in test/leetcode-codegen.test.ts;
+ * this suite is the failing-test-first net for T2 (Rust literal support).
+ */
+suite('jsonToLiteral (rust)', () => {
+
+    test('number and boolean unchanged (rust)', () => {
+        assert.strictEqual(jsonToLiteral(42, 'rust'), '42');
+        assert.strictEqual(jsonToLiteral(true, 'rust'), 'true');
+        assert.strictEqual(jsonToLiteral(false, 'rust'), 'false');
+    });
+
+    test('null → None (rust)', () => {
+        assert.strictEqual(jsonToLiteral(null, 'rust'), 'None');
+    });
+
+    test('string → String::from("…") (rust)', () => {
+        assert.strictEqual(jsonToLiteral('hi', 'rust'), 'String::from("hi")');
+    });
+
+    test('array → vec![…] (rust)', () => {
+        assert.strictEqual(jsonToLiteral([1, 2], 'rust'), 'vec![1, 2]');
+    });
+
+    test('nested array → vec![vec![…]] (rust)', () => {
+        assert.strictEqual(jsonToLiteral([[1, 2]], 'rust'), 'vec![vec![1, 2]]');
+    });
+
+    // ponytail: `[]` → `vec![]` cannot type-infer standalone; upgrade would
+    // thread the declared param type through five languages — not now.
+    test('empty array → vec![] (rust)', () => {
+        assert.strictEqual(jsonToLiteral([], 'rust'), 'vec![]');
+    });
+
+    test('object → HashMap::from([(String::from("k"), v), …]) (rust)', () => {
+        assert.strictEqual(jsonToLiteral({ a: 1 }, 'rust'), 'HashMap::from([(String::from("a"), 1)])');
+    });
+
+    test('undefined → None (rust)', () => {
+        assert.strictEqual(jsonToLiteral(undefined, 'rust'), 'None');
+    });
+
+    // ── Hostile-input escaping ───────────────────────────────────────────────
+    // Untrusted `.md` test JSON can carry raw control bytes; rustc rejects
+    // JSON's own escapes (`\b`, `\f`, bare ``) outright, so the rust
+    // path builds its literal from the source string's real characters
+    // rather than post-processing JSON.stringify's output.
+
+    test('rust string escapes a raw control character to \\u{…}', () => {
+        assert.strictEqual(jsonToLiteral('', 'rust'), 'String::from("\\u{1}")');
+    });
+
+    test('rust string escapes a literal backspace to \\u{8}, not JSON\'s \\b', () => {
+        assert.strictEqual(jsonToLiteral('\b', 'rust'), 'String::from("\\u{8}")');
+    });
+
+    test('rust string escapes a tab via the explicit map', () => {
+        assert.strictEqual(jsonToLiteral('\t', 'rust'), 'String::from("\\t")');
+    });
+
+    test('rust string escapes an embedded double quote', () => {
+        assert.strictEqual(jsonToLiteral('say "hi"', 'rust'), 'String::from("say \\"hi\\"")');
+    });
+
+    test('rust string does not corrupt a backslash immediately followed by "b" — the case a regex over JSON.stringify output would mangle', () => {
+        const input = 'a' + '\\' + 'b'; // three raw chars: a, backslash, b — NOT the \b escape
+        const expected = 'String::from("a' + '\\\\' + 'b")'; // rustc needs \\ to mean one literal backslash
+        assert.strictEqual(jsonToLiteral(input, 'rust'), expected);
     });
 
 });

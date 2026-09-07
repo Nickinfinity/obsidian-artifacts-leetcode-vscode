@@ -196,6 +196,164 @@ suite('leetcode-bigo: estimateBigO', () => {
 		});
 	});
 
+	// ── Rust: braceless-header loops (no parens around `for`/`while`) ────────
+
+	suite('rust loop forms', () => {
+
+		test('rust: nested `for x in range { }` loops (no parens) is O(n^2)', () => {
+			const code = [
+				'fn f(n: usize) -> usize {',
+				'\tlet mut count = 0;',
+				'\tfor i in 0..n {',
+				'\t\tfor j in 0..n {',
+				'\t\t\tcount += 1;',
+				'\t\t}',
+				'\t}',
+				'\tcount',
+				'}',
+			].join('\n');
+			const r = estimateBigO(code, 'rust');
+			assert.strictEqual(r.notation, 'O(n^2)');
+		});
+
+		test('rust: single `for x in range { }` loop (no parens) is O(n)', () => {
+			const code = [
+				'fn f(n: usize) -> usize {',
+				'\tlet mut sum = 0;',
+				'\tfor i in 0..n {',
+				'\t\tsum += i;',
+				'\t}',
+				'\tsum',
+				'}',
+			].join('\n');
+			const r = estimateBigO(code, 'rust');
+			assert.strictEqual(r.notation, 'O(n)');
+		});
+
+		test('rust: `while cond { }` loop (no parens) is O(n)', () => {
+			const code = [
+				'fn f(n: usize) -> usize {',
+				'\tlet mut i = 0;',
+				'\tlet mut sum = 0;',
+				'\twhile i < n {',
+				'\t\tsum += i;',
+				'\t\ti += 1;',
+				'\t}',
+				'\tsum',
+				'}',
+			].join('\n');
+			const r = estimateBigO(code, 'rust');
+			assert.strictEqual(r.notation, 'O(n)');
+		});
+
+		// `loop { }` is Rust's infinite-loop keyword — it carries neither a
+		// `for`/`while` token nor parens, so nothing in the C-style header
+		// checks can see it.
+		test('rust: bare `loop { }` is a loop, not straight-line code', () => {
+			const code = [
+				'fn f(n: usize) -> usize {',
+				'\tlet mut i = 0;',
+				'\tloop {',
+				'\t\tif i >= n { break; }',
+				'\t\ti += 1;',
+				'\t}',
+				'\ti',
+				'}',
+			].join('\n');
+			const r = estimateBigO(code, 'rust');
+			assert.strictEqual(r.notation, 'O(n)');
+		});
+
+		test('rust: nested `loop { loop { } }` is O(n^2)', () => {
+			const code = [
+				'fn f(n: usize) -> usize {',
+				'\tlet mut c = 0;',
+				'\tloop {',
+				'\t\tloop {',
+				'\t\t\tc += 1;',
+				'\t\t}',
+				'\t}',
+				'}',
+			].join('\n');
+			const r = estimateBigO(code, 'rust');
+			assert.strictEqual(r.notation, 'O(n^2)');
+		});
+
+		// A label sits between the statement boundary and the keyword. Labels
+		// exist precisely to break out of *nested* loops, so missing them
+		// loses depth exactly where the grade matters most.
+		test('rust: a labelled loop is still a loop', () => {
+			const code = [
+				'fn f(n: usize) -> usize {',
+				"\t'outer: for i in 0..n {",
+				'\t\tc += 1;',
+				'\t}',
+				'\tc',
+				'}',
+			].join('\n');
+			const r = estimateBigO(code, 'rust');
+			assert.strictEqual(r.notation, 'O(n)');
+		});
+
+		test('rust: nested labelled loops are O(n^2)', () => {
+			const code = [
+				'fn f(n: usize) -> usize {',
+				"\t'outer: for i in 0..n {",
+				"\t\t'inner: for j in 0..n {",
+				'\t\t\tc += 1;',
+				'\t\t}',
+				'\t}',
+				'\tc',
+				'}',
+			].join('\n');
+			const r = estimateBigO(code, 'rust');
+			assert.strictEqual(r.notation, 'O(n^2)');
+		});
+
+		// The word boundary is load-bearing: an identifier merely *starting*
+		// with a loop keyword must not open a loop body.
+		test('rust: an identifier prefixed with a loop keyword is not a loop', () => {
+			const code = 'fn f() -> usize { let x = looper_state { a: 1 }; 0 }';
+			const r = estimateBigO(code, 'rust');
+			assert.strictEqual(r.notation, 'O(1)');
+		});
+
+		// `'` is a lifetime/label sigil in Rust, not a string quote. Treating it
+		// as one blanks everything up to the next `'` — which for a lone
+		// lifetime never arrives, wiping the rest of the function and silently
+		// grading real work as O(1).
+		test('rust: a lifetime annotation does not blank the loop that follows it', () => {
+			const code = [
+				"fn longest<'a>(xs: &'a [usize], n: usize) -> usize {",
+				'\tlet mut c = 0;',
+				'\tfor i in 0..n {',
+				'\t\tc += xs[i];',
+				'\t}',
+				'\tc',
+				'}',
+			].join('\n');
+			const r = estimateBigO(code, 'rust');
+			assert.strictEqual(r.notation, 'O(n)');
+		});
+
+		test('rust: a genuine char literal is still stripped, so its braces never count', () => {
+			const code = "fn f() -> usize { let c = '{'; let d = '}'; 0 }";
+			const r = estimateBigO(code, 'rust');
+			assert.strictEqual(r.notation, 'O(1)');
+		});
+	});
+
+	// ── single-quoted strings stay strings in the languages that have them ────
+
+	suite('single-quoted strings (javascript)', () => {
+
+		test('javascript: a single-quoted string containing loop syntax is ignored', () => {
+			const code = "function f() { const s = 'for (;;) { for (;;) {} }'; return s; }";
+			const r = estimateBigO(code, 'javascript');
+			assert.strictEqual(r.notation, 'O(1)');
+		});
+	});
+
 	// ── loop + library sort → O(n log n) ─────────────────────────────────────
 
 	suite('loop calling a sort', () => {
@@ -451,9 +609,12 @@ suite('leetcode-bigo: estimateBigO', () => {
 
 	// ── unsupported language ──────────────────────────────────────────────────
 
+	// `rust` was this test's unsupported example until it became a runnable
+	// `LangId`; the heuristic's supported set is `isLangId`, so widening the
+	// registry enrolls a language here automatically. Ruby is genuinely absent.
 	test('an unsupported language reports low confidence rather than guessing', () => {
-		const code = 'fn f(n: i32) -> i32 { n }';
-		const r = estimateBigO(code, 'rust');
+		const code = 'def f(n) = n';
+		const r = estimateBigO(code, 'ruby');
 		assert.strictEqual(r.confidence, 'low');
 		assert.ok(r.reason.length > 0);
 	});
